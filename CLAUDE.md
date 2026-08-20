@@ -45,6 +45,14 @@ that was going to catch the next one.
 ./mvnw verify -Pintegration   # Testcontainers: Postgres, Redis, MinIO
 ```
 
+**Error Prone and NullAway fail the compile, not a later phase** ([ADR-0015](../docs/decisions/0015-static-analysis-error-prone-nullaway.md)).
+Every package is `@NullMarked`, so a reference is non-null unless it says otherwise. When NullAway
+objects, it has usually found a real ambiguity the code was leaving implicit — annotate the nullable
+thing rather than reaching for a cast or an `assert`. Suppress at the site with a reason if you must;
+never lower a check's severity build-wide.
+
+`git config core.hooksPath .githooks` once, to get the `pre-push` fast-fail.
+
 Integration tests are **Testcontainers, never `docker compose`**. A test that needs a stack someone
 started by hand passes locally and fails on every clean machine. Compose belongs to `make e2e` alone.
 
