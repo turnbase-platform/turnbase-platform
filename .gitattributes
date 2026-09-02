@@ -1,0 +1,8 @@
+# The scripts here run under bash on Linux and in containers. Where core.autocrlf=true
+# is set, a CRLF checkout makes bash report `\r': command not found` and makes git
+# silently refuse to run a hook — neither of which reads as a line-ending problem.
+*.sh text eol=lf
+.githooks/* text eol=lf
+mvnw text eol=lf
+mvnw.cmd text eol=crlf
+*.jar binary

@@ -1,0 +1,68 @@
+# Build for turnbase-platform.
+#
+# IMP-M0-03 stands up the build floor; IMP-M0-11 owns the rest of the pipeline for all five
+# repositories — coverage upload policy, container scan, publish on tag — and extends this
+# file rather than replacing it.
+#
+# master everywhere, never main (conventions.md §4).
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up GraalVM CE 21
+        # NOT actions/setup-java: it has no graalvm-community distribution and fails with
+        # "No supported distribution was found for input graalvm-community". Matches the
+        # .sdkmanrc pin, so CI and a developer's shell run the same JDK.
+        uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: graalvm-community
+          java-version: '21'
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install turnbase-common (bootstrap — conventions.md §5)
+        # turnbase-common has no tagged release yet, so <turnbase-common.version> pins its
+        # current development version and this runner needs it in the local repository.
+        # Delete this step, not adapt it, the same PR that bumps the property to a real
+        # release once IMP-M0-11 publishes one.
+        run: |
+          git clone --depth 1 https://github.com/${{ github.repository_owner }}/turnbase-common.git /tmp/turnbase-common
+          cd /tmp/turnbase-common
+          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
+
+      - name: Verify
+        # Spotless runs at validate, Error Prone and NullAway during compile, the Modulith
+        # verification test and JaCoCo's merged check at verify — this one command is the
+        # whole Java gate for now.
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco
+          path: target/site/jacoco/
+          if-no-files-found: warn
+
+      - name: Build container image
+        # The jar was already built by `./mvnw verify` above; the Dockerfile packages it
+        # rather than rebuilding, so the image build never needs its own network access to
+        # turnbase-common (conventions.md §5 bootstrap window, IMP-GATE-07).
+        run: docker build -t turnbase/platform:ci .

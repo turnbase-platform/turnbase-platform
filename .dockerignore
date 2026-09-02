@@ -1,0 +1,13 @@
+target/classes/
+target/test-classes/
+target/generated-sources/
+target/generated-test-sources/
+target/maven-status/
+target/maven-archiver/
+target/jacoco/
+target/site/
+target/surefire-reports/
+target/failsafe-reports/
+.git/
+.idea/
+*.iml
