@@ -4,7 +4,7 @@
 # runs both in the same job), not inside the image. Building here too would mean resolving
 # io.turnbase:turnbase-grpc a second time in a network-isolated container, which during the
 # conventions.md §5 bootstrap window (IMP-GATE-07) has no registry to resolve it from at all.
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre-jammy
 WORKDIR /app
 
 RUN useradd --system --create-home --shell /usr/sbin/nologin turnbase
