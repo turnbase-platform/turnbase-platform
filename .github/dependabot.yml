@@ -12,6 +12,11 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    ignore:
+      # CLAUDE.md pins Spring Boot 3.5+, not 4.x. A major bump is a deliberate upgrade this
+      # project hasn't made, not a routine update — closed once already (2026-09-02).
+      - dependency-name: org.springframework.boot:spring-boot-starter-parent
+        versions: ['>=4.0.0']
     groups:
       spring:
         patterns:
@@ -43,6 +48,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # CLAUDE.md/conventions.md pin Java 21 for every backend service. A major JRE bump is a
+      # deliberate upgrade this project hasn't made — closed once already (2026-09-02).
+      - dependency-name: eclipse-temurin
+        versions: ['>=22']
     commit-message:
       prefix: chore
       include: scope
