@@ -40,10 +40,15 @@ jobs:
       - name: Install turnbase-common (bootstrap — conventions.md §5)
         # turnbase-common has no tagged release yet, so <turnbase-common.version> pins its
         # current development version and this runner needs it in the local repository.
-        # Delete this step, not adapt it, the same PR that bumps the property to a real
-        # release once IMP-M0-11 publishes one.
+        # turnbase-common is private (ADR-0012), so this needs a credential beyond the
+        # workflow's own GITHUB_TOKEN — TURNBASE_COMMON_PAT is a fine-grained PAT, read-only
+        # on Contents, scoped to turnbase-common only. Delete this step, not adapt it, the
+        # same PR that bumps the version property to a real release once IMP-M0-11 publishes
+        # one — from that point resolution is an authenticated GitHub Packages fetch instead.
+        env:
+          TURNBASE_COMMON_PAT: ${{ secrets.TURNBASE_COMMON_PAT }}
         run: |
-          git clone --depth 1 https://github.com/${{ github.repository_owner }}/turnbase-common.git /tmp/turnbase-common
+          git clone --depth 1 "https://x-access-token:${TURNBASE_COMMON_PAT}@github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
           cd /tmp/turnbase-common
           ./mvnw --batch-mode --no-transfer-progress install -DskipTests
 
