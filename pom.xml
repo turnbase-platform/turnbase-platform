@@ -53,7 +53,7 @@
     <nullaway.version>0.14.1</nullaway.version>
     <jacoco.version>0.8.15</jacoco.version>
     <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
-    <maven-failsafe-plugin.version>3.5.6</maven-failsafe-plugin.version>
+    <maven-failsafe-plugin.version>3.6.0</maven-failsafe-plugin.version>
 
     <!--
       Coverage floor. platform-operations.md FR-CICD-003 sets 70% across unit and
