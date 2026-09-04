@@ -33,7 +33,7 @@
     <spring-modulith.version>2.1.1</spring-modulith.version>
     <!-- Matches turnbase-common's pin — grpc-netty-shaded is the transport turnbase-grpc
          deliberately leaves to its consumers to choose (conventions.md §5). -->
-    <grpc.version>1.83.1</grpc.version>
+    <grpc.version>1.84.0</grpc.version>
     <jspecify.version>1.0.1</jspecify.version>
     <assertj.version>3.27.7</assertj.version>
 
