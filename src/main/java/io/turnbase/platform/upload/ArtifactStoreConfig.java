@@ -1,7 +1,6 @@
 package io.turnbase.platform.upload;
 
 import java.net.URI;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -12,10 +11,10 @@ import software.amazon.awssdk.services.s3.S3Client;
 /**
  * The v2 S3 client talks to both MinIO (local, Testcontainers) and AWS S3 (production) via an
  * endpoint override (file-uploads.md §1) — {@code forcePathStyle} is required for MinIO, which does
- * not support virtual-hosted-style addressing by default.
+ * not support virtual-hosted-style addressing by default. {@link ArtifactStoreProperties} is
+ * registered by {@code TurnBaseApplication}'s {@code @ConfigurationPropertiesScan}, not here.
  */
 @Configuration
-@EnableConfigurationProperties(ArtifactStoreProperties.class)
 public class ArtifactStoreConfig {
 
   @Bean

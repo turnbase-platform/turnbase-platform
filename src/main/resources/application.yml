@@ -46,6 +46,79 @@ logging:
     root: ${LOGGING_LEVEL_ROOT:INFO}
 
 turnbase:
+  # local-environment.md §7 — the whole non-secret tunable surface (IMP-M0-09). Every default
+  # below is the one §7 states; secrets (no default, ever — secrets-and-configuration.md §2) are
+  # called out per key.
+  room:
+    grace-period: ${TURNBASE_ROOM_GRACE_PERIOD:60s}
+    migration-window: ${TURNBASE_ROOM_MIGRATION_WINDOW:20s}
+    idle-window: ${TURNBASE_ROOM_IDLE_WINDOW:30m}
+    spectator-capacity: ${TURNBASE_ROOM_SPECTATOR_CAPACITY:8}
+    lease:
+      ttl: ${TURNBASE_ROOM_LEASE_TTL:10s}
+      renew-interval: ${TURNBASE_ROOM_LEASE_RENEW_INTERVAL:3s}
+      self-evict-after: ${TURNBASE_ROOM_LEASE_SELF_EVICT_AFTER:6s}
+  jobs:
+    deadline-sweep:
+      interval: ${TURNBASE_JOBS_DEADLINE_SWEEP_INTERVAL:5s}
+    reconcile:
+      interval: ${TURNBASE_JOBS_RECONCILE_INTERVAL:60s}
+      startup-suppression: ${TURNBASE_JOBS_RECONCILE_STARTUP_SUPPRESSION:120s}
+      orphan-age: ${TURNBASE_JOBS_RECONCILE_ORPHAN_AGE:10m}
+    guest-cleanup:
+      interval: ${TURNBASE_JOBS_GUEST_CLEANUP_INTERVAL:1h}
+    notification-purge:
+      interval: ${TURNBASE_JOBS_NOTIFICATION_PURGE_INTERVAL:24h}
+    expiry-purge:
+      interval: ${TURNBASE_JOBS_EXPIRY_PURGE_INTERVAL:1h}
+    room-purge:
+      interval: ${TURNBASE_JOBS_ROOM_PURGE_INTERVAL:24h}
+    upload-slot-cleanup:
+      interval: ${TURNBASE_JOBS_UPLOAD_SLOT_CLEANUP_INTERVAL:15m}
+  retention:
+    closed-room: ${TURNBASE_RETENTION_CLOSED_ROOM:7d}
+    notification: ${TURNBASE_RETENTION_NOTIFICATION:30d}
+    friend-request: ${TURNBASE_RETENTION_FRIEND_REQUEST:30d}
+    guest-account: ${TURNBASE_RETENTION_GUEST_ACCOUNT:24h}
+  auth:
+    session-ttl: ${TURNBASE_AUTH_SESSION_TTL:24h}
+    # IMP-GATE-16: the switch between generating a local key and requiring a supplied one is this
+    # flag, not the Spring profile — the Helm chart is the only place that sets it true.
+    jwt-key-set-required: ${TURNBASE_JWT_KEY_SET_REQUIRED:false}
+    # secrets-and-configuration.md §3.1 (IMP-GATE-15). No default: required only when
+    # jwt-key-set-required is true, enforced by JwtKeySetConfig, not by this placeholder.
+    jwt-key-set: ${TURNBASE_JWT_KEY_SET:}
+  accounts:
+    rename-window: ${TURNBASE_ACCOUNTS_RENAME_WINDOW:30d}
+  social:
+    friend-cap: ${TURNBASE_SOCIAL_FRIEND_CAP:50}
+  pagination:
+    default-page-size: ${TURNBASE_PAGINATION_DEFAULT_PAGE_SIZE:25}
+    max-page-size: ${TURNBASE_PAGINATION_MAX_PAGE_SIZE:100}
+  uploads:
+    max-bundle-size: ${TURNBASE_UPLOADS_MAX_BUNDLE_SIZE:256MB}
+    slot-ttl: ${TURNBASE_UPLOADS_SLOT_TTL:1h}
+    validation-lease: ${TURNBASE_UPLOADS_VALIDATION_LEASE:10m}
+  http:
+    max-body-size: ${TURNBASE_HTTP_MAX_BODY_SIZE:64KB}
+  rate-limit:
+    enabled: ${TURNBASE_RATE_LIMIT_ENABLED:true}
+  security:
+    trusted-proxies: ${TURNBASE_SECURITY_TRUSTED_PROXIES:10.0.0.0/8,172.16.0.0/12}
+  platform:
+    origin: ${TURNBASE_PLATFORM_ORIGIN:http://turnbase.localhost:8080}
+  game-frontend:
+    origin-template: ${TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE:http://{gameId}.games.localhost:8080}
+  oauth:
+    google:
+      # secrets-and-configuration.md §5: absent by default, and the platform starts anyway.
+      client-id: ${TURNBASE_OAUTH_GOOGLE_CLIENT_ID:}
+      client-secret: ${TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET:}
+  admin:
+    # secrets-and-configuration.md §1. No default — an unset value fails this placeholder at
+    # startup rather than binding an empty string.
+    username: ${TURNBASE_ADMIN_USERNAME}
+    password: ${TURNBASE_ADMIN_PASSWORD}
   artifact-store:
     # Non-secret tunables (local-environment.md §7.9). Access/secret key have no default —
     # secrets-and-configuration.md §2: a missing secret must fail startup, never fall back.

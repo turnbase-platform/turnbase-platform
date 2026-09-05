@@ -6,4 +6,5 @@ target/
 .vscode/
 .DS_Store
 .env
+.secrets/
 deploy/helm/turnbase/values-local.secrets.yaml

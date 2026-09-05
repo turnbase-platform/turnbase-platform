@@ -27,7 +27,9 @@ class TurnBaseApplicationIT extends PostgresIntegrationTest {
           "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
           "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
           "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
-          "--turnbase.artifact-store.secret-key=" + MINIO.getPassword()
+          "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+          "--turnbase.admin.username=admin",
+          "--turnbase.admin.password=admin"
         });
   }
 }
