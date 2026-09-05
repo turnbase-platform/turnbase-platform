@@ -121,6 +121,12 @@ services:
       TURNBASE_ARTIFACT_STORE_BUCKET: turnbase-bundles
       TURNBASE_ARTIFACT_STORE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
       TURNBASE_ARTIFACT_STORE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      TURNBASE_ADMIN_USERNAME: ${TURNBASE_ADMIN_USERNAME:?TURNBASE_ADMIN_USERNAME is required}
+      TURNBASE_ADMIN_PASSWORD: ${TURNBASE_ADMIN_PASSWORD:?TURNBASE_ADMIN_PASSWORD is required}
+      # secrets-and-configuration.md §5: absent by default, and the platform starts anyway — no
+      # `:?required` guard, unlike every secret above.
+      TURNBASE_OAUTH_GOOGLE_CLIENT_ID: ${TURNBASE_OAUTH_GOOGLE_CLIENT_ID:-}
+      TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET: ${TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET:-}
     ports:
       - "8080:8080"
       - "127.0.0.1:8081:8081"

@@ -14,3 +14,8 @@ data:
   # readiness probe.
   TURNBASE_ARTIFACT_STORE_ENDPOINT: "http://{{ .Release.Name }}-minio:9000"
   TURNBASE_ARTIFACT_STORE_BUCKET: {{ .Values.minio.bucket | quote }}
+  # IMP-GATE-16: this chart runs the identical `local` Spring profile compose does, so profile
+  # cannot be the switch between generating a JWT key set and requiring one. `true` here is what
+  # makes it required — the HPA below can run more than one replica, and a self-generated key is
+  # only correct for exactly one.
+  TURNBASE_JWT_KEY_SET_REQUIRED: "true"

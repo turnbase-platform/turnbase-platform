@@ -73,6 +73,22 @@ minio:
     size: 5Gi
     storageClassName: ""
 
+auth:
+  # secrets-and-configuration.md §3.1/§3.2 (IMP-GATE-15/16) — required, since this chart sets
+  # TURNBASE_JWT_KEY_SET_REQUIRED=true (platform-configmap.yaml).
+  jwtKeySet: ""
+
+admin:
+  username: ""
+  password: ""
+
+oauth:
+  google:
+    # secrets-and-configuration.md §5: absent by default, Google login is unavailable without it
+    # and the platform starts anyway.
+    clientId: ""
+    clientSecret: ""
+
 observability:
   enabled: true
   prometheus:
