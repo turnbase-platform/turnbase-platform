@@ -8,7 +8,7 @@ import org.springframework.modulith.core.ApplicationModules;
  * convention anyone has to remember. This test passes trivially today — every feature package is
  * empty — and exists so the first violation fails a build instead of a review.
  */
-class ModularityTests {
+class ModularityTest {
 
   @Test
   void verifiesModularStructure() {

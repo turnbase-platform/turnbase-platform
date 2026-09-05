@@ -55,8 +55,12 @@ jobs:
       - name: Verify
         # Spotless runs at validate, Error Prone and NullAway during compile, the Modulith
         # verification test and JaCoCo's merged check at verify — this one command is the
-        # whole Java gate for now.
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        # whole Java gate for now. -Pintegration runs the Testcontainers-backed *IT suite
+        # (IMP-M0-06 is the first item that needs one — a real Postgres for Flyway) so the
+        # merge JaCoCo does at verify (conventions.md §3) has integration-tier data to merge;
+        # without it the check runs on unit-only coverage and fails open exactly as that
+        # section warns. ubuntu-latest ships Docker, so Testcontainers needs no extra setup.
+        run: ./mvnw --batch-mode --no-transfer-progress verify -Pintegration
 
       - name: Coverage report
         if: always()

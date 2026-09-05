@@ -30,7 +30,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
     <!-- Dependencies -->
-    <spring-modulith.version>2.1.1</spring-modulith.version>
+    <spring-modulith.version>1.4.13</spring-modulith.version>
     <!-- Matches turnbase-common's pin — grpc-netty-shaded is the transport turnbase-grpc
          deliberately leaves to its consumers to choose (conventions.md §5). -->
     <grpc.version>1.84.0</grpc.version>
@@ -95,6 +95,24 @@
     </dependency>
 
     <!--
+      IMP-M0-06: Flyway baseline. jdbc rather than data-jpa — no ORM exists yet, and Flyway
+      only needs a DataSource. platform-operations.md CON-002 fixes PostgreSQL as the store.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!--
       ADR-0014: the module boundary is a build error, not a convention. spring-modulith-junit
       supplies ApplicationModules.of(...).verify() at test scope.
     -->
@@ -142,6 +160,23 @@
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
       <version>${assertj.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Testcontainers-backed Postgres for *IT (conventions.md §3). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
