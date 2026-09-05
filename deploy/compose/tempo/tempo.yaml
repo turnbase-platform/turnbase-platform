@@ -7,8 +7,14 @@ distributor:
   receivers:
     otlp:
       protocols:
+        # Tempo's OTLP receivers default to a loopback bind address, unreachable from another
+        # container even though the port is published on the network — same class of bug
+        # local-environment.md §1 warns about for the management port. Found by actually
+        # running the stack and exporting a real span (IMP-GATE-22).
         grpc:
+          endpoint: 0.0.0.0:4317
         http:
+          endpoint: 0.0.0.0:4318
 
 ingester:
   max_block_duration: 5m

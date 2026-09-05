@@ -1,7 +1,0 @@
-# Minimal valid config so rules can evaluate into Alertmanager (observability.md §6). The
-# actual FR-ALERT-* rules and the webhook-receiver wiring behind TURNBASE_ALERT_WEBHOOK_URL are
-# IMP-M0-10's job; this only needs to be a container that starts and is ready to receive.
-route:
-  receiver: "default"
-receivers:
-  - name: "default"

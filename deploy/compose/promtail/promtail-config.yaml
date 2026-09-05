@@ -1,5 +1,5 @@
 # observability.md §3: unwrap the Docker envelope, parse the JSON log line, and label only
-# `level`/`service` — `traceId` is unique per request and stays out of Loki's label index
+# `level`/`service` — `trace_id` is unique per request and stays out of Loki's label index
 # (label cardinality), living in the log line for Grafana's derived-field link to Tempo instead.
 server:
   http_listen_port: 9080
@@ -25,7 +25,7 @@ scrape_configs:
           expressions:
             level: level
             service: service
-            traceId: traceId
+            trace_id: trace_id
       - labels:
           level:
           service:

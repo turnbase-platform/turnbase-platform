@@ -1,0 +1,82 @@
+{
+  "uid": "turnbase-platform-overview",
+  "title": "Platform Overview",
+  "tags": ["turnbase"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP request rate (FR-MET-001)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "sum by (application) (rate(http_server_requests_seconds_count[5m]))",
+          "legendFormat": "{{application}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 latency (FR-MET-001)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "histogram_quantile(0.95, sum by (le, application) (rate(http_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "{{application}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active WebSocket connections (FR-MET-002)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "description": "Empty until IMP-M2-02 builds the STOMP session registry this gauge is bound to.",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "max(turnbase_websocket_connections_active)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Business gauges (FR-MET-003)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prom" },
+      "description": "max(), not sum() — every replica polls the same database, so summing multiplies by replica count (observability.md §2.1).",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "max(turnbase_rooms_active)",
+          "legendFormat": "rooms_active"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "max(turnbase_game_sessions_active)",
+          "legendFormat": "game_sessions_active"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "max(turnbase_users_registered)",
+          "legendFormat": "users_registered"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prom" },
+          "expr": "max(turnbase_friend_requests_pending)",
+          "legendFormat": "friend_requests_pending"
+        }
+      ]
+    }
+  ]
+}

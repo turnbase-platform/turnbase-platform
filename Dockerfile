@@ -7,7 +7,13 @@
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
-RUN useradd --system --create-home --shell /usr/sbin/nologin turnbase
+# observability.md §4: the OpenTelemetry Java agent, attached below via JAVA_TOOL_OPTIONS. A
+# runtime artifact fetched at build time, not a Maven dependency — pinned to an exact release
+# per conventions.md. ADD (not a manual curl) needs no HTTP client baked into this minimal
+# JRE image.
+ADD --chmod=644 https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.31.1/opentelemetry-javaagent.jar /opt/opentelemetry-javaagent.jar
+
+RUN useradd --system --create-home --shell /usr/sbin/nologin turnbase && chown turnbase:turnbase /app
 USER turnbase
 
 COPY target/turnbase-platform-*.jar app.jar
@@ -16,5 +22,19 @@ COPY target/turnbase-platform-*.jar app.jar
 # bind address (loopback under compose, unset under Kubernetes) is set by
 # MANAGEMENT_SERVER_ADDRESS, not baked into the image.
 EXPOSE 8080 8081
+
+# observability.md §4. Metrics and logs are deliberately not OTLP here — FR-MET-007's
+# Prometheus scrape and §3's Promtail pipeline own those two signals; only traces go through
+# this agent. management.otlp.tracing.endpoint/management.tracing.sampling.probability
+# (application.yml) carry the same two values for Micrometer's own tracer — the agent's
+# variables are the ones that decide where spans from its own auto-instrumentation land.
+ENV JAVA_TOOL_OPTIONS="-javaagent:/opt/opentelemetry-javaagent.jar" \
+    OTEL_SERVICE_NAME=platform \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+    OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+    OTEL_TRACES_SAMPLER=parentbased_traceidratio \
+    OTEL_TRACES_SAMPLER_ARG=0.1 \
+    OTEL_METRICS_EXPORTER=none \
+    OTEL_LOGS_EXPORTER=none
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

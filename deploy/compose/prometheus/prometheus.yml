@@ -1,0 +1,22 @@
+# observability.md §2's scrape config, verbatim, plus the rule file and Alertmanager wiring
+# §6 needs. Both jobs scrape the management port only (rest-conventions.md: "scraped over the
+# cluster-internal network, never through the ingress") — the same listener that carries each
+# service's admin/actuator surface.
+global:
+  scrape_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  - job_name: platform
+    metrics_path: /actuator/prometheus
+    static_configs: [{ targets: ["platform:8081"] }]
+  - job_name: gamehost
+    metrics_path: /actuator/prometheus
+    static_configs: [{ targets: ["gamehost:8081"] }]

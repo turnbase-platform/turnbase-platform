@@ -8,15 +8,20 @@
 # the host because 9090 is the Game Host's gRPC port on the host network.
 
 services:
-  # No custom scrape config here: the actual FR-MET-* scrape targets and rule files are
-  # IMP-M0-10's job. The image's own default (self-scrape only) is enough to prove the
-  # container runs and Grafana can query it.
+  # observability.md §2's scrape config and §6's alert rules (IMP-M0-10).
   prometheus:
     image: prom/prometheus:v3.14.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
     volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9091:9090"
+    depends_on:
+      - alertmanager
 
   grafana:
     image: grafana/grafana:13.2.1
@@ -65,13 +70,34 @@ services:
 
   # No host port: local-environment.md §1's host port map names one for Prometheus (remapped)
   # and Grafana only. Alertmanager is reachable inside the compose network, from Prometheus.
+  #
+  # observability.md §6, FR-ALERT-005: the image ships no env-var expansion, so the entrypoint
+  # renders the template with sed before starting — substituting the webhook URL in when
+  # TURNBASE_ALERT_WEBHOOK_URL is set, deleting the webhook_configs block when it is not
+  # (secrets-and-configuration.md §1's posture: absent by default, and the stack starts
+  # anyway). Re-running `docker compose up` after changing the variable re-renders it.
   alertmanager:
     image: prom/alertmanager:v0.34.0
     volumes:
-      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
+      - alertmanager-data:/alertmanager
+    environment:
+      TURNBASE_ALERT_WEBHOOK_URL: ${TURNBASE_ALERT_WEBHOOK_URL:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -n "$$TURNBASE_ALERT_WEBHOOK_URL" ]; then
+          sed "s#WEBHOOK_URL_PLACEHOLDER#$$TURNBASE_ALERT_WEBHOOK_URL#" \
+            /etc/alertmanager/alertmanager.yml.tmpl > /tmp/alertmanager.yml
+        else
+          sed '/webhook_configs:/,+1d' \
+            /etc/alertmanager/alertmanager.yml.tmpl > /tmp/alertmanager.yml
+        fi
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
 
 volumes:
   prometheus-data:
   grafana-data:
   loki-data:
   tempo-data:
+  alertmanager-data:

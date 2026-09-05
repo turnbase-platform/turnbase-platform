@@ -1,7 +1,8 @@
-# Provider config only — scans this directory for dashboard JSON. The four dashboards
-# observability.md §5 names (platform-overview, jvm-and-database, redis-by-concern,
-# room-lifecycle) are content IMP-M0-10 builds once the metrics they chart exist; this file is
-# the plumbing so dropping a JSON file here is all that item needs to do.
+# Provider config only — scans this directory for dashboard JSON. observability.md §5 names four
+# dashboards; IMP-M0-10 built platform-overview and jvm-and-database, whose metrics already
+# exist. redis-by-concern and room-lifecycle wait on FR-MET-005 and the per-duty reconciliation
+# counters (registry.md IMP-M0-10's "Deferred to later items") — dropping a JSON file here is
+# all whichever item builds those needs to do.
 apiVersion: 1
 providers:
   - name: TurnBase

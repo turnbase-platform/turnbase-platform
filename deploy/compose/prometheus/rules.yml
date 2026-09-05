@@ -1,0 +1,39 @@
+# observability.md §6's rule table — the three rules IMP-M0-10 builds (FR-ALERT-001, 002, 004).
+# FR-ALERT-003/006/007 need signals from features not built yet (IMP-M3-09, IMP-M2-10,
+# IMP-M3-08 respectively — see registry.md IMP-M0-10's "Deferred to later items").
+groups:
+  - name: turnbase-http
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum by (application) (rate(http_server_requests_seconds_count{outcome="SERVER_ERROR"}[5m]))
+            /
+          sum by (application) (rate(http_server_requests_seconds_count[5m]))
+            > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} 5xx rate above 1% over 5m"
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, application) (rate(http_server_requests_seconds_bucket[5m]))
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} p95 HTTP latency above 1s over 5m"
+
+  - name: turnbase-database
+    rules:
+      - alert: DbPoolSaturated
+        expr: hikaricp_connections_active / hikaricp_connections_max > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection pool above 80% utilization"

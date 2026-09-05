@@ -1,0 +1,12 @@
+# observability.md §6, FR-ALERT-005: rules evaluate into Alertmanager either way; only the
+# receiver differs. The compose service's command renders this into the real config with
+# sed — TURNBASE_ALERT_WEBHOOK_URL set substitutes the URL in, unset deletes the
+# webhook_configs block entirely, leaving the same empty "default" receiver this file shipped
+# with before IMP-M0-10. A local-first project must not require registering with a third party
+# before the stack will run (secrets-and-configuration.md §1's posture for the OAuth secret).
+route:
+  receiver: "default"
+receivers:
+  - name: "default"
+    webhook_configs:
+      - url: "WEBHOOK_URL_PLACEHOLDER"

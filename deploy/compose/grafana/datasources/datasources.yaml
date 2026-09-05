@@ -1,4 +1,4 @@
-# observability.md §5, verbatim — the derived field is what turns a log line's traceId into a
+# observability.md §5, verbatim — the derived field is what turns a log line's trace_id into a
 # link to that trace in Tempo.
 apiVersion: 1
 datasources:
@@ -14,7 +14,7 @@ datasources:
     jsonData:
       derivedFields:
         - name: TraceID
-          matcherRegex: '"traceId":"(\w+)"'
+          matcherRegex: '"trace_id":"(\w+)"'
           url: "$${__value.raw}"
           datasourceUid: tempo
   - name: Tempo
