@@ -23,7 +23,11 @@ class TurnBaseApplicationIT extends PostgresIntegrationTest {
           "--management.server.port=0",
           "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
           "--spring.datasource.username=" + POSTGRES.getUsername(),
-          "--spring.datasource.password=" + POSTGRES.getPassword()
+          "--spring.datasource.password=" + POSTGRES.getPassword(),
+          "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+          "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+          "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+          "--turnbase.artifact-store.secret-key=" + MINIO.getPassword()
         });
   }
 }

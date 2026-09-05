@@ -1,0 +1,77 @@
+# Full profile add-on (local-environment.md §1). Not standalone — always combined with
+# docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Loki, Tempo and Alertmanager carry no host port mapping: local-environment.md §1's host port
+# map does not list one for any of the three, so they are reachable only inside the compose
+# network (Grafana and Promtail reach them by service name). Prometheus is remapped to 9091 on
+# the host because 9090 is the Game Host's gRPC port on the host network.
+
+services:
+  # No custom scrape config here: the actual FR-MET-* scrape targets and rule files are
+  # IMP-M0-10's job. The image's own default (self-scrape only) is enough to prove the
+  # container runs and Grafana can query it.
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    volumes:
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9091:9090"
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD is required}
+      # observability.md §5: anonymous access stays off even locally — Grafana is reachable
+      # from the whole LAN (bound to all interfaces) so a phone on the network can reach it.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+  loki:
+    image: grafana/loki:3.6.16
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - loki-data:/loki
+
+  tempo:
+    image: grafana/tempo:2.10.8
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  # observability.md §3: chosen over the Loki Docker logging driver because that driver is a
+  # Docker *plugin* a developer must install before `docker compose up` will start at all — a
+  # bootstrap step a clean-machine quick start cannot assume. Not optional decoration: it is
+  # the only thing that moves logs into Loki.
+  promtail:
+    image: grafana/promtail:3.6.11
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["-config.file=/etc/promtail/config.yaml"]
+    depends_on:
+      - loki
+
+  # No host port: local-environment.md §1's host port map names one for Prometheus (remapped)
+  # and Grafana only. Alertmanager is reachable inside the compose network, from Prometheus.
+  alertmanager:
+    image: prom/alertmanager:v0.34.0
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:

@@ -1,0 +1,11 @@
+# Provider config only — scans this directory for dashboard JSON. The four dashboards
+# observability.md §5 names (platform-overview, jvm-and-database, redis-by-concern,
+# room-lifecycle) are content IMP-M0-10 builds once the metrics they chart exist; this file is
+# the plumbing so dropping a JSON file here is all that item needs to do.
+apiVersion: 1
+providers:
+  - name: TurnBase
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

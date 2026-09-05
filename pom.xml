@@ -36,6 +36,13 @@
     <grpc.version>1.84.0</grpc.version>
     <jspecify.version>1.0.1</jspecify.version>
     <assertj.version>3.27.7</assertj.version>
+    <!--
+      Artifact store client (IMP-M0-07). file-uploads.md §1 runs the same pre-signed-URL code
+      path against MinIO locally as against AWS S3 in production — the AWS SDK v2 S3 client
+      talks to both by overriding the endpoint, so it is the client rather than a MinIO-specific
+      SDK that would need swapping out for production.
+    -->
+    <aws-sdk.version>2.54.13</aws-sdk.version>
 
     <!--
       turnbase-common's published client stubs. No tagged release of turnbase-common exists
@@ -113,6 +120,16 @@
     </dependency>
 
     <!--
+      IMP-M0-07: the artifact store client. MinIO locally, AWS S3 in production
+      (file-uploads.md §1) — the v2 S3 client talks to both via an endpoint override.
+    -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <version>${aws-sdk.version}</version>
+    </dependency>
+
+    <!--
       ADR-0014: the module boundary is a build error, not a convention. spring-modulith-junit
       supplies ApplicationModules.of(...).verify() at test scope.
     -->
@@ -177,6 +194,11 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>minio</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

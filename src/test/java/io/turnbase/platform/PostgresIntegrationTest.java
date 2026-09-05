@@ -1,18 +1,59 @@
 package io.turnbase.platform;
 
+import java.net.URI;
+import org.junit.jupiter.api.BeforeAll;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.testcontainers.containers.MinIOContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 /**
- * Shared Postgres 16 container for *IT classes that need a real Spring context wired to a real
- * database. The container is a single static field on this base class, so every subclass shares one
- * instance per JVM (conventions.md §3's container-reuse trap) rather than starting its own.
+ * Shared Postgres 16 and MinIO containers for *IT classes that boot a real Spring context: Flyway
+ * migrates against Postgres, and {@link io.turnbase.platform.upload.ArtifactBucketReadinessCheck}
+ * asserts the bundle bucket exists against MinIO at startup (local-environment.md §5) — a full boot
+ * needs both.
+ *
+ * <p>The Testcontainers JUnit extension restarts a shared static container fresh for each test
+ * class that declares it (it is "shared" only within one class, not across classes sharing this
+ * base) — a bucket created once and never again would exist for whichever subclass runs first and
+ * be gone for the rest. {@link #createArtifactBucket()} therefore runs before every subclass and is
+ * idempotent, matching {@code minio-init}'s own {@code --ignore-existing} (local-environment.md
+ * §5).
  */
 @Testcontainers
 public abstract class PostgresIntegrationTest {
 
+  protected static final String ARTIFACT_BUCKET = "turnbase-bundles";
+
   @Container @ServiceConnection
   static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Container
+  static final MinIOContainer MINIO =
+      new MinIOContainer(DockerImageName.parse("minio/minio:RELEASE.2025-09-07T16-13-09Z"));
+
+  @BeforeAll
+  static void createArtifactBucket() {
+    try (S3Client client =
+        S3Client.builder()
+            .endpointOverride(URI.create(MINIO.getS3URL()))
+            .region(Region.US_EAST_1)
+            .credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(MINIO.getUserName(), MINIO.getPassword())))
+            .forcePathStyle(true)
+            .build()) {
+      client.createBucket(CreateBucketRequest.builder().bucket(ARTIFACT_BUCKET).build());
+    } catch (BucketAlreadyOwnedByYouException e) {
+      // Already created by an earlier subclass sharing the same (not-yet-restarted) container.
+    }
+  }
 }

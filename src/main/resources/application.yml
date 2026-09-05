@@ -10,10 +10,12 @@ server:
 management:
   server:
     port: ${MANAGEMENT_SERVER_PORT:8081}
-    # Loopback under compose, unset (all interfaces) under Kubernetes — local-environment.md
-    # §1. A kubelet probes the pod IP directly, so binding this to 127.0.0.1 there would fail
-    # every readiness probe. Compose sets MANAGEMENT_SERVER_ADDRESS=127.0.0.1 in its own
-    # environment; Kubernetes leaves it unset.
+    # Unset (all interfaces) in both profiles — local-environment.md §1 (IMP-GATE-14). A
+    # published Docker port always forwards to the container's bridge interface, never its
+    # loopback, so binding this to 127.0.0.1 under compose would make the management port
+    # unreachable through its own published port; the host-side bind in docker-compose.yml is
+    # what restricts it there instead. A kubelet probes the pod IP directly, so binding this to
+    # 127.0.0.1 under Kubernetes would fail every readiness probe the same way.
     address: ${MANAGEMENT_SERVER_ADDRESS:}
   endpoint:
     health:
@@ -35,3 +37,12 @@ management:
 logging:
   level:
     root: ${LOGGING_LEVEL_ROOT:INFO}
+
+turnbase:
+  artifact-store:
+    # Non-secret tunables (local-environment.md §7.9). Access/secret key have no default —
+    # secrets-and-configuration.md §2: a missing secret must fail startup, never fall back.
+    endpoint: ${TURNBASE_ARTIFACT_STORE_ENDPOINT:http://minio:9000}
+    bucket: ${TURNBASE_ARTIFACT_STORE_BUCKET:turnbase-bundles}
+    access-key: ${TURNBASE_ARTIFACT_STORE_ACCESS_KEY}
+    secret-key: ${TURNBASE_ARTIFACT_STORE_SECRET_KEY}

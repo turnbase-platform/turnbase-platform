@@ -1,0 +1,26 @@
+# Single-binary local Tempo, matching local-environment.md §1's ports (4317 OTLP gRPC, 3200
+# HTTP) and §7 (no long-term storage locally — filesystem, not object storage).
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+        http:
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 336h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
