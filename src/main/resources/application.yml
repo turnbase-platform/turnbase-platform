@@ -28,10 +28,15 @@ management:
     health:
       probes:
         enabled: true
+    # FR-OBS-004: the level must be adjustable at runtime without a restart. This is a write
+    # endpoint (POST /actuator/loggers/{name}), exposed only on this management port, same
+    # posture as the admin API (rest-conventions.md, observability.md §3).
+    loggers:
+      access: unrestricted
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus,loggers
   # local-environment.md §3: the monolith's readiness must not depend on the Game Host — a
   # Game Host restart must never fail this probe and drop every WebSocket on the platform.
   # Nothing below adds a Game Host indicator to either group, and none ever should.
@@ -40,6 +45,22 @@ management:
       enabled: true
     readinessstate:
       enabled: true
+  metrics:
+    tags:
+      # FR-MET-007's scrape config (observability.md §2) distinguishes the two jobs by
+      # target, but a shared Grafana dashboard querying both series needs the label too.
+      application: ${spring.application.name}
+  # observability.md §4/§7.9: the Micrometer Tracing bridge's own endpoint/sampling config.
+  # Kept in agreement with the OpenTelemetry Java agent's OTEL_EXPORTER_OTLP_ENDPOINT and
+  # OTEL_TRACES_SAMPLER_ARG (Dockerfile) — the agent's variable is the one that decides where
+  # spans from its own auto-instrumentation actually go; this is what any application code
+  # using Micrometer's own Tracer/ObservationRegistry uses.
+  otlp:
+    tracing:
+      endpoint: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:http://tempo:4317}
+  tracing:
+    sampling:
+      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:0.1}
 
 logging:
   level:

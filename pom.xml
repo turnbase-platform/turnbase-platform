@@ -45,6 +45,12 @@
     <aws-sdk.version>2.54.13</aws-sdk.version>
 
     <!--
+      IMP-M0-10: JSON console encoding for Logback. Not managed by the Spring Boot BOM, unlike
+      the Micrometer/OTel artifacts below.
+    -->
+    <logstash-logback-encoder.version>8.1</logstash-logback-encoder.version>
+
+    <!--
       turnbase-common's published client stubs. No tagged release of turnbase-common exists
       yet, so this pins its current development version and resolves it from the local
       install, per conventions.md §5's bootstrap exception (IMP-GATE-07). Bump this to a real
@@ -99,6 +105,30 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+
+    <!--
+      IMP-M0-10: FR-MET-007's /actuator/prometheus, the OpenTelemetry Micrometer Tracing
+      bridge for management.tracing.* (observability.md §4) and JSON console logging
+      (observability.md §3). The OTLP exporter here is Micrometer's own bridge, separate from
+      the -javaagent that does the actual HTTP/gRPC auto-instrumentation (Dockerfile).
+    -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>net.logstash.logback</groupId>
+      <artifactId>logstash-logback-encoder</artifactId>
+      <version>${logstash-logback-encoder.version}</version>
     </dependency>
 
     <!--
@@ -199,6 +229,16 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>minio</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      IMP-M0-10 (IMP-GATE-18): lets the gRPC correlation-interceptor test exercise a real
+      Client/ServerInterceptor pair with no network socket, same pattern turnbase-game-host
+      uses for its registration-client test.
+    -->
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-inprocess</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
