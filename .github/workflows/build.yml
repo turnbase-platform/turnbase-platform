@@ -1,8 +1,7 @@
 # Build for turnbase-platform.
 #
-# IMP-M0-03 stands up the build floor; IMP-M0-11 owns the rest of the pipeline for all five
-# repositories — coverage upload policy, container scan, publish on tag — and extends this
-# file rather than replacing it.
+# IMP-M0-03 stands up the build floor; IMP-M0-11 (the Trivy and GHCR-push steps below) owns
+# the rest of the pipeline for all five repositories.
 #
 # master everywhere, never main (conventions.md §4).
 name: build
@@ -15,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -70,8 +70,59 @@ jobs:
           path: target/site/jacoco/
           if-no-files-found: warn
 
+      - name: Trivy scan — dependencies (report)
+        # platform-operations.md FR-CICD-010: every finding is reported; only a critical one
+        # blocks the build (the next step).
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: 'LOW,MEDIUM,HIGH,CRITICAL'
+          exit-code: '0'
+
+      - name: Trivy scan — dependencies (gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL
+          exit-code: '1'
+
       - name: Build container image
         # The jar was already built by `./mvnw verify` above; the Dockerfile packages it
         # rather than rebuilding, so the image build never needs its own network access to
         # turnbase-common (conventions.md §5 bootstrap window, IMP-GATE-07).
         run: docker build -t turnbase/platform:ci .
+
+      - name: Trivy scan — image (report)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: turnbase/platform:ci
+          severity: 'LOW,MEDIUM,HIGH,CRITICAL'
+          exit-code: '0'
+
+      - name: Trivy scan — image (gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: turnbase/platform:ci
+          severity: CRITICAL
+          exit-code: '1'
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image to GHCR
+        # FR-CICD-006: tagged with the commit SHA, on every push to master. No `:latest` —
+        # the requirement names only the SHA tag, and inventing a second one is a decision
+        # nothing asked for.
+        if: github.event_name == 'push'
+        run: |
+          docker tag turnbase/platform:ci ghcr.io/turnbase-platform/platform:${{ github.sha }}
+          docker push ghcr.io/turnbase-platform/platform:${{ github.sha }}
