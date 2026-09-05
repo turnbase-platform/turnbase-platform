@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-platform
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  SPRING_PROFILES_ACTIVE: "local"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://{{ .Release.Name }}-postgres:5432/{{ .Values.postgres.database }}"
+  SPRING_DATASOURCE_USERNAME: {{ .Values.postgres.appUser | quote }}
+  MANAGEMENT_SERVER_PORT: {{ .Values.platform.managementPort | quote }}
+  # No MANAGEMENT_SERVER_ADDRESS: unset in every profile (local-environment.md §1, IMP-GATE-14).
+  # A kubelet probes the pod IP directly, so binding this to 127.0.0.1 would fail every
+  # readiness probe.
+  TURNBASE_ARTIFACT_STORE_ENDPOINT: "http://{{ .Release.Name }}-minio:9000"
+  TURNBASE_ARTIFACT_STORE_BUCKET: {{ .Values.minio.bucket | quote }}

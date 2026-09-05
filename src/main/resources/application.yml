@@ -3,9 +3,16 @@ spring:
     name: turnbase-platform
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
 
 server:
   port: 8080
+  # local-environment.md §3 shutdown table: Spring stops accepting and drains in-flight
+  # requests on SIGTERM, bounded by spring.lifecycle.timeout-per-shutdown-phase above — the
+  # Helm chart's preStop/terminationGracePeriodSeconds (IMP-M0-08) only give a graceful drain
+  # time to happen; this is what makes it happen at all.
+  shutdown: graceful
 
 management:
   server:

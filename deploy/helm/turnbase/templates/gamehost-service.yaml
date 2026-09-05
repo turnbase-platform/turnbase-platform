@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-gamehost
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "gamehost" "root" .) | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.gamehost.grpcPort }}
+      targetPort: grpc
+    - name: management
+      port: {{ .Values.gamehost.managementPort }}
+      targetPort: management

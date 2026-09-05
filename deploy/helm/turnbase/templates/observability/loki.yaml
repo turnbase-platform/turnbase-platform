@@ -1,0 +1,66 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-loki-data
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if .Values.observability.loki.storage.storageClassName }}
+  storageClassName: {{ .Values.observability.loki.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.loki.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-loki
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "loki" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "loki" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: loki
+          image: {{ .Values.observability.loki.image }}
+          # The image's own baked-in default config (identical to deploy/compose's command) —
+          # no custom config here either. `args`, not `command`: the latter overrides the
+          # image's ENTRYPOINT binary itself, not just its arguments.
+          args: ["-config.file=/etc/loki/local-config.yaml"]
+          ports:
+            - name: http
+              containerPort: 3100
+          volumeMounts:
+            - name: data
+              mountPath: /loki
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-loki-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-loki
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "loki" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 3100
+{{- end }}

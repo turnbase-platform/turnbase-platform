@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-platform
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  # ClusterIP, never LoadBalancer: local-environment.md §1's Done-when — no Ingress or
+  # LoadBalancer names 8081. Management stays reachable only inside the cluster (kubelet) and
+  # via `kubectl port-forward`, topologically, exactly as §1 describes for Kubernetes.
+  type: ClusterIP
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "platform" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.platform.containerPort }}
+      targetPort: http
+    - name: management
+      port: {{ .Values.platform.managementPort }}
+      targetPort: management

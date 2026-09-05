@@ -1,0 +1,105 @@
+# Defaults for the canonical local stack (local-environment.md §4, §7). Every key here has a
+# counterpart in the compose profile's environment: block or .env.example — the two express the
+# same configuration surface without generating one from the other.
+#
+# No secret below has a working default (secrets-and-configuration.md §2: a default that works
+# is a default that reaches production). Supply real values via a separate, git-ignored file —
+# see values-local.secrets.example.yaml — never by editing this file or values-local.yaml.
+
+ingress:
+  enabled: true
+  className: nginx
+  platformHost: turnbase.localhost
+  gamesHost: "*.games.localhost"
+  # local-environment.md §4: raised well above the STOMP heartbeat interval, because the
+  # default 60s closes an idle WebSocket the protocol considers healthy.
+  proxyReadTimeoutSeconds: 3600
+
+platform:
+  image:
+    repository: turnbase/platform
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  containerPort: 8080
+  managementPort: 8081
+  resources: {}
+  autoscaling:
+    # NFR-SCALE-001 defers multi-instance deployment post-MVP; the template exists so turning
+    # this on later is a values change, not a new template. Do not enable it against the
+    # single-replica assumption ADR-0008 §"Relationship to the deferred multi-instance scope"
+    # documents.
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+
+gamehost:
+  image:
+    repository: turnbase/game-host
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  grpcPort: 9090
+  managementPort: 8081
+  resources: {}
+
+postgres:
+  image: postgres:16-alpine
+  database: turnbase
+  ownerUser: turnbase_owner
+  # Populated from a git-ignored secrets file — see values-local.secrets.example.yaml.
+  ownerPassword: ""
+  appUser: turnbase_app
+  appPassword: ""
+  storage:
+    size: 2Gi
+    storageClassName: ""
+
+redis:
+  image: redis:7-alpine
+  password: ""
+  storage:
+    size: 1Gi
+    storageClassName: ""
+
+minio:
+  image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+  mcImage: minio/mc:RELEASE.2025-08-13T08-35-41Z
+  rootUser: ""
+  rootPassword: ""
+  bucket: turnbase-bundles
+  storage:
+    size: 5Gi
+    storageClassName: ""
+
+observability:
+  enabled: true
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    storage:
+      size: 2Gi
+      storageClassName: ""
+  grafana:
+    image: grafana/grafana:13.2.1
+    adminPassword: ""
+    storage:
+      size: 1Gi
+      storageClassName: ""
+  loki:
+    image: grafana/loki:3.6.16
+    storage:
+      size: 2Gi
+      storageClassName: ""
+  tempo:
+    image: grafana/tempo:2.10.8
+    storage:
+      size: 2Gi
+      storageClassName: ""
+  promtail:
+    image: grafana/promtail:3.6.11
+  alertmanager:
+    image: prom/alertmanager:v0.34.0
+    # Absent by default (observability.md §6): rules still evaluate with no receiver
+    # configured, only delivery is missing until this is set.
+    webhookUrl: ""

@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-platform
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+    {{- include "turnbase.selectorLabels" (dict "component" "platform" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.platform.replicaCount }}
+  # ADR-0008 "Deployment strategy": rolling even at one replica. Under Recreate the successor
+  # never overlaps the incumbent, so the claim/adoption path this design rests on would never
+  # run against a live incumbent — the crash/rolling-deploy path would go dormant on the one
+  # substrate meant to exercise it continuously.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "platform" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "platform" "root" .) | nindent 8 }}
+    spec:
+      # local-environment.md §3: preStop pause because endpoint removal propagates to the
+      # ingress asynchronously; without it, connections arrive at a pod already releasing rooms.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: platform
+          image: "{{ .Values.platform.image.repository }}:{{ .Values.platform.image.tag }}"
+          imagePullPolicy: {{ .Values.platform.image.pullPolicy }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.platform.containerPort }}
+            - name: management
+              containerPort: {{ .Values.platform.managementPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+            - secretRef:
+                name: {{ .Release.Name }}-platform
+          # local-environment.md §3: the monolith must be reachable and serving before any Game
+          # Host has registered, and readiness must never report the Game Host (§3 "The
+          # monolith's readiness must not depend on the Game Host") — nothing here names it.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.platform.resources | nindent 12 }}

@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-minio
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "minio" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "minio" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image }}
+          command: ["minio", "server", "/data", "--console-address", ":9001"]
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-minio
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-minio-data

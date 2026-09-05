@@ -1,0 +1,113 @@
+{{- if .Values.observability.enabled }}
+# File-glob discovery, not Kubernetes API discovery: kubernetes_sd_configs (role: pod) against
+# this cluster's client-go version returned zero targets with no logged error — a live,
+# reproduced toolchain trap, not a config typo (verified: RBAC granted list/watch on pods, the
+# API itself answered a real `kubectl exec` curl with the same ServiceAccount's token, and the
+# discovery manager still never populated `promtail_targets_active_total`). A DaemonSet pod
+# only ever needs its own node's logs anyway, and kubelet always writes every pod's logs under
+# /var/log/pods regardless of container runtime, so a static glob needs no Kubernetes API
+# access at all — no ServiceAccount/RBAC either. namespace/pod/container come out of the
+# directory name Kubernetes itself encodes (<namespace>_<pod>_<uid>/<container>/<n>.log), not
+# out of node discovery. The entries under /var/log/pods/.../<container>/ are themselves
+# symlinks into /var/lib/docker/containers on this cluster's dockerd-backed runtime (verified
+# live) — both hostPaths are mounted below. A containerd-only cluster writes the log content
+# directly under /var/log/pods with no such symlink, in which case the second mount is an
+# unused empty directory, not a broken one.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-promtail
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  promtail-config.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    positions:
+      filename: /run/promtail/positions.yaml
+
+    clients:
+      - url: http://{{ .Release.Name }}-loki:3100/loki/api/v1/push
+
+    scrape_configs:
+      - job_name: kubernetes-pods
+        static_configs:
+          - targets: ["localhost"]
+            labels:
+              __path__: /var/log/pods/*/*/*.log
+        pipeline_stages:
+          - regex:
+              source: filename
+              expression: '^/var/log/pods/(?P<pod_dir>[^/]+)/(?P<container>[^/]+)/[^/]+\.log$'
+          - regex:
+              source: pod_dir
+              expression: '^(?P<namespace>[^_]+)_(?P<pod>.+)_[0-9a-f-]+$'
+          - labels:
+              namespace:
+              pod:
+              container:
+          # docker, not cri: this cluster's kubelet symlinks pod logs into
+          # /var/lib/docker/containers/<id>-json.log — the dockerd JSON-lines envelope, the
+          # same one deploy/compose's own Promtail unwraps. A containerd-CRI cluster writes the
+          # CRI plaintext format instead; this chart targets the Docker-Desktop-Kubernetes
+          # canonical path (local-environment.md §4), which is dockerd-backed.
+          - docker: {}
+          - json:
+              expressions:
+                level: level
+                service: service
+                traceId: traceId
+          - labels:
+              level:
+              service:
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Release.Name }}-promtail
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "promtail" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "promtail" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: promtail
+          image: {{ .Values.observability.promtail.image }}
+          args: ["-config.file=/etc/promtail/promtail-config.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail
+              readOnly: true
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: docker-containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: positions
+              mountPath: /run/promtail
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-promtail
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+        # /var/log/pods/.../<container>/0.log is a symlink into here on this cluster's
+        # dockerd-backed runtime (verified live) — without this mount every glob match fails
+        # `stat` on a dangling symlink target, which is a silent zero-targets/zero-lines
+        # failure, not an error that names the missing mount.
+        - name: docker-containers
+          hostPath:
+            path: /var/lib/docker/containers
+        - name: positions
+          emptyDir: {}
+{{- end }}

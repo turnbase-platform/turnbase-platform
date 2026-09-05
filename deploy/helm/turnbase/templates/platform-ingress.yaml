@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-platform
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+  annotations:
+    # local-environment.md §4: the default 60s proxy-read-timeout closes an idle WebSocket the
+    # STOMP heartbeat interval considers perfectly healthy.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.proxyReadTimeoutSeconds | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    # Both origins are one listener (local-environment.md §1 "Both origins are one listener"):
+    # turnbase.localhost and *.games.localhost route to the same Service/port, distinguished by
+    # Host header inside the monolith, not by a second port or Service. Neither rule names 8081.
+    - host: {{ .Values.ingress.platformHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-platform
+                port:
+                  name: http
+    - host: {{ .Values.ingress.gamesHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-platform
+                port:
+                  name: http
+{{- end }}

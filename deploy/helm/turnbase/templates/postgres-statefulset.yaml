@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-postgres
+  # Single replica (ADR-0001 local-first MVP). A plain PVC rather than volumeClaimTemplates —
+  # local-environment.md §4: "so a helm upgrade does not reset the database" — a helm upgrade
+  # only replaces the pod, never the claim.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "postgres" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "postgres" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgres.ownerUser }}", "-d", "{{ .Values.postgres.database }}"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgres.ownerUser }}", "-d", "{{ .Values.postgres.database }}"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-postgres-data
+        - name: initdb
+          configMap:
+            name: {{ .Release.Name }}-postgres-initdb

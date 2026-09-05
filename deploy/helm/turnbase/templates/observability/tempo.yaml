@@ -1,0 +1,108 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-tempo
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  # Identical to deploy/compose/tempo/tempo.yaml.
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+            http:
+
+    ingester:
+      max_block_duration: 5m
+
+    compactor:
+      compaction:
+        block_retention: 336h
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/blocks
+        wal:
+          path: /var/tempo/wal
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-tempo-data
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if .Values.observability.tempo.storage.storageClassName }}
+  storageClassName: {{ .Values.observability.tempo.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.tempo.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-tempo
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "tempo" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "tempo" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: tempo
+          image: {{ .Values.observability.tempo.image }}
+          # `args`, not `command`: the latter overrides the image's ENTRYPOINT binary itself.
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: http
+              containerPort: 3200
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+              readOnly: true
+            - name: data
+              mountPath: /var/tempo
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-tempo
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-tempo-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-tempo
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "tempo" "root" .) | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: 4317
+    - name: http
+      port: 3200
+{{- end }}

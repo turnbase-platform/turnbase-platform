@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-redis-data
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if .Values.redis.storage.storageClassName }}
+  storageClassName: {{ .Values.redis.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.storage.size }}

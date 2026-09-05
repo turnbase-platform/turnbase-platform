@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-redis
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "redis" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "redis" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          # noeviction + appendonly are required, not tuning (ADR-0008, room-lifecycle.md §1.5,
+          # local-environment.md §2) — under any allkeys-* policy, memory pressure can evict a
+          # liveness lease and permit a wrongful ownership takeover with no error anywhere.
+          # $(VAR) is Kubernetes's own container-command substitution, sourced from env below —
+          # not shell expansion.
+          command: ["redis-server"]
+          args:
+            - "--maxmemory-policy"
+            - "noeviction"
+            - "--appendonly"
+            - "yes"
+            - "--requirepass"
+            - "$(TURNBASE_REDIS_PASSWORD)"
+          ports:
+            - name: redis
+              containerPort: 6379
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-redis
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$TURNBASE_REDIS_PASSWORD\" PING | grep -q PONG"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$TURNBASE_REDIS_PASSWORD\" PING | grep -q PONG"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-redis-data

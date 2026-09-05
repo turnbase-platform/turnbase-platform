@@ -1,0 +1,9 @@
+apiVersion: v2
+name: turnbase
+description: >-
+  The canonical local stack (local-environment.md §4) — Platform Monolith, Game Host,
+  Postgres, Redis, MinIO, and the observability set. Not generated from the compose profile
+  (IMP-M0-07); the two are kept honest by expressing configuration once (§7's key set).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

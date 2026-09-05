@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-postgres-initdb
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  # Identical to deploy/compose/initdb/01-roles.sql (FR-CRED-005 two-role split,
+  # secrets-and-configuration.md §4) — the same script, mounted instead of bind-mounted.
+  01-roles.sql: |
+    \getenv app_password TURNBASE_DB_APP_PASSWORD
+
+    CREATE ROLE {{ .Values.postgres.appUser }} LOGIN PASSWORD :'app_password';
+    GRANT CONNECT ON DATABASE {{ .Values.postgres.database }} TO {{ .Values.postgres.appUser }};
+    GRANT USAGE, CREATE ON SCHEMA public TO {{ .Values.postgres.appUser }};
+
+    -- ADR-0011 §6 / IMP-GATE-13: pg_trgm and btree_gin are not trusted extensions in
+    -- PostgreSQL 16, so the app role's schema-level CREATE is not enough — only the owner can
+    -- create them. The baseline migration's own CREATE EXTENSION IF NOT EXISTS then succeeds
+    -- as a no-op.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE EXTENSION IF NOT EXISTS btree_gin;

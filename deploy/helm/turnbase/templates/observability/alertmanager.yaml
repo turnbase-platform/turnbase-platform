@@ -1,0 +1,63 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-alertmanager
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  # Identical to deploy/compose/alertmanager/alertmanager.yml — minimal valid config so rules
+  # can evaluate. The actual FR-ALERT-* rules and webhook-receiver wiring are IMP-M0-10's job.
+  alertmanager.yml: |
+    route:
+      receiver: "default"
+    receivers:
+      - name: "default"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-alertmanager
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "alertmanager" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "alertmanager" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: alertmanager
+          image: {{ .Values.observability.alertmanager.image }}
+          ports:
+            - name: http
+              containerPort: 9093
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-alertmanager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-alertmanager
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  # No Ingress or NodePort — local-environment.md §1 names no host port for Alertmanager;
+  # reachable only inside the cluster, from Prometheus.
+  type: ClusterIP
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "alertmanager" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 9093
+{{- end }}

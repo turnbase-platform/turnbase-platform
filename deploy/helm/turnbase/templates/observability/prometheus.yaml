@@ -1,0 +1,65 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-prometheus-data
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if .Values.observability.prometheus.storage.storageClassName }}
+  storageClassName: {{ .Values.observability.prometheus.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.prometheus.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-prometheus
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "prometheus" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "prometheus" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: prometheus
+          # No custom scrape config: the actual FR-MET-* scrape targets and rule files are
+          # IMP-M0-10's job — the image's own default (self-scrape only) is enough to prove the
+          # container runs and Grafana can query it (matches deploy/compose's own posture).
+          image: {{ .Values.observability.prometheus.image }}
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-prometheus-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-prometheus
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "prometheus" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 9090
+{{- end }}

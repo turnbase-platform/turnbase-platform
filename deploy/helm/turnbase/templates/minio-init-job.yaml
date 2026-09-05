@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Not a Helm hook: a post-install/post-upgrade hook only runs after `--wait` already
+  # considers the main resources ready, and the Platform Monolith's own readiness never
+  # arrives without this bucket — the two would deadlock under `--wait`. Applied as an
+  # ordinary resource instead, alongside MinIO and the Platform Monolith, so `--wait` watches
+  # all three converge together. `.Release.Revision` in the name sidesteps a completed Job's
+  # spec being immutable on the next `helm upgrade`; ttlSecondsAfterFinished reaps old runs.
+  name: {{ .Release.Name }}-minio-init-{{ .Release.Revision }}
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  # local-environment.md §5: "the same three commands run as a Job" under Kubernetes. Retries
+  # its own connection to MinIO rather than depending on Kubernetes to order it after the
+  # StatefulSet — Jobs have no depends_on; the retry loop is what a bare Job needs instead
+  # (there is no readiness gate between two independently-reconciled resources).
+  backoffLimit: 20
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "minio-init" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: minio-init
+          image: {{ .Values.minio.mcImage }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-minio
+          env:
+            - name: TURNBASE_ARTIFACT_STORE_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+          # --ignore-existing makes this idempotent across every helm upgrade. `mc anonymous
+          # set none` is explicit — local-environment.md §5: a publicly listable bundle bucket
+          # exposes every unpublished game version.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until mc alias set local http://{{ .Release.Name }}-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                echo "waiting for minio..."; sleep 3
+              done
+              mc mb --ignore-existing "local/$TURNBASE_ARTIFACT_STORE_BUCKET"
+              mc anonymous set none "local/$TURNBASE_ARTIFACT_STORE_BUCKET"

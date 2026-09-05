@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-gamehost
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+    {{- include "turnbase.selectorLabels" (dict "component" "gamehost" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.gamehost.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "turnbase.selectorLabels" (dict "component" "gamehost" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "turnbase.selectorLabels" (dict "component" "gamehost" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: gamehost
+          image: "{{ .Values.gamehost.image.repository }}:{{ .Values.gamehost.image.tag }}"
+          imagePullPolicy: {{ .Values.gamehost.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.gamehost.grpcPort }}
+            - name: management
+              containerPort: {{ .Values.gamehost.managementPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-gamehost
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.gamehost.resources | nindent 12 }}
