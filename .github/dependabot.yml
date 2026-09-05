@@ -1,4 +1,13 @@
 # Supply-chain updates, per conventions.md §6 and platform-operations.md FR-CICD-010.
+#
+# FROZEN 2026-09-05. Every ecosystem below carries `open-pull-requests-limit: 0` — GitHub's
+# documented switch for turning version updates off without deleting the configuration that
+# describes them. Dependabot opened PRs faster than a solo project merges them, and the
+# resulting backlog of open PRs and orphaned branches cost more attention than the bumps were
+# worth this early. The groups and every `ignore` entry are kept deliberately: each records
+# *why* a pin is a decision rather than neglect, and that reasoning outlives the freeze.
+# Re-enabling is restoring the limits, nothing else.
+#
 # Trivy scanning is wired by IMP-M0-11 with the rest of the shared pipeline; this file is
 # the half that is pure configuration and therefore cheaper to land now than to remember
 # later.
@@ -8,7 +17,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: chore
       include: scope
@@ -40,6 +49,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     commit-message:
       prefix: chore
       include: scope
@@ -48,6 +58,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     ignore:
       # CLAUDE.md/conventions.md pin Java 21 for every backend service. A major JRE bump is a
       # deliberate upgrade this project hasn't made — closed once already (2026-09-02).
