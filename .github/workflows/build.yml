@@ -126,3 +126,33 @@ jobs:
         run: |
           docker tag turnbase/platform:ci ghcr.io/turnbase-platform/platform:${{ github.sha }}
           docker push ghcr.io/turnbase-platform/platform:${{ github.sha }}
+
+  e2e:
+    # FR-CICD-005, local-environment.md §8, OQ-002: post-merge only, and it gates nothing —
+    # continue-on-error means a failure here never fails the workflow run. Compose is the
+    # e2e tier's dependency and only there (conventions.md §3); the pre-merge `build` job
+    # above never touches it.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out turnbase-game-host
+        # gamehost has no `build:` block in docker-compose.yml (this repo stays
+        # independently usable without the root, ADR-0012), so its image is built from a
+        # sibling checkout here — the same bootstrap-PAT pattern conventions.md §5 already
+        # uses for turnbase-common: a fine-grained PAT, read-only on Contents, scoped to
+        # turnbase-game-host only. Provisioning it is a human action (creating a PAT means
+        # signing in to GitHub), so this job's first real run waits on that secret existing.
+        uses: actions/checkout@v7
+        with:
+          repository: turnbase-platform/turnbase-game-host
+          token: ${{ secrets.TURNBASE_GAME_HOST_PAT }}
+          path: turnbase-game-host
+
+      - name: Run the e2e smoke test
+        env:
+          TURNBASE_GAME_HOST_DIR: ${{ github.workspace }}/turnbase-game-host
+        run: make e2e
