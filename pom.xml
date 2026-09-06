@@ -67,6 +67,9 @@
     -->
     <turnbase-common.version>0.1.0-SNAPSHOT</turnbase-common.version>
 
+    <!-- IMP-M1-03: HS256 JWT issuance/verification (secrets-and-configuration.md §3). -->
+    <jjwt.version>0.12.6</jjwt.version>
+
     <!-- Plugins -->
     <spotless.version>3.10.1</spotless.version>
     <google-java-format.version>1.36.1</google-java-format.version>
@@ -169,6 +172,31 @@
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!--
+      IMP-M1-03: JWT signing and verification (secrets-and-configuration.md §3). No document
+      names a library — HS256 over a key set is the whole contract — but hand-rolling
+      compact-JWT construction and parsing on the auth path is exactly the kind of code a
+      maintained library gets right (constant-time signature comparison, header/claims
+      validation) that a first attempt usually does not.
+    -->
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+      <version>${jjwt.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+      <version>${jjwt.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+      <version>${jjwt.version}</version>
       <scope>runtime</scope>
     </dependency>
 
