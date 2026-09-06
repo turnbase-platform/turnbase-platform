@@ -34,10 +34,11 @@ public abstract class PostgresIntegrationTest {
   protected static final String ARTIFACT_BUCKET = "turnbase-bundles";
 
   @Container @ServiceConnection
-  static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+  protected static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Container
-  static final MinIOContainer MINIO =
+  protected static final MinIOContainer MINIO =
       new MinIOContainer(DockerImageName.parse("minio/minio:RELEASE.2025-09-07T16-13-09Z"));
 
   @BeforeAll
