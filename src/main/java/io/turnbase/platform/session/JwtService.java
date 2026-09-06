@@ -90,6 +90,13 @@ public class JwtService {
         claims.getExpiration().toInstant());
   }
 
+  /**
+   * The {@code kid} a token issued right now would carry — for recording alongside a session row.
+   */
+  public String activeKeyId() {
+    return keySet.current().active().kid();
+  }
+
   private static SecretKey hmacKey(String base64Secret) {
     return Keys.hmacShaKeyFor(Base64.getDecoder().decode(base64Secret));
   }

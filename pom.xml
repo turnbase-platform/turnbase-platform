@@ -70,6 +70,19 @@
     <!-- IMP-M1-03: HS256 JWT issuance/verification (secrets-and-configuration.md §3). -->
     <jjwt.version>0.12.6</jjwt.version>
 
+    <!--
+      IMP-M1-04: username confusable-skeleton computation and single-script restriction
+      (input-validation.md § Usernames — ICU4J com.ibm.icu.text.SpoofChecker is the document's
+      own named mechanism, not a choice made here).
+    -->
+    <icu4j.version>78.3</icu4j.version>
+
+    <!--
+      IMP-M1-04: Argon2PasswordEncoder's runtime dependency (below). Not managed by the Spring
+      Boot BOM — spring-security-crypto keeps it optional since not every consumer needs Argon2.
+    -->
+    <bouncycastle.version>1.85.2</bouncycastle.version>
+
     <!-- Plugins -->
     <spotless.version>3.10.1</spotless.version>
     <google-java-format.version>1.36.1</google-java-format.version>
@@ -193,6 +206,31 @@
       <version>${jjwt.version}</version>
       <scope>runtime</scope>
     </dependency>
+    <!--
+      IMP-M1-04: NFR-SEC-001's Argon2id password hashing. Spring Boot's dependency management
+      resolves the version via the imported Spring Security BOM.
+    -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+    <!--
+      Argon2PasswordEncoder delegates to Bouncy Castle's Argon2 implementation at runtime
+      (org.bouncycastle.crypto.params.Argon2Parameters$Builder) — spring-security-crypto declares
+      it as an optional dependency, so a consumer that actually uses Argon2id must add it itself.
+    -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.ibm.icu</groupId>
+      <artifactId>icu4j</artifactId>
+      <version>${icu4j.version}</version>
+    </dependency>
+
     <dependency>
       <groupId>io.jsonwebtoken</groupId>
       <artifactId>jjwt-jackson</artifactId>

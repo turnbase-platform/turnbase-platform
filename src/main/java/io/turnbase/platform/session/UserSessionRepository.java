@@ -37,6 +37,26 @@ class UserSessionRepository {
         .update();
   }
 
+  /**
+   * data-model-accounts.md §3: the first half of login's atomic displace-then-insert — revokes
+   * whatever session is currently active for {@code userId}, normally zero or one row. Called
+   * inside the same transaction as the follow-up {@link #insert}; a unique-index race between two
+   * concurrent logins surfaces as a failure on that insert, not here.
+   */
+  int revokeActiveForUser(UUID userId, String reason, Instant revokedAt) {
+    return jdbcClient
+        .sql(
+            """
+            update user_session
+            set revoked_at = :revokedAt, revoked_reason = :reason
+            where user_id = :userId and revoked_at is null
+            """)
+        .param("revokedAt", Timestamp.from(revokedAt))
+        .param("reason", reason)
+        .param("userId", userId)
+        .update();
+  }
+
   Optional<UserSession> findById(UUID sessionId) {
     return jdbcClient
         .sql(
