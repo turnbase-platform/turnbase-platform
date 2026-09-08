@@ -16,8 +16,10 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <p>{@link #PUBLIC_PATHS} is NFR-SEC-006's exempt list, as far as it has server-side routes today
  * — registration, login and guest creation (IMP-GATE-29 added the last of these to NFR-SEC-006
  * itself; a caller minting a guest account has no session yet, so the endpoint cannot require one).
- * The requirement also exempts the landing page, user profile pages, the game catalog and game
- * detail pages, none of which have a backend route yet; the item that adds one adds its path here.
+ * {@code GET /api/users/{username}} (user profile pages, IMP-M1-07) is exempt too, but is matched
+ * by {@link #isPublicProfileRead}, not this set — the path carries a variable segment. The
+ * requirement also exempts the landing page, the game catalog and game detail pages, none of which
+ * have a backend route yet; the item that adds one adds its own exemption here.
  *
  * <p>{@code /test/} is a second, unrelated exemption: {@code GlobalExceptionHandlerIT}'s harness
  * controller lives only on the test classpath (never shipped, {@code IMP-M1-01}) and exercises
@@ -29,6 +31,7 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
   private static final Set<String> PUBLIC_PATHS =
       Set.of("/api/auth/register", "/api/auth/login", "/api/auth/guest");
   private static final String TEST_HARNESS_PREFIX = "/test/";
+  private static final String USERS_PATH_PREFIX = "/api/users/";
 
   @Override
   public boolean preHandle(
@@ -37,10 +40,27 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
       return true;
     }
     String path = pathOf(request);
-    if (PUBLIC_PATHS.contains(path) || path.startsWith(TEST_HARNESS_PREFIX)) {
+    if (PUBLIC_PATHS.contains(path)
+        || path.startsWith(TEST_HARNESS_PREFIX)
+        || isPublicProfileRead(request, path)) {
       return true;
     }
     throw new UnauthenticatedException(detailFor(failureReasonOf(request)));
+  }
+
+  /**
+   * {@code user-accounts.md} NFR-SEC-006's "user profile pages" and {@code rest-conventions.md}'s
+   * {@code GET /api/users/{username}} (read) row — public, subject to the privacy resolution the
+   * handler itself performs. {@code /api/users/me/**} is excluded: it is never a real username
+   * (registered and guest usernames are both at least 3 characters), but excluding it explicitly
+   * keeps this exemption from ever depending on that being true.
+   */
+  private static boolean isPublicProfileRead(HttpServletRequest request, String path) {
+    if (!"GET".equalsIgnoreCase(request.getMethod()) || !path.startsWith(USERS_PATH_PREFIX)) {
+      return false;
+    }
+    String rest = path.substring(USERS_PATH_PREFIX.length());
+    return !rest.isEmpty() && !rest.contains("/") && !"me".equals(rest);
   }
 
   private static String pathOf(HttpServletRequest request) {
