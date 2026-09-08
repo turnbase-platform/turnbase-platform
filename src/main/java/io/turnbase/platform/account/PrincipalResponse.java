@@ -2,5 +2,8 @@ package io.turnbase.platform.account;
 
 import java.util.UUID;
 
-/** The response body of both {@code /api/auth/register} and {@code /api/auth/login}. */
+/**
+ * The response body of {@code /api/auth/register}, {@code /api/auth/login} and {@code GET
+ * /api/auth/session}.
+ */
 record PrincipalResponse(UUID userId, String username) {}

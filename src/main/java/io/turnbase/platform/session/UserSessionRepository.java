@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
@@ -42,19 +43,44 @@ class UserSessionRepository {
    * whatever session is currently active for {@code userId}, normally zero or one row. Called
    * inside the same transaction as the follow-up {@link #insert}; a unique-index race between two
    * concurrent logins surfaces as a failure on that insert, not here.
+   *
+   * @return the {@code session_id} of every row revoked, so the caller can publish {@link
+   *     SessionRevokedEvent} for each once its own transaction has committed
    */
-  int revokeActiveForUser(UUID userId, String reason, Instant revokedAt) {
+  List<UUID> revokeActiveForUser(UUID userId, String reason, Instant revokedAt) {
     return jdbcClient
         .sql(
             """
             update user_session
             set revoked_at = :revokedAt, revoked_reason = :reason
             where user_id = :userId and revoked_at is null
+            returning session_id
             """)
         .param("revokedAt", Timestamp.from(revokedAt))
         .param("reason", reason)
         .param("userId", userId)
-        .update();
+        .query((rs, rowNum) -> rs.getObject("session_id", UUID.class))
+        .list();
+  }
+
+  /**
+   * FR-SESS-011: revoke exactly the named session, if it is still active. Returns {@code false}
+   * when it was already revoked (or never existed) — logout is a no-op then, not an error.
+   */
+  boolean revokeById(UUID sessionId, String reason, Instant revokedAt) {
+    int updated =
+        jdbcClient
+            .sql(
+                """
+                update user_session
+                set revoked_at = :revokedAt, revoked_reason = :reason
+                where session_id = :sessionId and revoked_at is null
+                """)
+            .param("revokedAt", Timestamp.from(revokedAt))
+            .param("reason", reason)
+            .param("sessionId", sessionId)
+            .update();
+    return updated > 0;
   }
 
   Optional<UserSession> findById(UUID sessionId) {

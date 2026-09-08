@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.session.SessionRevokedEvent;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -14,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -22,12 +26,15 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 /**
  * {@code IMP-M1-04}'s own Done-when clause, checked end to end against a real application boot and
  * Postgres: registration and login endpoints, validation rules, unique-constraint-to-domain-error
- * mapping, Argon2 hashing, and login's session displacement (FR-SESS-003).
+ * mapping, Argon2 hashing, and login's session displacement (FR-SESS-003). Also carries {@code
+ * IMP-M1-06}'s: {@code GET /session}, {@code POST /logout}, the FR-SESS-004 401 shape for a
+ * displaced token, and {@code SessionRevokedEvent} publication.
  */
 class AuthControllerIT extends PostgresIntegrationTest {
 
@@ -39,6 +46,7 @@ class AuthControllerIT extends PostgresIntegrationTest {
   private ConfigurableApplicationContext context;
   private JdbcClient jdbcClient;
   private String baseUrl;
+  private RecordingSessionRevokedEventListener revokedEvents;
 
   {
     restTemplate.setErrorHandler(new NoOpResponseErrorHandler());
@@ -48,21 +56,24 @@ class AuthControllerIT extends PostgresIntegrationTest {
   void bootApplication() {
     context =
         SpringApplication.run(
-            TurnBaseApplication.class,
-            "--server.port=0",
-            "--management.server.port=0",
-            "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
-            "--spring.datasource.username=" + POSTGRES.getUsername(),
-            "--spring.datasource.password=" + POSTGRES.getPassword(),
-            "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
-            "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
-            "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
-            "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
-            "--turnbase.admin.username=admin",
-            "--turnbase.admin.password=admin");
+            new Class<?>[] {TurnBaseApplication.class, RecordingSessionRevokedEventListener.class},
+            new String[] {
+              "--server.port=0",
+              "--management.server.port=0",
+              "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+              "--spring.datasource.username=" + POSTGRES.getUsername(),
+              "--spring.datasource.password=" + POSTGRES.getPassword(),
+              "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+              "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+              "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+              "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+              "--turnbase.admin.username=admin",
+              "--turnbase.admin.password=admin"
+            });
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port + "/api/auth";
     jdbcClient = context.getBean(JdbcClient.class);
+    revokedEvents = context.getBean(RecordingSessionRevokedEventListener.class);
   }
 
   @AfterEach
@@ -241,6 +252,106 @@ class AuthControllerIT extends PostgresIntegrationTest {
     assertThat(activeSessionCount).isEqualTo(1);
   }
 
+  @Test
+  void aSecondLoginPublishesASessionRevokedEventForTheDisplacedSession() throws Exception {
+    String username = uniqueUsername();
+    ResponseEntity<String> registerResponse =
+        register(username, uniqueEmail(), "correct horse battery");
+    UUID userId = UUID.fromString((String) parse(registerResponse).get("userId"));
+    UUID firstSessionId =
+        jdbcClient
+            .sql("select session_id from user_session where user_id = :userId")
+            .param("userId", userId)
+            .query(UUID.class)
+            .single();
+
+    login(username, "correct horse battery");
+
+    assertThat(revokedEvents.events())
+        .anySatisfy(
+            event -> {
+              assertThat(event.sessionId()).isEqualTo(firstSessionId);
+              assertThat(event.userId()).isEqualTo(userId);
+              assertThat(event.reason()).isEqualTo("DISPLACED");
+            });
+  }
+
+  @Test
+  void getSessionReturnsThePrincipalWhenAuthenticated() throws Exception {
+    String username = uniqueUsername();
+    ResponseEntity<String> registerResponse =
+        register(username, uniqueEmail(), "correct horse battery");
+    String cookie = sessionCookieHeader(registerResponse);
+
+    ResponseEntity<String> response = getWithCookie("/session", cookie);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(parse(response).get("username")).isEqualTo(username);
+  }
+
+  @Test
+  void getSessionIsUnauthenticatedWithoutACookie() throws Exception {
+    ResponseEntity<String> response = getWithCookie("/session", null);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(parse(response).get("detail"))
+        .isEqualTo("Authentication is required for this endpoint.");
+  }
+
+  @Test
+  void logoutRevokesTheSessionClearsTheCookieAndPublishesTheEvent() throws Exception {
+    String username = uniqueUsername();
+    ResponseEntity<String> registerResponse =
+        register(username, uniqueEmail(), "correct horse battery");
+    UUID userId = UUID.fromString((String) parse(registerResponse).get("userId"));
+    String cookie = sessionCookieHeader(registerResponse);
+    UUID sessionId =
+        jdbcClient
+            .sql("select session_id from user_session where user_id = :userId")
+            .param("userId", userId)
+            .query(UUID.class)
+            .single();
+
+    ResponseEntity<String> response = postWithCookie("/logout", cookie);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    List<String> setCookies =
+        java.util.Objects.requireNonNull(response.getHeaders().get(HttpHeaders.SET_COOKIE));
+    assertThat(setCookies).anySatisfy(c -> assertThat(c).contains("turnbase_session=;"));
+
+    Map<String, Object> row =
+        jdbcClient
+            .sql("select revoked_at, revoked_reason from user_session where session_id = :id")
+            .param("id", sessionId)
+            .query()
+            .singleRow();
+    assertThat(row.get("revoked_at")).isNotNull();
+    assertThat(row.get("revoked_reason")).isEqualTo("LOGOUT");
+
+    assertThat(revokedEvents.events())
+        .anySatisfy(
+            event -> {
+              assertThat(event.sessionId()).isEqualTo(sessionId);
+              assertThat(event.reason()).isEqualTo("LOGOUT");
+            });
+  }
+
+  @Test
+  void aRequestBearingTheDisplacedSessionsTokenGetsTheFrSess004Shape() throws Exception {
+    String username = uniqueUsername();
+    ResponseEntity<String> registerResponse =
+        register(username, uniqueEmail(), "correct horse battery");
+    String firstCookie = sessionCookieHeader(registerResponse);
+
+    login(username, "correct horse battery");
+
+    ResponseEntity<String> response = getWithCookie("/session", firstCookie);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(parse(response).get("detail"))
+        .isEqualTo("Your session was ended because you logged in from another device.");
+  }
+
   private void assertSessionCookie(ResponseEntity<String> response) {
     List<String> setCookies =
         java.util.Objects.requireNonNull(response.getHeaders().get(HttpHeaders.SET_COOKIE));
@@ -281,6 +392,38 @@ class AuthControllerIT extends PostgresIntegrationTest {
     return restTemplate.exchange(baseUrl + path, HttpMethod.POST, request, String.class);
   }
 
+  private ResponseEntity<String> getWithCookie(String path, @Nullable String cookie) {
+    return withCookie(path, HttpMethod.GET, cookie);
+  }
+
+  private ResponseEntity<String> postWithCookie(String path, @Nullable String cookie) {
+    return withCookie(path, HttpMethod.POST, cookie);
+  }
+
+  private ResponseEntity<String> withCookie(
+      String path, HttpMethod method, @Nullable String cookie) {
+    HttpHeaders headers = new HttpHeaders();
+    if (cookie != null) {
+      headers.add(HttpHeaders.COOKIE, cookie);
+    }
+    HttpEntity<Void> request = new HttpEntity<>(headers);
+    return restTemplate.exchange(baseUrl + path, method, request, String.class);
+  }
+
+  /**
+   * The {@code name=value} pair only, stripped of attributes, for replay in a {@code Cookie}
+   * header.
+   */
+  private String sessionCookieHeader(ResponseEntity<String> response) {
+    List<String> setCookies =
+        java.util.Objects.requireNonNull(response.getHeaders().get(HttpHeaders.SET_COOKIE));
+    return setCookies.stream()
+        .filter(c -> c.startsWith("turnbase_session="))
+        .findFirst()
+        .orElseThrow()
+        .split(";", 2)[0];
+  }
+
   private Map<String, Object> parse(ResponseEntity<String> response) throws Exception {
     return objectMapper.readValue(response.getBody(), Map.class);
   }
@@ -303,6 +446,27 @@ class AuthControllerIT extends PostgresIntegrationTest {
     @Override
     public void handleError(org.springframework.http.client.ClientHttpResponse response) {
       // Never called: hasError() always returns false so assertions see the real status.
+    }
+  }
+
+  /**
+   * A test-only extra {@code SpringApplication} source (not component-scanned from {@code
+   * io.turnbase.platform}) that records every {@link SessionRevokedEvent} the running application
+   * publishes, so this suite can assert {@code IMP-M1-06}'s "publishes after commit" clause without
+   * a WebSocket or SSE connection to observe closing — neither exists yet (`IMP-GATE-28`).
+   */
+  @Component
+  static class RecordingSessionRevokedEventListener {
+    private final List<SessionRevokedEvent> events =
+        Collections.synchronizedList(new ArrayList<>());
+
+    @EventListener
+    void onSessionRevoked(SessionRevokedEvent event) {
+      events.add(event);
+    }
+
+    List<SessionRevokedEvent> events() {
+      return events;
     }
   }
 }

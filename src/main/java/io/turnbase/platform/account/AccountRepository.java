@@ -89,6 +89,15 @@ class AccountRepository {
         .optional();
   }
 
+  /** {@code GET /api/auth/session} — the principal's display name, not stored on the JWT. */
+  Optional<String> findUsernameById(UUID userId) {
+    return jdbcClient
+        .sql("select username from app_user where user_id = :userId")
+        .param("userId", userId)
+        .query(String.class)
+        .optional();
+  }
+
   private static Credential mapCredential(ResultSet rs, int rowNum) throws SQLException {
     return new Credential(
         rs.getObject("user_id", UUID.class),

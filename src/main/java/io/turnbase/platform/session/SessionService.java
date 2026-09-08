@@ -1,8 +1,10 @@
 package io.turnbase.platform.session;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -23,22 +25,26 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class SessionService {
 
   static final String DISPLACED_REASON = "DISPLACED";
+  public static final String LOGOUT_REASON = "LOGOUT";
   private static final int MAX_ATTEMPTS = 5;
 
   private final UserSessionRepository sessions;
   private final JwtService jwtService;
   private final AuthProperties authProperties;
   private final TransactionTemplate transactionTemplate;
+  private final ApplicationEventPublisher eventPublisher;
 
   SessionService(
       UserSessionRepository sessions,
       JwtService jwtService,
       AuthProperties authProperties,
-      PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager,
+      ApplicationEventPublisher eventPublisher) {
     this.sessions = sessions;
     this.jwtService = jwtService;
     this.authProperties = authProperties;
     this.transactionTemplate = new TransactionTemplate(transactionManager);
+    this.eventPublisher = eventPublisher;
   }
 
   /**
@@ -46,14 +52,24 @@ public class SessionService {
    * 003). {@code userAgentHash} is optional context for {@code user_session.user_agent_hash}; no
    * document in this item's read-list specifies how it is derived, so callers that have nothing to
    * offer pass {@code null}.
+   *
+   * <p>Publishes {@link SessionRevokedEvent} for whatever session was displaced, but only after the
+   * displace-then-insert transaction has committed — this repo's commit-before-publish rule, and
+   * the reason a plain post-commit call is used here rather than a
+   * {@code @TransactionalEventListener}: {@link TransactionTemplate#execute} has already returned a
+   * committed result by the time this method reaches the publish call.
    */
   public IssuedSession issueSession(UUID userId, @Nullable String userAgentHash) {
     DataIntegrityViolationException lastFailure = null;
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        IssuedSession issued = transactionTemplate.execute(status -> issue(userId, userAgentHash));
-        if (issued != null) {
-          return issued;
+        IssueResult result = transactionTemplate.execute(status -> issue(userId, userAgentHash));
+        if (result != null) {
+          for (UUID revokedSessionId : result.displacedSessionIds()) {
+            eventPublisher.publishEvent(
+                new SessionRevokedEvent(revokedSessionId, userId, DISPLACED_REASON));
+          }
+          return result.issued();
         }
       } catch (DataIntegrityViolationException e) {
         lastFailure = e;
@@ -64,9 +80,25 @@ public class SessionService {
         lastFailure);
   }
 
-  private IssuedSession issue(UUID userId, @Nullable String userAgentHash) {
+  /**
+   * FR-SESS-011: revokes exactly {@code sessionId}, publishing {@link SessionRevokedEvent} after
+   * the revoking transaction commits — same ordering as {@link #issueSession}. A no-op (no event)
+   * if the session was already revoked, which keeps logout idempotent against a retried request.
+   */
+  public void revoke(UUID sessionId, UUID userId, String reason) {
+    Boolean revoked = transactionTemplate.execute(status -> revokeById(sessionId, reason));
+    if (Boolean.TRUE.equals(revoked)) {
+      eventPublisher.publishEvent(new SessionRevokedEvent(sessionId, userId, reason));
+    }
+  }
+
+  private boolean revokeById(UUID sessionId, String reason) {
+    return sessions.revokeById(sessionId, reason, Instant.now());
+  }
+
+  private IssueResult issue(UUID userId, @Nullable String userAgentHash) {
     Instant now = Instant.now();
-    sessions.revokeActiveForUser(userId, DISPLACED_REASON, now);
+    List<UUID> displaced = sessions.revokeActiveForUser(userId, DISPLACED_REASON, now);
 
     UUID sessionId = UUID.randomUUID();
     Instant expiresAt = now.plus(authProperties.sessionTtl());
@@ -75,8 +107,10 @@ public class SessionService {
     sessions.insert(
         new UserSession(sessionId, userId, now, expiresAt, null, null, keyId, userAgentHash));
 
-    return new IssuedSession(sessionId, token, expiresAt);
+    return new IssueResult(new IssuedSession(sessionId, token, expiresAt), displaced);
   }
 
   public record IssuedSession(UUID sessionId, String token, Instant expiresAt) {}
+
+  private record IssueResult(IssuedSession issued, List<UUID> displacedSessionIds) {}
 }
