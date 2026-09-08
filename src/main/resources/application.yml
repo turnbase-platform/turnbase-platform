@@ -5,6 +5,11 @@ spring:
     active: ${SPRING_PROFILES_ACTIVE:local}
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  data:
+    # local-environment.md §7.9. Tiers 1-5's buckets (rate-limiting.md, IMP-M1-02) — the only
+    # Redis consumer in this repo today.
+    redis:
+      url: ${SPRING_DATA_REDIS_URL:redis://localhost:6379}
 
 server:
   port: 8080
@@ -124,6 +129,27 @@ turnbase:
     max-body-size: ${TURNBASE_HTTP_MAX_BODY_SIZE:64KB}
   rate-limit:
     enabled: ${TURNBASE_RATE_LIMIT_ENABLED:true}
+    # rate-limiting.md § Configuration, Tiers 1-5. Tier 6 (WebSocket frames) is IMP-M2-02's own
+    # turnbase.rate-limit.ws.* keys, not this item's.
+    auth:
+      failures-before-lockout: ${TURNBASE_RATE_LIMIT_AUTH_FAILURES_BEFORE_LOCKOUT:5}
+      initial-lockout: ${TURNBASE_RATE_LIMIT_AUTH_INITIAL_LOCKOUT:30s}
+    api:
+      capacity: ${TURNBASE_RATE_LIMIT_API_CAPACITY:100}
+      window: ${TURNBASE_RATE_LIMIT_API_WINDOW:10s}
+    upload:
+      capacity: ${TURNBASE_RATE_LIMIT_UPLOAD_CAPACITY:10}
+      window: ${TURNBASE_RATE_LIMIT_UPLOAD_WINDOW:1h}
+    public:
+      capacity: ${TURNBASE_RATE_LIMIT_PUBLIC_CAPACITY:200}
+      window: ${TURNBASE_RATE_LIMIT_PUBLIC_WINDOW:1m}
+    minting:
+      guest:
+        capacity: ${TURNBASE_RATE_LIMIT_MINTING_GUEST_CAPACITY:5}
+        window: ${TURNBASE_RATE_LIMIT_MINTING_GUEST_WINDOW:1h}
+      registration:
+        capacity: ${TURNBASE_RATE_LIMIT_MINTING_REGISTRATION_CAPACITY:3}
+        window: ${TURNBASE_RATE_LIMIT_MINTING_REGISTRATION_WINDOW:1h}
   security:
     trusted-proxies: ${TURNBASE_SECURITY_TRUSTED_PROXIES:10.0.0.0/8,172.16.0.0/12}
   platform:

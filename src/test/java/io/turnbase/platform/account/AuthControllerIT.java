@@ -69,7 +69,15 @@ class AuthControllerIT extends PostgresIntegrationTest {
               "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
               "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
               "--turnbase.admin.username=admin",
-              "--turnbase.admin.password=admin"
+              "--turnbase.admin.password=admin",
+              "--spring.data.redis.url=" + redisUrl(),
+              // This class drives /register, /login and /guest directly and repeatedly from one
+              // IP across many test methods — real budgets (rate-limiting.md Tiers 1 and 5) would
+              // fail unrelated later tests. IMP-M1-02's own coverage of those tiers lives in
+              // RateLimitInterceptorIT, which sets the opposite (deliberately tiny) overrides.
+              "--turnbase.rate-limit.auth.failures-before-lockout=1000000",
+              "--turnbase.rate-limit.minting.guest.capacity=1000000",
+              "--turnbase.rate-limit.minting.registration.capacity=1000000"
             });
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port + "/api/auth";

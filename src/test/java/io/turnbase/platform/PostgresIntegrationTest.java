@@ -3,6 +3,7 @@ package io.turnbase.platform;
 import java.net.URI;
 import org.junit.jupiter.api.BeforeAll;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MinIOContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -40,6 +41,20 @@ public abstract class PostgresIntegrationTest {
   @Container
   protected static final MinIOContainer MINIO =
       new MinIOContainer(DockerImageName.parse("minio/minio:RELEASE.2025-09-07T16-13-09Z"));
+
+  // No official Testcontainers Redis module exists; a plain GenericContainer with an explicit
+  // @ServiceConnection name is Spring Boot's own documented way to wire one (local-environment.md
+  // §8, "Testcontainers with @ServiceConnection"). Only wires a genuine Spring TestContext, which
+  // none of this base class's manual-boot subclasses create — each passes the URL explicitly via
+  // redisUrl() below, the same way POSTGRES's URL is passed rather than relied on implicitly.
+  @Container
+  @ServiceConnection(name = "redis")
+  protected static final GenericContainer<?> REDIS =
+      new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+
+  protected static String redisUrl() {
+    return "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379);
+  }
 
   @BeforeAll
   static void createArtifactBucket() {

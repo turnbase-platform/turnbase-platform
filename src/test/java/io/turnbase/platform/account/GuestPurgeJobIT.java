@@ -60,7 +60,8 @@ class GuestPurgeJobIT extends PostgresIntegrationTest {
               "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
               "--turnbase.admin.username=admin",
               "--turnbase.admin.password=admin",
-              "--turnbase.retention.guest-account=0s"
+              "--turnbase.retention.guest-account=0s",
+              "--spring.data.redis.url=" + redisUrl()
             });
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port + "/api/auth";

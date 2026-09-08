@@ -60,7 +60,13 @@ class SocialControllerIT extends PostgresIntegrationTest {
             "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
             "--turnbase.admin.username=admin",
             "--turnbase.admin.password=admin",
-            "--turnbase.social.friend-cap=2");
+            "--turnbase.social.friend-cap=2",
+            "--spring.data.redis.url=" + redisUrl(),
+            // This class registers and guest-mints repeatedly across many test methods from one
+            // IP; real Tier 1/5 budgets (rate-limiting.md) would fail unrelated later tests.
+            "--turnbase.rate-limit.auth.failures-before-lockout=1000000",
+            "--turnbase.rate-limit.minting.guest.capacity=1000000",
+            "--turnbase.rate-limit.minting.registration.capacity=1000000");
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     jdbcClient = context.getBean(JdbcClient.class);

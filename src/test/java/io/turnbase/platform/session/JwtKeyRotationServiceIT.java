@@ -47,7 +47,8 @@ class JwtKeyRotationServiceIT extends PostgresIntegrationTest {
             "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
             "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
             "--turnbase.admin.username=admin",
-            "--turnbase.admin.password=admin");
+            "--turnbase.admin.password=admin",
+            "--spring.data.redis.url=" + redisUrl());
     jdbcClient = context.getBean(JdbcClient.class);
     jwtService = context.getBean(JwtService.class);
     rotationService = context.getBean(JwtKeyRotationService.class);

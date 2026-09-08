@@ -10,26 +10,31 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * Wires the two cross-cutting mechanisms this item builds into every controller in the app: {@link
- * RequestSizeInterceptor} (the request-size gate) and the {@code Pageable} resolver ({@code
- * pagination-filtering-sorting.md} § Pagination — 1-indexed {@code page}, {@code size} capped
- * silently rather than rejected).
+ * Wires the cross-cutting mechanisms this item and {@code IMP-M1-02} build into every controller in
+ * the app: {@link RequestSizeInterceptor} (the request-size gate), {@link RateLimitInterceptor}
+ * (Tiers 1-5) and the {@code Pageable} resolver ({@code pagination-filtering-sorting.md} §
+ * Pagination — 1-indexed {@code page}, {@code size} capped silently rather than rejected).
  */
 @Configuration
 public class PlatformWebMvcConfig implements WebMvcConfigurer {
 
   private final HttpProperties httpProperties;
   private final PaginationProperties paginationProperties;
+  private final RateLimitInterceptor rateLimitInterceptor;
 
   public PlatformWebMvcConfig(
-      HttpProperties httpProperties, PaginationProperties paginationProperties) {
+      HttpProperties httpProperties,
+      PaginationProperties paginationProperties,
+      RateLimitInterceptor rateLimitInterceptor) {
     this.httpProperties = httpProperties;
     this.paginationProperties = paginationProperties;
+    this.rateLimitInterceptor = rateLimitInterceptor;
   }
 
   @Override
   public void addInterceptors(InterceptorRegistry registry) {
     registry.addInterceptor(new RequestSizeInterceptor(httpProperties));
+    registry.addInterceptor(rateLimitInterceptor);
   }
 
   @Override

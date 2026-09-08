@@ -92,6 +92,14 @@
     -->
     <shedlock.version>7.7.0</shedlock.version>
 
+    <!--
+      IMP-M1-02: Tiers 1-5's Redis-backed buckets (rate-limiting.md). bucket4j_jdk17-* is the
+      Java-21-targeted module line (conventions.md §1 pins Java 21); -core is the bucket/bandwidth
+      API, -lettuce is the distributed proxy manager this repo's Lettuce client backs. No document
+      names a library — "Redis (Bucket4j RedisBucket)" is rate-limiting.md's own phrase.
+    -->
+    <bucket4j.version>8.19.0</bucket4j.version>
+
     <!-- Plugins -->
     <spotless.version>3.10.1</spotless.version>
     <google-java-format.version>1.36.1</google-java-format.version>
@@ -267,6 +275,28 @@
       <groupId>net.javacrumbs.shedlock</groupId>
       <artifactId>shedlock-provider-jdbc-template</artifactId>
       <version>${shedlock.version}</version>
+    </dependency>
+
+    <!--
+      IMP-M1-02: the first Redis usage site in this repo (conventions.md §7). local-environment.md
+      §7.9 names the canonical property (spring.data.redis.url) that this starter's
+      RedisConnectionDetails binds — used both for @ServiceConnection in tests and to build the
+      raw Lettuce RedisClient Bucket4j's proxy manager needs (RateLimitRedisConfig), independent of
+      the LettuceConnectionFactory bean this starter also autoconfigures.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.bucket4j</groupId>
+      <artifactId>bucket4j_jdk17-core</artifactId>
+      <version>${bucket4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.bucket4j</groupId>
+      <artifactId>bucket4j_jdk17-lettuce</artifactId>
+      <version>${bucket4j.version}</version>
     </dependency>
 
     <!--

@@ -36,7 +36,8 @@ class SingleListenerOriginRoutingIT extends PostgresIntegrationTest {
             "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
             "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
             "--turnbase.admin.username=admin",
-            "--turnbase.admin.password=admin");
+            "--turnbase.admin.password=admin",
+            "--spring.data.redis.url=" + redisUrl());
     try {
       int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
 
