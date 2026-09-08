@@ -1,9 +1,9 @@
 package io.turnbase.platform.account;
 
-import com.ibm.icu.lang.UCharacter;
 import com.ibm.icu.text.SpoofChecker;
 import io.turnbase.platform.common.Canonicalizer;
 import io.turnbase.platform.common.FieldValidationError;
+import io.turnbase.platform.common.UsernameSkeleton;
 import io.turnbase.platform.common.ValidationFailedException;
 import java.util.ArrayList;
 import java.util.List;
@@ -105,10 +105,7 @@ class UsernamePolicy {
   }
 
   private String skeletonOf(String canonical) {
-    // input-validation.md § Usernames: getSkeleton(caseFold(NFC(username))) — canonical is already
-    // NFC (Canonicalizer.canonicalize); full case folding runs here, before the skeleton algorithm.
-    String caseFolded = UCharacter.foldCase(canonical, true);
-    return spoofChecker.getSkeleton(caseFolded);
+    return UsernameSkeleton.of(canonical);
   }
 
   private static boolean isLetterOrDigit(int codePoint) {

@@ -51,16 +51,22 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
   /**
    * {@code user-accounts.md} NFR-SEC-006's "user profile pages" and {@code rest-conventions.md}'s
    * {@code GET /api/users/{username}} (read) row — public, subject to the privacy resolution the
-   * handler itself performs. {@code /api/users/me/**} is excluded: it is never a real username
-   * (registered and guest usernames are both at least 3 characters), but excluding it explicitly
-   * keeps this exemption from ever depending on that being true.
+   * handler itself performs. {@code social-rest-api.md} §7's {@code GET
+   * /api/users/{username}/friends} is the same kind of read and carries the identical exemption.
+   * {@code /api/users/me/**} is excluded: it is never a real username (registered and guest
+   * usernames are both at least 3 characters), but excluding it explicitly keeps this exemption
+   * from ever depending on that being true — including {@code /api/users/me/friends/{userId}}
+   * (`IMP-M1-09`'s unfriend), which is session-required, not a profile read.
    */
   private static boolean isPublicProfileRead(HttpServletRequest request, String path) {
     if (!"GET".equalsIgnoreCase(request.getMethod()) || !path.startsWith(USERS_PATH_PREFIX)) {
       return false;
     }
     String rest = path.substring(USERS_PATH_PREFIX.length());
-    return !rest.isEmpty() && !rest.contains("/") && !"me".equals(rest);
+    if (rest.isEmpty() || "me".equals(rest) || rest.startsWith("me/")) {
+      return false;
+    }
+    return !rest.contains("/") || rest.endsWith("/friends");
   }
 
   private static String pathOf(HttpServletRequest request) {

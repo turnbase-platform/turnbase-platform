@@ -20,7 +20,8 @@ record ProfileResponse(
     @Nullable Boolean deleted,
     @Nullable String kind,
     @Nullable Boolean profilePrivate,
-    @Nullable Set<String> visibleSections) {
+    @Nullable Set<String> visibleSections,
+    @Nullable String relationshipState) {
 
   static final String SECTION_GAME_HISTORY = "gameHistory";
   static final String SECTION_STATISTICS = "statistics";
@@ -32,17 +33,29 @@ record ProfileResponse(
 
   /** FR-ACCT-009: "the reserved username and a message... no other information is shown." */
   static ProfileResponse deletedPlaceholder(String username) {
-    return new ProfileResponse(username, null, true, null, null, null);
+    return new ProfileResponse(username, null, true, null, null, null, null);
   }
 
   /** FR-GUEST-010 / FR-PROF-002: "only the username... regardless of who is viewing it." */
   static ProfileResponse guestOnly(String username) {
-    return new ProfileResponse(username, null, null, null, null, null);
+    return new ProfileResponse(username, null, null, null, null, null, null);
   }
 
+  /** The owner's own view: {@code relationshipState} is never populated for oneself. */
   static ProfileResponse registered(
       UUID userId, String username, boolean profilePrivate, Set<String> visibleSections) {
     return new ProfileResponse(
-        username, userId, null, "REGISTERED", profilePrivate, visibleSections);
+        username, userId, null, "REGISTERED", profilePrivate, visibleSections, null);
+  }
+
+  /** {@code social-rest-api.md} §9 — a registered, non-owner viewer of a registered profile. */
+  static ProfileResponse registered(
+      UUID userId,
+      String username,
+      boolean profilePrivate,
+      Set<String> visibleSections,
+      String relationshipState) {
+    return new ProfileResponse(
+        username, userId, null, "REGISTERED", profilePrivate, visibleSections, relationshipState);
   }
 }

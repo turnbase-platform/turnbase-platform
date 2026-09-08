@@ -6,6 +6,7 @@ import io.turnbase.platform.common.FieldValidationError;
 import io.turnbase.platform.common.ForbiddenException;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.ValidationFailedException;
+import io.turnbase.platform.social.RelationshipQueries;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -38,18 +39,21 @@ public class ProfileService {
   private final CredentialPolicy credentialPolicy;
   private final PasswordEncoder passwordEncoder;
   private final AccountProperties accountProperties;
+  private final RelationshipQueries relationshipQueries;
 
   ProfileService(
       ProfileRepository profileRepository,
       UsernamePolicy usernamePolicy,
       CredentialPolicy credentialPolicy,
       PasswordEncoder passwordEncoder,
-      AccountProperties accountProperties) {
+      AccountProperties accountProperties,
+      RelationshipQueries relationshipQueries) {
     this.profileRepository = profileRepository;
     this.usernamePolicy = usernamePolicy;
     this.credentialPolicy = credentialPolicy;
     this.passwordEncoder = passwordEncoder;
     this.accountProperties = accountProperties;
+    this.relationshipQueries = relationshipQueries;
   }
 
   /**
@@ -80,7 +84,19 @@ public class ProfileService {
     if (Boolean.TRUE.equals(row.profilePrivate())) {
       return ProfileResponse.registered(row.userId(), row.username(), true, Set.of());
     }
-    return ProfileResponse.registered(row.userId(), row.username(), false, visibleSectionsFor(row));
+
+    if (viewerId == null) {
+      return ProfileResponse.registered(
+          row.userId(), row.username(), false, visibleSectionsFor(row, false));
+    }
+    RelationshipQueries.RelationshipState relationship =
+        relationshipQueries.relationshipOf(viewerId, row.userId());
+    return ProfileResponse.registered(
+        row.userId(),
+        row.username(),
+        false,
+        visibleSectionsFor(row, relationship == RelationshipQueries.RelationshipState.FRIENDS),
+        relationship.name());
   }
 
   /**
@@ -157,11 +173,12 @@ public class ProfileService {
   }
 
   /**
-   * The friends section's third state, FR-SOC-017's "Friends Only," needs a confirmed-friendship
-   * check that belongs to IMP-M1-09 (depends on this item) and does not exist yet — so it resolves
-   * conservatively as hidden, identical to {@code HIDDEN}, until that item lands.
+   * FR-SOC-017: {@code PUBLIC} always shows the section; {@code FRIENDS_ONLY} shows it only when
+   * {@code viewerIsFriend} — the confirmed-friendship check {@code social.RelationshipQueries}
+   * supplies (`IMP-M1-09`, closing the conservative-hidden placeholder `IMP-M1-07` left here).
    */
-  private static Set<String> visibleSectionsFor(ProfileRepository.ProfileRow row) {
+  private static Set<String> visibleSectionsFor(
+      ProfileRepository.ProfileRow row, boolean viewerIsFriend) {
     Set<String> visible = new LinkedHashSet<>();
     if (!VISIBILITY_HIDDEN.equals(row.historyVisibility())) {
       visible.add(ProfileResponse.SECTION_GAME_HISTORY);
@@ -172,7 +189,8 @@ public class ProfileService {
     if (!VISIBILITY_HIDDEN.equals(row.gamesVisibility())) {
       visible.add(ProfileResponse.SECTION_UPLOADED_GAMES);
     }
-    if (VISIBILITY_PUBLIC.equals(row.friendsVisibility())) {
+    if (VISIBILITY_PUBLIC.equals(row.friendsVisibility())
+        || ("FRIENDS_ONLY".equals(row.friendsVisibility()) && viewerIsFriend)) {
       visible.add(ProfileResponse.SECTION_FRIENDS);
     }
     return visible;
