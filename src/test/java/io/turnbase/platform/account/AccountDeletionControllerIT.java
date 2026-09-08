@@ -233,9 +233,17 @@ class AccountDeletionControllerIT extends PostgresIntegrationTest {
         .single();
   }
 
+  /**
+   * Postgres orders {@code uuid} by unsigned byte value, not by {@link UUID#compareTo}'s signed
+   * comparison of the two halves as {@code long}s — the two disagree whenever the differing byte
+   * has its top bit set, which is roughly half of all random pairs. Comparing the canonical
+   * (hyphenated, lowercase-hex) string form matches Postgres's ordering exactly, since each
+   * character position corresponds one-to-one with a nibble of the same byte in both.
+   */
   private void friendUp(UUID a, UUID b) {
-    UUID low = a.compareTo(b) < 0 ? a : b;
-    UUID high = a.compareTo(b) < 0 ? b : a;
+    boolean aIsLow = a.toString().compareTo(b.toString()) < 0;
+    UUID low = aIsLow ? a : b;
+    UUID high = aIsLow ? b : a;
     jdbcClient
         .sql("insert into friendship (user_id_low, user_id_high) values (:low, :high)")
         .param("low", low)
