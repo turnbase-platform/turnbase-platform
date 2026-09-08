@@ -17,9 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
 class AccountRepository {
 
   private final JdbcClient jdbcClient;
+  private final UsernamePolicy usernamePolicy;
 
-  AccountRepository(JdbcClient jdbcClient) {
+  AccountRepository(JdbcClient jdbcClient, UsernamePolicy usernamePolicy) {
     this.jdbcClient = jdbcClient;
+    this.usernamePolicy = usernamePolicy;
   }
 
   /**
@@ -87,6 +89,43 @@ class AccountRepository {
         .param("email", lowercasedEmail)
         .query(AccountRepository::mapCredential)
         .optional();
+  }
+
+  /**
+   * FR-GUEST-001/002: mints a guest identity — {@code kind='GUEST'}, {@code guest-<serial>} drawn
+   * from {@code guest_serial_seq}, no auth method row (FR-GUEST-004) and no privacy-settings row
+   * (FR-GUEST-010's "only the username, regardless of viewer" is a display-layer rule with nothing
+   * to configure, not a settings default). {@code data-model-accounts.md} §1: because the serial's
+   * digits fold one-way onto letters, distinct serials always yield distinct skeletons, so a
+   * unique-index violation on {@code app_user_skeleton_key} here can only mean that guarantee broke
+   * — an assertion failure, not a retryable conflict.
+   */
+  @Transactional
+  String insertGuestUser(UUID userId) {
+    long serial = jdbcClient.sql("select nextval('guest_serial_seq')").query(Long.class).single();
+    String username = "guest-" + serial;
+    String skeleton = usernamePolicy.skeletonOfGuestUsername(username);
+    try {
+      jdbcClient
+          .sql(
+              """
+              insert into app_user (user_id, kind, username, username_skeleton, guest_serial)
+              values (:userId, 'GUEST', :username, :usernameSkeleton, :guestSerial)
+              """)
+          .param("userId", userId)
+          .param("username", username)
+          .param("usernameSkeleton", skeleton)
+          .param("guestSerial", serial)
+          .update();
+    } catch (DataIntegrityViolationException e) {
+      throw new IllegalStateException(
+          "guest_serial "
+              + serial
+              + " produced a username_skeleton collision, which data-model-accounts.md §1 states"
+              + " cannot happen for digit-only guest usernames",
+          e);
+    }
+    return username;
   }
 
   /** {@code GET /api/auth/session} — the principal's display name, not stored on the JWT. */

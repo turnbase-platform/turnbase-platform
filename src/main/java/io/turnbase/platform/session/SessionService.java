@@ -26,6 +26,14 @@ public class SessionService {
 
   static final String DISPLACED_REASON = "DISPLACED";
   public static final String LOGOUT_REASON = "LOGOUT";
+
+  /**
+   * FR-GUEST-005's revoke phase, and {@code app_user.deletion_reason}'s matching value ({@code
+   * data-model-accounts.md} §1) — the same event, recorded in two tables under the one literal the
+   * baseline migration's column comments both name.
+   */
+  public static final String GUEST_EXPIRED_REASON = "GUEST_EXPIRED";
+
   private static final int MAX_ATTEMPTS = 5;
 
   private final UserSessionRepository sessions;
@@ -89,6 +97,24 @@ public class SessionService {
     Boolean revoked = transactionTemplate.execute(status -> revokeById(sessionId, reason));
     if (Boolean.TRUE.equals(revoked)) {
       eventPublisher.publishEvent(new SessionRevokedEvent(sessionId, userId, reason));
+    }
+  }
+
+  /**
+   * FR-GUEST-005's revoke phase ({@code data-model-accounts.md} §1): revokes every session still
+   * active for {@code userId} (normally at most one, per {@code user_session_active_key}) with
+   * {@code reason}, publishing {@link SessionRevokedEvent} for each after the revoking transaction
+   * commits — same ordering as {@link #issueSession} and {@link #revoke}. A no-op if none are
+   * active, which keeps the caller's own scheduled sweep idempotent against a retried run.
+   */
+  public void revokeAllForUser(UUID userId, String reason) {
+    List<UUID> revokedSessionIds =
+        transactionTemplate.execute(
+            status -> sessions.revokeActiveForUser(userId, reason, Instant.now()));
+    if (revokedSessionIds != null) {
+      for (UUID sessionId : revokedSessionIds) {
+        eventPublisher.publishEvent(new SessionRevokedEvent(sessionId, userId, reason));
+      }
     }
   }
 

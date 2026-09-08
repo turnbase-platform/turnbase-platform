@@ -14,9 +14,10 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * class only decides whether the absence of one is acceptable for the path being requested.
  *
  * <p>{@link #PUBLIC_PATHS} is NFR-SEC-006's exempt list, as far as it has server-side routes today
- * — registration and login. The requirement also exempts the landing page, user profile pages, the
- * game catalog and game detail pages, none of which have a backend route yet; the item that adds
- * one adds its path here.
+ * — registration, login and guest creation (IMP-GATE-29 added the last of these to NFR-SEC-006
+ * itself; a caller minting a guest account has no session yet, so the endpoint cannot require one).
+ * The requirement also exempts the landing page, user profile pages, the game catalog and game
+ * detail pages, none of which have a backend route yet; the item that adds one adds its path here.
  *
  * <p>{@code /test/} is a second, unrelated exemption: {@code GlobalExceptionHandlerIT}'s harness
  * controller lives only on the test classpath (never shipped, {@code IMP-M1-01}) and exercises
@@ -25,7 +26,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
  */
 class SessionAuthenticationInterceptor implements HandlerInterceptor {
 
-  private static final Set<String> PUBLIC_PATHS = Set.of("/api/auth/register", "/api/auth/login");
+  private static final Set<String> PUBLIC_PATHS =
+      Set.of("/api/auth/register", "/api/auth/login", "/api/auth/guest");
   private static final String TEST_HARNESS_PREFIX = "/test/";
 
   @Override

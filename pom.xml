@@ -83,6 +83,15 @@
     -->
     <bouncycastle.version>1.85.2</bouncycastle.version>
 
+    <!--
+      IMP-M1-05: the guest purge job is the first scheduled job in this repo, so it is also the
+      first to need FR-JOB-005's "exactly one instance per interval" guarantee. The baseline
+      migration (IMP-M0-06) already carries ShedLock's fixed `shedlock` table
+      (schema-migrations.md §5) for exactly this — net.javacrumbs.shedlock is the mechanism that
+      table exists to serve, not a choice made here.
+    -->
+    <shedlock.version>7.7.0</shedlock.version>
+
     <!-- Plugins -->
     <spotless.version>3.10.1</spotless.version>
     <google-java-format.version>1.36.1</google-java-format.version>
@@ -246,6 +255,18 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
       <version>${aws-sdk.version}</version>
+    </dependency>
+
+    <!-- IMP-M1-05: the guest purge job's cross-instance mutual exclusion (FR-JOB-005). -->
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-spring</artifactId>
+      <version>${shedlock.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-provider-jdbc-template</artifactId>
+      <version>${shedlock.version}</version>
     </dependency>
 
     <!--

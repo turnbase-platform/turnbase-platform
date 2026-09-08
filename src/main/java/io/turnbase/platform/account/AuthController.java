@@ -22,9 +22,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * {@code rest-conventions.md} § Authentication ("the session lifecycle is four endpoints"), {@code
- * flows/01-arrival-and-account.md} §D. Registration and login are exempt from authentication per
- * NFR-SEC-006; {@code session} and {@code logout} require it — {@code
- * session.SessionAuthenticationInterceptor} (IMP-M1-06) enforces that before either method runs.
+ * flows/01-arrival-and-account.md} §D. Registration, login and guest creation are exempt from
+ * authentication per NFR-SEC-006 (IMP-GATE-29 added guest creation to that list); {@code session}
+ * and {@code logout} require it — {@code session.SessionAuthenticationInterceptor} (IMP-M1-06)
+ * enforces that before either method runs.
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -32,16 +33,19 @@ class AuthController {
 
   private final RegistrationService registrationService;
   private final LoginService loginService;
+  private final GuestService guestService;
   private final SessionService sessionService;
   private final AccountRepository accountRepository;
 
   AuthController(
       RegistrationService registrationService,
       LoginService loginService,
+      GuestService guestService,
       SessionService sessionService,
       AccountRepository accountRepository) {
     this.registrationService = registrationService;
     this.loginService = loginService;
+    this.guestService = guestService;
     this.sessionService = sessionService;
     this.accountRepository = accountRepository;
   }
@@ -59,6 +63,16 @@ class AuthController {
   ResponseEntity<PrincipalResponse> login(@Valid @RequestBody LoginRequest request) {
     LoginService.LoginResult result = loginService.login(request, null);
     return ResponseEntity.ok()
+        .header(HttpHeaders.SET_COOKIE, sessionCookie(result.session()).toString())
+        .body(new PrincipalResponse(result.userId(), result.username()));
+  }
+
+  /** FR-GUEST-001/003: "Play as Guest" — unauthenticated (NFR-SEC-006), always succeeds. */
+  @PostMapping("/guest")
+  ResponseEntity<PrincipalResponse> guest() {
+    GuestService.GuestResult result = guestService.mint(null);
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .location(URI.create("/api/users/" + result.username()))
         .header(HttpHeaders.SET_COOKIE, sessionCookie(result.session()).toString())
         .body(new PrincipalResponse(result.userId(), result.username()));
   }

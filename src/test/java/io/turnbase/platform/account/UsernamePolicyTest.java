@@ -88,4 +88,24 @@ class UsernamePolicyTest {
 
     assertThat(skeleton).isNotBlank();
   }
+
+  @Test
+  void skeletonOfGuestUsernameNeedsNoValidationDespiteTheReservedPrefix() {
+    // validate() rejects "guest-0" outright (rejectsTheLiteralReservedGuestPrefix above) — this
+    // method exists precisely because the system, not a registrant, is the one minting it.
+    String skeleton = policy.skeletonOfGuestUsername("guest-0");
+
+    assertThat(skeleton).isNotBlank();
+  }
+
+  @Test
+  void distinctGuestSerialsYieldDistinctSkeletons() {
+    // data-model-accounts.md §1: digit-to-letter confusable folding is one-way, so two
+    // digit-only guest usernames never collide on skeleton — the guarantee insertGuestUser's
+    // assertion-failure branch relies on.
+    String skeletonOne = policy.skeletonOfGuestUsername("guest-1");
+    String skeletonEleven = policy.skeletonOfGuestUsername("guest-11");
+
+    assertThat(skeletonOne).isNotEqualTo(skeletonEleven);
+  }
 }

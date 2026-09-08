@@ -95,6 +95,15 @@ class UsernamePolicy {
     return skeletonOf(canonicalizedIdentifier);
   }
 
+  /**
+   * The skeleton of a system-generated {@code guest-<serial>} username. {@link #validate} would
+   * reject this string outright — the reserved-prefix check exists to stop a *registering* user
+   * from claiming the prefix (FR-AUTH-013), not to stop the system from minting it.
+   */
+  String skeletonOfGuestUsername(String guestUsername) {
+    return skeletonOf(guestUsername);
+  }
+
   private String skeletonOf(String canonical) {
     // input-validation.md § Usernames: getSkeleton(caseFold(NFC(username))) — canonical is already
     // NFC (Canonicalizer.canonicalize); full case folding runs here, before the skeleton algorithm.

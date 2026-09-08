@@ -34,7 +34,8 @@ import org.springframework.web.client.RestTemplate;
  * Postgres: registration and login endpoints, validation rules, unique-constraint-to-domain-error
  * mapping, Argon2 hashing, and login's session displacement (FR-SESS-003). Also carries {@code
  * IMP-M1-06}'s: {@code GET /session}, {@code POST /logout}, the FR-SESS-004 401 shape for a
- * displaced token, and {@code SessionRevokedEvent} publication.
+ * displaced token, and {@code SessionRevokedEvent} publication. Also {@code IMP-M1-05}'s {@code
+ * POST /guest}: a credential-free principal minted from one call, immediately authenticated.
  */
 class AuthControllerIT extends PostgresIntegrationTest {
 
@@ -334,6 +335,53 @@ class AuthControllerIT extends PostgresIntegrationTest {
               assertThat(event.sessionId()).isEqualTo(sessionId);
               assertThat(event.reason()).isEqualTo("LOGOUT");
             });
+  }
+
+  @Test
+  void guestMintsAnAccessibleAccountWithNoCredential() throws Exception {
+    ResponseEntity<String> response = post("/guest", null);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    Map<String, Object> body = parse(response);
+    String username = (String) body.get("username");
+    assertThat(username).startsWith("guest-");
+    UUID userId = UUID.fromString((String) body.get("userId"));
+    assertThat(response.getHeaders().getLocation())
+        .isEqualTo(java.net.URI.create("/api/users/" + username));
+    assertSessionCookie(response);
+
+    Map<String, Object> row =
+        jdbcClient
+            .sql("select kind, email, guest_serial from app_user where user_id = :userId")
+            .param("userId", userId)
+            .query()
+            .singleRow();
+    assertThat(row.get("kind")).isEqualTo("GUEST");
+    assertThat(row.get("email")).isNull();
+    assertThat(row.get("guest_serial")).isNotNull();
+
+    Integer authMethodCount =
+        jdbcClient
+            .sql("select count(*) from user_auth_method where user_id = :userId")
+            .param("userId", userId)
+            .query(Integer.class)
+            .single();
+    assertThat(authMethodCount).isZero();
+
+    // GET /session proves the minted cookie actually authenticates — the only means of access
+    // a guest ever has (FR-GUEST-004).
+    ResponseEntity<String> sessionResponse =
+        getWithCookie("/session", sessionCookieHeader(response));
+    assertThat(sessionResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(parse(sessionResponse).get("username")).isEqualTo(username);
+  }
+
+  @Test
+  void twoGuestMintsProduceDistinctIncreasingSerialsAndUsernames() throws Exception {
+    Map<String, Object> first = parse(post("/guest", null));
+    Map<String, Object> second = parse(post("/guest", null));
+
+    assertThat(first.get("username")).isNotEqualTo(second.get("username"));
   }
 
   @Test
