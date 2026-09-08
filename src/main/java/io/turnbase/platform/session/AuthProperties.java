@@ -11,4 +11,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "turnbase.auth")
 public record AuthProperties(
-    Duration sessionTtl, boolean jwtKeySetRequired, @Nullable String jwtKeySet) {}
+    Duration sessionTtl, boolean jwtKeySetRequired, @Nullable String jwtKeySet, OAuth oauth) {
+
+  /** {@code oauth-rest-api.md} §9 — the two OAuth round-trip windows. */
+  public record OAuth(Duration stateTtl, Duration pendingRegistrationTtl) {}
+}

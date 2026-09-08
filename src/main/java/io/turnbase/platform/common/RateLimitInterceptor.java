@@ -27,9 +27,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
  *
  * <p>Endpoint classification is exact-match against what exists today, the same convention {@code
  * session.SessionAuthenticationInterceptor} uses for NFR-SEC-006 — the item that adds a new Tier 1
- * endpoint (auth-method addition/removal), a Tier 3 endpoint (the upload version-create route,
- * {@code IMP-M4-03}) or a Tier 5 endpoint (the OAuth first-time-registration callback, {@code
- * IMP-M1-10}) extends the matching set here.
+ * endpoint or a Tier 3 endpoint (the upload version-create route, {@code IMP-M4-03}) extends the
+ * matching set here. {@code IMP-M1-10} did exactly that for Tier 1 ({@code POST
+ * /api/auth/oauth/link-challenge}, an auth-method-addition credential guess), Tier 4 ({@code GET
+ * /auth/google}/{@code /auth/callback}, unauthenticated reads with no account-mutation consequence)
+ * and Tier 5 ({@code POST /api/auth/oauth/complete-registration}'s success path — see {@code
+ * oauth-rest-api.md} §6 for why the account-creation event is there and not at the callback).
  */
 @Component
 class RateLimitInterceptor implements HandlerInterceptor {
@@ -39,8 +42,12 @@ class RateLimitInterceptor implements HandlerInterceptor {
   private static final String REGISTER_PATH = "/api/auth/register";
   private static final String GUEST_PATH = "/api/auth/guest";
   private static final String PASSWORD_CHANGE_PATH = "/api/users/me/password";
+  private static final String OAUTH_LINK_CHALLENGE_PATH = "/api/auth/oauth/link-challenge";
+  private static final String OAUTH_COMPLETE_REGISTRATION_PATH =
+      "/api/auth/oauth/complete-registration";
   private static final Set<String> TIER1_PATHS =
-      Set.of(LOGIN_PATH, REGISTER_PATH, PASSWORD_CHANGE_PATH);
+      Set.of(LOGIN_PATH, REGISTER_PATH, PASSWORD_CHANGE_PATH, OAUTH_LINK_CHALLENGE_PATH);
+  private static final Set<String> OAUTH_REDIRECT_PATHS = Set.of("/auth/google", "/auth/callback");
   private static final Pattern UPLOAD_VERSION_CREATE_PATH =
       Pattern.compile("^/api/games/[^/]+/versions$");
 
@@ -121,9 +128,12 @@ class RateLimitInterceptor implements HandlerInterceptor {
     }
 
     Object attribute = request.getAttribute(TIER5_BUCKET_ATTRIBUTE);
-    if (failed && attribute instanceof Bucket mintingBucket) {
-      // Tier 5 counts successes only — refund the optimistic pre-consumption of a failed attempt
-      // (validation error, duplicate username/email) so it never counts against the cap.
+    // Tier 5 counts successes only. Every minting endpoint's only success status is 201 (a row was
+    // created); refund on anything else — a >=400 failure (validation error, duplicate
+    // username/email) or, for complete-registration, a 200 CHALLENGE_REQUIRED (oauth-rest-api.md
+    // §6 — no account created, so no mint happened) — so neither ever counts against the cap.
+    if (response.getStatus() != HttpServletResponse.SC_CREATED
+        && attribute instanceof Bucket mintingBucket) {
       metrics.record(
           () -> {
             mintingBucket.addTokens(1);
@@ -178,7 +188,7 @@ class RateLimitInterceptor implements HandlerInterceptor {
   // ---- Tier 5 — account minting (IP, success-counting) ----
 
   private void consumeMintingToken(HttpServletRequest request, String path) {
-    boolean registration = REGISTER_PATH.equals(path);
+    boolean registration = !GUEST_PATH.equals(path);
     RateLimitProperties.Bucket config =
         registration ? properties.minting().registration() : properties.minting().guest();
     String key =
@@ -203,7 +213,7 @@ class RateLimitInterceptor implements HandlerInterceptor {
       // Governed exclusively by their own tier above — Tier 2 is "not covered by another tier".
       return null;
     }
-    if (isPublicRead(method, path)) {
+    if (isPublicRead(method, path) || isOAuthRedirect(method, path)) {
       return new Classification(
           "rate:public:" + ipResolver.resolve(request), properties.publicTier(), false);
     }
@@ -261,11 +271,21 @@ class RateLimitInterceptor implements HandlerInterceptor {
 
   private static boolean isTier5(String method, String path) {
     return "POST".equalsIgnoreCase(method)
-        && (GUEST_PATH.equals(path) || REGISTER_PATH.equals(path));
+        && (GUEST_PATH.equals(path)
+            || REGISTER_PATH.equals(path)
+            || OAUTH_COMPLETE_REGISTRATION_PATH.equals(path));
   }
 
   private static boolean isUploadVersionCreate(String method, String path) {
     return "POST".equalsIgnoreCase(method) && UPLOAD_VERSION_CREATE_PATH.matcher(path).matches();
+  }
+
+  /**
+   * {@code oauth-rest-api.md} §3/§4 — Tier 4 (unauthenticated, lenient): neither route mutates an
+   * account, so the general-abuse budget is the right shape, not a dedicated bucket.
+   */
+  private static boolean isOAuthRedirect(String method, String path) {
+    return "GET".equalsIgnoreCase(method) && OAUTH_REDIRECT_PATHS.contains(path);
   }
 
   /**

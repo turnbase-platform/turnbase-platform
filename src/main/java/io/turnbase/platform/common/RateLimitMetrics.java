@@ -12,15 +12,17 @@ import org.springframework.stereotype.Component;
  * turnbase_redis_operation_seconds{concern}} timer and a {@code
  * turnbase_redis_errors_total{concern}} counter, tagged at the repository layer. The rate limiter's
  * concern is {@code application} — settled once for every {@code IMP-M1-02} call site rather than
- * re-decided per tier.
+ * re-decided per tier. Public so other {@code application}-concern Redis call sites (e.g. {@code
+ * IMP-M1-10}'s OAuth pending-registration record) can reuse the one wrapper rather than each
+ * standing up its own timer/counter pair under the identical tag.
  */
 @Component
-class RateLimitMetrics {
+public class RateLimitMetrics {
 
   private final Timer operationTimer;
   private final Counter errorCounter;
 
-  RateLimitMetrics(MeterRegistry meterRegistry) {
+  public RateLimitMetrics(MeterRegistry meterRegistry) {
     this.operationTimer =
         Timer.builder("turnbase_redis_operation_seconds")
             .tag("concern", "application")
@@ -31,7 +33,7 @@ class RateLimitMetrics {
             .register(meterRegistry);
   }
 
-  <T> T record(Supplier<T> redisOperation) {
+  public <T> T record(Supplier<T> redisOperation) {
     long startNanos = System.nanoTime();
     try {
       return redisOperation.get();

@@ -20,7 +20,12 @@ class JwtKeySetConfigTest {
   @Test
   void localProfileGeneratesAndPersistsToTheKeyFile(@TempDir Path tmp) {
     Path keyFile = tmp.resolve("jwt-keys.json");
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), false, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            false,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
 
     JwtKeySet generated =
         JwtKeySetConfig.resolve(properties, new MockEnvironment(), objectMapper, keyFile);
@@ -34,7 +39,12 @@ class JwtKeySetConfigTest {
   @Test
   void localProfileReusesAnExistingKeyFileAcrossRestarts(@TempDir Path tmp) throws Exception {
     Path keyFile = tmp.resolve("jwt-keys.json");
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), false, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            false,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
     JwtKeySet first =
         JwtKeySetConfig.resolve(properties, new MockEnvironment(), objectMapper, keyFile);
 
@@ -47,7 +57,12 @@ class JwtKeySetConfigTest {
   @Test
   void testProfileGeneratesAFreshKeyEveryTimeWithNoFile(@TempDir Path tmp) {
     Path keyFile = tmp.resolve("unused").resolve("jwt-keys.json");
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), false, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            false,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
     MockEnvironment testEnv = new MockEnvironment();
     testEnv.setActiveProfiles("test");
 
@@ -62,7 +77,12 @@ class JwtKeySetConfigTest {
   @Test
   void e2eProfileAlsoGeneratesInMemory(@TempDir Path tmp) {
     Path keyFile = tmp.resolve("jwt-keys.json");
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), false, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            false,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
     MockEnvironment e2eEnv = new MockEnvironment();
     e2eEnv.setActiveProfiles("e2e");
 
@@ -73,7 +93,12 @@ class JwtKeySetConfigTest {
 
   @Test
   void requiredWithNoSuppliedValueFailsNamingTheKey(@TempDir Path tmp) {
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), true, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            true,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
 
     assertThatThrownBy(
             () ->
@@ -92,7 +117,11 @@ class JwtKeySetConfigTest {
                 new JwtKeySet.RetiredKey(
                     "k2", "retired-secret", Instant.parse("2026-08-09T10:00:00Z"))));
     AuthProperties properties =
-        new AuthProperties(Duration.ofHours(24), true, objectMapper.writeValueAsString(supplied));
+        new AuthProperties(
+            Duration.ofHours(24),
+            true,
+            objectMapper.writeValueAsString(supplied),
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
 
     JwtKeySet resolved =
         JwtKeySetConfig.resolve(
@@ -105,7 +134,12 @@ class JwtKeySetConfigTest {
 
   @Test
   void requiredWithMalformedJsonFailsClearly(@TempDir Path tmp) {
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), true, "{not json");
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            true,
+            "{not json",
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
 
     assertThatThrownBy(
             () ->

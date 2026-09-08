@@ -24,7 +24,12 @@ class JwtServiceTest {
   private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
   private JwtKeySetManager newManager(JwtKeySet initial, Path tmp) {
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), false, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            false,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
     return new JwtKeySetManager(
         initial, properties, new MockEnvironment(), objectMapper, tmp.resolve("jwt-keys.json"));
   }

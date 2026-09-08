@@ -137,6 +137,121 @@ class AccountRepository {
         .optional();
   }
 
+  /**
+   * {@code oauth-rest-api.md} §4 step 3 — resolves a returning Google login by {@code sub}, never
+   * by email ({@code data-model-accounts.md} §2).
+   */
+  Optional<Identity> findByGoogleSubject(String providerSubject) {
+    return jdbcClient
+        .sql(
+            """
+            select u.user_id, u.username
+            from app_user u
+            join user_auth_method m on m.user_id = u.user_id and m.method = 'GOOGLE'
+            where u.deleted_at is null and m.provider_subject = :providerSubject
+            """)
+        .param("providerSubject", providerSubject)
+        .query(AccountRepository::mapIdentity)
+        .optional();
+  }
+
+  /**
+   * {@code oauth-rest-api.md} §6 step 1 — whether {@code email} is already held by a live account,
+   * for FR-AUTH-016's collision check. Only a {@code PASSWORD}-method account can collide this way
+   * (data-model-accounts.md §2's {@code user_auth_method_subject_key} means a second Google account
+   * can never share an email with an existing Google-linked one without also sharing its {@code
+   * sub}, which §4 step 3 would have already matched).
+   */
+  Optional<Identity> findCredentialAccountByEmail(String lowercasedEmail) {
+    return jdbcClient
+        .sql(
+            """
+            select u.user_id, u.username
+            from app_user u
+            join user_auth_method m on m.user_id = u.user_id and m.method = 'PASSWORD'
+            where u.kind = 'REGISTERED' and u.deleted_at is null and lower(u.email) = :email
+            """)
+        .param("email", lowercasedEmail)
+        .query(AccountRepository::mapIdentity)
+        .optional();
+  }
+
+  /** {@code oauth-rest-api.md} §7 — the password hash to challenge against. */
+  Optional<String> findPasswordHashById(UUID userId) {
+    return jdbcClient
+        .sql(
+            "select password_hash from user_auth_method where user_id = :userId and method ="
+                + " 'PASSWORD'")
+        .param("userId", userId)
+        .query(String.class)
+        .optional();
+  }
+
+  /**
+   * {@code oauth-rest-api.md} §6 step 2 — mints a first-time Google account. The caller has already
+   * confirmed the email is free ({@link #findCredentialAccountByEmail}); a unique-index violation
+   * here can therefore only be the username skeleton, unlike {@link #insertRegisteredUser}'s
+   * two-way check.
+   */
+  @Transactional
+  void insertOAuthUser(
+      UUID userId,
+      UsernamePolicy.ValidatedUsername username,
+      String email,
+      String providerSubject) {
+    try {
+      jdbcClient
+          .sql(
+              """
+              insert into app_user (user_id, kind, username, username_skeleton, email, email_source)
+              values (:userId, 'REGISTERED', :username, :usernameSkeleton, :email, 'OAUTH')
+              """)
+          .param("userId", userId)
+          .param("username", username.display())
+          .param("usernameSkeleton", username.skeleton())
+          .param("email", email)
+          .update();
+    } catch (DataIntegrityViolationException e) {
+      throw new ConflictException("Username already taken.");
+    }
+
+    jdbcClient
+        .sql(
+            """
+            insert into user_auth_method (auth_method_id, user_id, method, provider_subject)
+            values (:authMethodId, :userId, 'GOOGLE', :providerSubject)
+            """)
+        .param("authMethodId", UUID.randomUUID())
+        .param("userId", userId)
+        .param("providerSubject", providerSubject)
+        .update();
+
+    jdbcClient
+        .sql("insert into user_privacy_settings (user_id) values (:userId)")
+        .param("userId", userId)
+        .update();
+  }
+
+  /** {@code oauth-rest-api.md} §7 success path — FR-AUTH-009, an additional method. */
+  void insertGoogleAuthMethod(UUID userId, String providerSubject) {
+    jdbcClient
+        .sql(
+            """
+            insert into user_auth_method (auth_method_id, user_id, method, provider_subject)
+            values (:authMethodId, :userId, 'GOOGLE', :providerSubject)
+            """)
+        .param("authMethodId", UUID.randomUUID())
+        .param("userId", userId)
+        .param("providerSubject", providerSubject)
+        .update();
+  }
+
+  private static Identity mapIdentity(ResultSet rs, int rowNum) throws SQLException {
+    return new Identity(rs.getObject("user_id", UUID.class), rs.getString("username"));
+  }
+
+  record Identity(UUID userId, String username) {}
+
   private static Credential mapCredential(ResultSet rs, int rowNum) throws SQLException {
     return new Credential(
         rs.getObject("user_id", UUID.class),

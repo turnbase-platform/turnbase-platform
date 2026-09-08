@@ -114,6 +114,11 @@ turnbase:
     # secrets-and-configuration.md §3.1 (IMP-GATE-15). No default: required only when
     # jwt-key-set-required is true, enforced by JwtKeySetConfig, not by this placeholder.
     jwt-key-set: ${TURNBASE_JWT_KEY_SET:}
+    oauth:
+      # oauth-rest-api.md §9. Two separate windows: the round trip to Google's consent screen
+      # versus the time to fill in the complete-registration form afterward.
+      state-ttl: ${TURNBASE_AUTH_OAUTH_STATE_TTL:5m}
+      pending-registration-ttl: ${TURNBASE_AUTH_OAUTH_PENDING_REGISTRATION_TTL:10m}
   accounts:
     rename-window: ${TURNBASE_ACCOUNTS_RENAME_WINDOW:30d}
   social:
@@ -161,6 +166,10 @@ turnbase:
       # secrets-and-configuration.md §5: absent by default, and the platform starts anyway.
       client-id: ${TURNBASE_OAUTH_GOOGLE_CLIENT_ID:}
       client-secret: ${TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET:}
+      # Google's own fixed endpoints — overridden only by tests, to point at a local stub.
+      authorization-endpoint: ${TURNBASE_OAUTH_GOOGLE_AUTHORIZATION_ENDPOINT:https://accounts.google.com/o/oauth2/v2/auth}
+      token-endpoint: ${TURNBASE_OAUTH_GOOGLE_TOKEN_ENDPOINT:https://oauth2.googleapis.com/token}
+      userinfo-endpoint: ${TURNBASE_OAUTH_GOOGLE_USERINFO_ENDPOINT:https://openidconnect.googleapis.com/v1/userinfo}
   admin:
     # secrets-and-configuration.md §1. No default — an unset value fails this placeholder at
     # startup rather than binding an empty string.

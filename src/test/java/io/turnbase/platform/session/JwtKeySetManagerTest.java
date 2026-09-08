@@ -18,7 +18,12 @@ class JwtKeySetManagerTest {
   private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
   private JwtKeySetManager managerFor(JwtKeySet initial, Path keyFile, boolean required) {
-    AuthProperties properties = new AuthProperties(Duration.ofHours(24), required, null);
+    AuthProperties properties =
+        new AuthProperties(
+            Duration.ofHours(24),
+            required,
+            null,
+            new AuthProperties.OAuth(Duration.ofMinutes(5), Duration.ofMinutes(10)));
     return new JwtKeySetManager(initial, properties, new MockEnvironment(), objectMapper, keyFile);
   }
 
