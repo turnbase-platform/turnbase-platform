@@ -1,11 +1,15 @@
 package io.turnbase.platform.account;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.SessionCookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import org.jspecify.annotations.Nullable;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,20 +19,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * {@code rest-conventions.md} § Authentication's two self-scoped account routes plus the public
- * profile read. {@code GET /{username}} is exempt from session authentication ({@code
- * user-accounts.md} NFR-SEC-006, {@code SessionAuthenticationInterceptor}); the {@code /me/**}
- * mutations are not — {@code AuthenticatedUser} is guaranteed non-null there before the handler
- * runs.
+ * {@code rest-conventions.md} § Authentication's self-scoped account routes plus the public profile
+ * read. {@code GET /{username}} is exempt from session authentication ({@code user-accounts.md}
+ * NFR-SEC-006, {@code SessionAuthenticationInterceptor}); the {@code /me/**} mutations are not —
+ * {@code AuthenticatedUser} is guaranteed non-null there before the handler runs.
  */
 @RestController
 @RequestMapping("/api/users")
 class ProfileController {
 
   private final ProfileService profileService;
+  private final AccountDeletionService accountDeletionService;
 
-  ProfileController(ProfileService profileService) {
+  ProfileController(ProfileService profileService, AccountDeletionService accountDeletionService) {
     this.profileService = profileService;
+    this.accountDeletionService = accountDeletionService;
   }
 
   @GetMapping("/{username}")
@@ -60,6 +65,26 @@ class ProfileController {
       @Valid @RequestBody UpdatePrivacyRequest request, HttpServletRequest servletRequest) {
     AuthenticatedUser principal = principalOf(servletRequest);
     return ResponseEntity.ok(profileService.updatePrivacySettings(principal.userId(), request));
+  }
+
+  /** {@code rest-conventions.md} § Authentication (`IMP-GATE-33`): FR-ACCT-004…008. */
+  @DeleteMapping("/me")
+  ResponseEntity<Void> deleteAccount(HttpServletRequest servletRequest) {
+    AuthenticatedUser principal = principalOf(servletRequest);
+    accountDeletionService.deleteAccount(principal.userId());
+    return ResponseEntity.noContent()
+        .header(HttpHeaders.SET_COOKIE, clearedSessionCookie().toString())
+        .build();
+  }
+
+  private static ResponseCookie clearedSessionCookie() {
+    return ResponseCookie.from(SessionCookie.NAME, "")
+        .httpOnly(true)
+        .secure(true)
+        .sameSite("Strict")
+        .path("/")
+        .maxAge(0)
+        .build();
   }
 
   private static AuthenticatedUser principalOf(HttpServletRequest request) {
