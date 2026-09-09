@@ -300,6 +300,16 @@
     </dependency>
 
     <!--
+      IMP-M2-02: STOMP-over-WebSocket (websocket.md § Connection). bucket4j_jdk17-core above
+      already carries the pod-local LocalBucket Tier 6 uses — no distributed proxy manager needed,
+      by design (rate-limiting.md § Tier 6).
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+
+    <!--
       ADR-0014: the module boundary is a build error, not a convention. spring-modulith-junit
       supplies ApplicationModules.of(...).verify() at test scope.
     -->

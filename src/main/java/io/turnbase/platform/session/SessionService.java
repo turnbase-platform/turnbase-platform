@@ -1,7 +1,9 @@
 package io.turnbase.platform.session;
 
+import io.turnbase.platform.common.AuthenticatedUser;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.context.ApplicationEventPublisher;
@@ -26,6 +28,11 @@ public class SessionService {
 
   static final String DISPLACED_REASON = "DISPLACED";
   public static final String LOGOUT_REASON = "LOGOUT";
+
+  /** A token this class's own checks reject before a {@code revoked_reason} column is consulted. */
+  public static final String EXPIRED_REASON = "expired";
+
+  public static final String INVALID_REASON = "invalid";
 
   /**
    * FR-GUEST-005's revoke phase, and {@code app_user.deletion_reason}'s matching value ({@code
@@ -116,6 +123,44 @@ public class SessionService {
         eventPublisher.publishEvent(new SessionRevokedEvent(sessionId, userId, reason));
       }
     }
+  }
+
+  /**
+   * The session-cookie validation {@code SessionAuthenticationFilter} runs on every HTTP request —
+   * pulled onto this class's public API so {@code websocket}'s {@code CONNECT}-frame authentication
+   * (`IMP-M2-02`, `websocket.md` § Authentication) can run the identical check once, at connection
+   * time, rather than duplicating token-verify-then-session-lookup at a second call site. {@code
+   * Invalid.reason()} is one of {@code user_session.revoked_reason} (e.g. {@link
+   * #DISPLACED_REASON}, {@link #LOGOUT_REASON}), or {@link #EXPIRED_REASON}/{@link #INVALID_REASON}
+   * for a token this method's own checks reject before a reason column is even consulted.
+   */
+  public Resolution resolve(String token) {
+    JwtClaims claims;
+    try {
+      claims = jwtService.verify(token);
+    } catch (JwtVerificationException e) {
+      return new Resolution.Invalid(INVALID_REASON);
+    }
+    Optional<UserSession> maybeSession = sessions.findById(claims.sessionId());
+    if (maybeSession.isEmpty()) {
+      return new Resolution.Invalid(INVALID_REASON);
+    }
+    UserSession session = maybeSession.get();
+    String revokedReason = session.revokedReason();
+    if (session.revokedAt() != null && revokedReason != null) {
+      return new Resolution.Invalid(revokedReason);
+    }
+    if (!session.expiresAt().isAfter(Instant.now())) {
+      return new Resolution.Invalid(EXPIRED_REASON);
+    }
+    return new Resolution.Valid(new AuthenticatedUser(session.userId(), session.sessionId()));
+  }
+
+  /** The outcome of {@link #resolve} — never throws, so every caller handles both cases inline. */
+  public sealed interface Resolution {
+    record Valid(AuthenticatedUser user) implements Resolution {}
+
+    record Invalid(String reason) implements Resolution {}
   }
 
   private boolean revokeById(UUID sessionId, String reason) {

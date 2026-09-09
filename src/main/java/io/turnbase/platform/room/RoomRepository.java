@@ -233,7 +233,8 @@ class RoomRepository {
         .optional();
   }
 
-  private boolean isCurrentParticipant(UUID roomId, UUID userId) {
+  /** Room or spectator membership, current only ({@code left_at is null}) — role-agnostic. */
+  boolean isCurrentParticipant(UUID roomId, UUID userId) {
     Boolean exists =
         jdbcClient
             .sql(

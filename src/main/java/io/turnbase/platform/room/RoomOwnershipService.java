@@ -1,5 +1,6 @@
 package io.turnbase.platform.room;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,16 @@ class RoomOwnershipService {
   private static final String REDIRECT = "0";
   private static final String ALREADY_MINE = "1";
   private static final String ADOPTED = "2";
+
+  /**
+   * {@code room-lifecycle.md} §1.7: "the handler retries internally for a few hundred milliseconds
+   * and then gives up." Three attempts, 100ms apart — shared by every caller of {@link
+   * #claimWithRetry} (REST's {@code RoomService}, STOMP's subscribe-time re-verification), so the
+   * ~200ms budget is spent identically regardless of which protocol is asking.
+   */
+  private static final int RETRY_ATTEMPTS = 3;
+
+  private static final Duration RETRY_DELAY = Duration.ofMillis(100);
 
   /** {@code room-lifecycle.md} §1.2, verbatim. Returns {@code [0|1|2, ownerPodId, epoch]}. */
   private static final RedisScript<List> CLAIM_SCRIPT =
@@ -178,6 +189,35 @@ class RoomOwnershipService {
       throw new IllegalStateException("claim script returned unexpected result " + result);
     }
     return adopt(roomId, toLong(reply.get(2)));
+  }
+
+  /**
+   * {@link #claim} with §1.7's bounded retry: a {@code Redirect} or a lost adoption race ({@code
+   * Superseded} — this class's own "never retry in place" applies to the room-row write, not to
+   * re-running the whole claim script) is retried {@link #RETRY_ATTEMPTS} times before giving up.
+   * The final outcome is returned as-is — the caller decides what "gave up" means for its own
+   * protocol (a REST {@code 503} versus a STOMP {@code ROOM_UNAVAILABLE_RETRY} frame).
+   */
+  ClaimOutcome claimWithRetry(UUID roomId) {
+    ClaimOutcome outcome = claim(roomId);
+    for (int attempt = 2;
+        attempt <= RETRY_ATTEMPTS
+            && (outcome instanceof ClaimOutcome.Redirect
+                || outcome instanceof ClaimOutcome.Superseded);
+        attempt++) {
+      sleep(RETRY_DELAY);
+      outcome = claim(roomId);
+    }
+    return outcome;
+  }
+
+  private static void sleep(Duration duration) {
+    try {
+      Thread.sleep(duration);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("interrupted while retrying a room ownership claim", e);
+    }
   }
 
   /** {@code StringRedisTemplate} deserializes every script reply element as a {@link String}. */

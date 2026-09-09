@@ -13,9 +13,6 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -23,14 +20,16 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 /**
  * {@code IMP-M1-06}: the filter resolves a principal (or records why it could not) but never itself
- * rejects a request — {@link SessionAuthenticationInterceptor} owns the 401.
+ * rejects a request — {@link SessionAuthenticationInterceptor} owns the 401. Token-verify-then-
+ * session-lookup itself is {@link SessionServiceTest}'s concern since {@code IMP-M2-02} moved it
+ * onto {@link SessionService#resolve}; this class only exercises how the filter dispatches on the
+ * two {@link SessionService.Resolution} cases.
  */
 class SessionAuthenticationFilterTest {
 
-  private final JwtService jwtService = mock(JwtService.class);
-  private final UserSessionRepository sessions = mock(UserSessionRepository.class);
+  private final SessionService sessionService = mock(SessionService.class);
   private final SessionAuthenticationFilter filter =
-      new SessionAuthenticationFilter(jwtService, sessions);
+      new SessionAuthenticationFilter(sessionService);
 
   @Test
   void aRequestWithNoCookiePassesThroughWithNoPrincipalAndNoFailureReason() throws Exception {
@@ -42,8 +41,10 @@ class SessionAuthenticationFilterTest {
   }
 
   @Test
-  void anUnverifiableTokenIsRecordedAsInvalidAndTheRequestStillProceeds() throws Exception {
-    when(jwtService.verify("garbage")).thenThrow(new JwtVerificationException("bad signature"));
+  void anInvalidResolutionIsRecordedAsTheFailureReasonAndTheRequestStillProceeds()
+      throws Exception {
+    when(sessionService.resolve("garbage"))
+        .thenReturn(new SessionService.Resolution.Invalid(SessionService.INVALID_REASON));
 
     HttpServletRequest seen = run(requestWithCookie("garbage"));
 
@@ -53,38 +54,9 @@ class SessionAuthenticationFilterTest {
   }
 
   @Test
-  void aTokenWithNoMatchingSessionRowIsRecordedAsInvalid() throws Exception {
-    UUID userId = UUID.randomUUID();
-    UUID sessionId = UUID.randomUUID();
-    when(jwtService.verify("token"))
-        .thenReturn(new JwtClaims(userId, sessionId, "k1", Instant.now(), Instant.now()));
-    when(sessions.findById(sessionId)).thenReturn(Optional.empty());
-
-    HttpServletRequest seen = run(requestWithCookie("token"));
-
-    assertThat(seen.getUserPrincipal()).isNull();
-    assertThat(seen.getAttribute(SessionAuthenticationFilter.AUTH_FAILURE_REASON_ATTRIBUTE))
-        .isEqualTo(SessionAuthenticationFilter.INVALID_REASON);
-  }
-
-  @Test
-  void aRevokedSessionIsRecordedWithItsOwnRevokedReason() throws Exception {
-    UUID userId = UUID.randomUUID();
-    UUID sessionId = UUID.randomUUID();
-    when(jwtService.verify("token"))
-        .thenReturn(new JwtClaims(userId, sessionId, "k1", Instant.now(), Instant.now()));
-    when(sessions.findById(sessionId))
-        .thenReturn(
-            Optional.of(
-                new UserSession(
-                    sessionId,
-                    userId,
-                    Instant.now().minusSeconds(60),
-                    Instant.now().plusSeconds(3600),
-                    Instant.now(),
-                    "DISPLACED",
-                    "k1",
-                    null)));
+  void aRevokedResolutionCarriesItsOwnRevokedReason() throws Exception {
+    when(sessionService.resolve("token"))
+        .thenReturn(new SessionService.Resolution.Invalid("DISPLACED"));
 
     HttpServletRequest seen = run(requestWithCookie("token"));
 
@@ -94,53 +66,16 @@ class SessionAuthenticationFilterTest {
   }
 
   @Test
-  void anExpiredButUnrevokedSessionIsRecordedAsExpired() throws Exception {
+  void aValidResolutionEstablishesTheAuthenticatedUserPrincipal() throws Exception {
     UUID userId = UUID.randomUUID();
     UUID sessionId = UUID.randomUUID();
-    when(jwtService.verify("token"))
-        .thenReturn(new JwtClaims(userId, sessionId, "k1", Instant.now(), Instant.now()));
-    when(sessions.findById(sessionId))
-        .thenReturn(
-            Optional.of(
-                new UserSession(
-                    sessionId,
-                    userId,
-                    Instant.now().minus(48, ChronoUnit.HOURS),
-                    Instant.now().minus(24, ChronoUnit.HOURS),
-                    null,
-                    null,
-                    "k1",
-                    null)));
+    AuthenticatedUser principal = new AuthenticatedUser(userId, sessionId);
+    when(sessionService.resolve("token"))
+        .thenReturn(new SessionService.Resolution.Valid(principal));
 
     HttpServletRequest seen = run(requestWithCookie("token"));
 
-    assertThat(seen.getUserPrincipal()).isNull();
-    assertThat(seen.getAttribute(SessionAuthenticationFilter.AUTH_FAILURE_REASON_ATTRIBUTE))
-        .isEqualTo(SessionAuthenticationFilter.EXPIRED_REASON);
-  }
-
-  @Test
-  void aValidTokenEstablishesTheAuthenticatedUserPrincipal() throws Exception {
-    UUID userId = UUID.randomUUID();
-    UUID sessionId = UUID.randomUUID();
-    when(jwtService.verify("token"))
-        .thenReturn(new JwtClaims(userId, sessionId, "k1", Instant.now(), Instant.now()));
-    when(sessions.findById(sessionId))
-        .thenReturn(
-            Optional.of(
-                new UserSession(
-                    sessionId,
-                    userId,
-                    Instant.now().minusSeconds(60),
-                    Instant.now().plusSeconds(3600),
-                    null,
-                    null,
-                    "k1",
-                    null)));
-
-    HttpServletRequest seen = run(requestWithCookie("token"));
-
-    assertThat(seen.getUserPrincipal()).isEqualTo(new AuthenticatedUser(userId, sessionId));
+    assertThat(seen.getUserPrincipal()).isEqualTo(principal);
   }
 
   private HttpServletRequest run(MockHttpServletRequest request)

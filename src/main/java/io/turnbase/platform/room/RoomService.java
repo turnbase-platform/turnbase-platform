@@ -5,7 +5,6 @@ import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.PaginationMetadata;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
-import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
@@ -19,16 +18,6 @@ import org.springframework.stereotype.Service;
  */
 @Service
 class RoomService {
-
-  /**
-   * {@code room-lifecycle.md} §1.7: "the handler retries internally for a few hundred milliseconds
-   * and then gives up." Three attempts, 100ms apart — two sleeps, ~200ms of held request-thread
-   * time, well inside the stated budget and short enough that a rolling deploy's simultaneous
-   * reconnect storm cannot exhaust the thread pool.
-   */
-  private static final int CLAIM_ATTEMPTS = 3;
-
-  private static final Duration CLAIM_RETRY_DELAY = Duration.ofMillis(100);
 
   /** {@code room-rest-api.md} §7's own worked example: {@code Retry-After: 2}, {@code 2000}ms. */
   private static final long RETRY_AFTER_MS = 2000;
@@ -194,34 +183,20 @@ class RoomService {
   }
 
   /**
-   * {@code room-lifecycle.md} §1.2/§1.7: claim, and on redirect or a lost adoption race ({@code
-   * Superseded} — {@code IMP-M2-03}'s own "never retry in place" applies to the room-row write, not
-   * to re-running the whole claim script), retry with a bounded backoff before giving up with the
-   * {@code room-unavailable-retry} {@code 503}. Success always means this pod is the owner — {@code
-   * room-rest-api.md} Done-when clause 5 — so the header is always this pod's own id.
+   * {@code room-lifecycle.md} §1.2/§1.7: {@link RoomOwnershipService#claimWithRetry} already
+   * retries a redirect or a lost adoption race with a bounded backoff; this method only translates
+   * final failure into the {@code room-unavailable-retry} {@code 503}. Success always means this
+   * pod is the owner — {@code room-rest-api.md} Done-when clause 5 — so the header is always this
+   * pod's own id.
    */
   private String claimAndGetInstanceHeader(UUID roomId) {
-    for (int attempt = 1; attempt <= CLAIM_ATTEMPTS; attempt++) {
-      RoomOwnershipService.ClaimOutcome outcome = ownership.claim(roomId);
-      if (outcome instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine
-          || outcome instanceof RoomOwnershipService.ClaimOutcome.Adopted) {
-        return pod.id();
-      }
-      if (attempt < CLAIM_ATTEMPTS) {
-        sleep(CLAIM_RETRY_DELAY);
-      }
+    RoomOwnershipService.ClaimOutcome outcome = ownership.claimWithRetry(roomId);
+    if (outcome instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine
+        || outcome instanceof RoomOwnershipService.ClaimOutcome.Adopted) {
+      return pod.id();
     }
     throw new RoomUnavailableRetryException(
         "The room's owning instance is not currently reachable. Retry shortly.", RETRY_AFTER_MS);
-  }
-
-  private static void sleep(Duration duration) {
-    try {
-      Thread.sleep(duration.toMillis());
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new IllegalStateException("Interrupted while retrying the room ownership claim", e);
-    }
   }
 
   /**

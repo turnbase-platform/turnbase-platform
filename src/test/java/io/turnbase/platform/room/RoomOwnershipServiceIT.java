@@ -97,6 +97,35 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void claimWithRetryGivesUpAndReturnsRedirectWhenTheIncumbentStaysLive() {
+    instanceA = boot();
+    instanceB = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomOwnershipService ownershipB = instanceB.getBean(RoomOwnershipService.class);
+    PodIdentity podA = instanceA.getBean(PodIdentity.class);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+
+    RoomOwnershipService.ClaimOutcome outcome = ownershipB.claimWithRetry(roomId);
+
+    assertThat(outcome).isInstanceOf(RoomOwnershipService.ClaimOutcome.Redirect.class);
+    assertThat(((RoomOwnershipService.ClaimOutcome.Redirect) outcome).ownerPodId())
+        .isEqualTo(podA.id());
+  }
+
+  @Test
+  void claimWithRetrySucceedsImmediatelyWhenTheRoomIsAlreadyOwnedByThisInstance() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+
+    RoomOwnershipService.ClaimOutcome outcome = ownershipA.claimWithRetry(roomId);
+
+    assertThat(outcome).isInstanceOf(RoomOwnershipService.ClaimOutcome.AlreadyMine.class);
+  }
+
+  @Test
   void aSecondInstanceAdoptsOnceTheIncumbentsLeaseHasLapsed() {
     instanceA = boot();
     instanceB = boot();

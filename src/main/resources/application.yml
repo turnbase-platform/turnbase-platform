@@ -155,6 +155,40 @@ turnbase:
       registration:
         capacity: ${TURNBASE_RATE_LIMIT_MINTING_REGISTRATION_CAPACITY:3}
         window: ${TURNBASE_RATE_LIMIT_MINTING_REGISTRATION_WINDOW:1h}
+    # IMP-M2-02: Tier 6 (rate-limiting.md § Tier 6), pod-local — a separate properties class from
+    # the tiers above, per common.RateLimitProperties's own note that this group is not its concern.
+    # capacity is the burst limit; refill-tokens per refill-period is the sustained rate.
+    ws:
+      connection:
+        capacity: ${TURNBASE_RATE_LIMIT_WS_CONNECTION_CAPACITY:30}
+        refill-tokens: ${TURNBASE_RATE_LIMIT_WS_CONNECTION_REFILL_TOKENS:10}
+        refill-period: ${TURNBASE_RATE_LIMIT_WS_CONNECTION_REFILL_PERIOD:1s}
+      snapshot:
+        capacity: ${TURNBASE_RATE_LIMIT_WS_SNAPSHOT_CAPACITY:2}
+        refill-tokens: ${TURNBASE_RATE_LIMIT_WS_SNAPSHOT_REFILL_TOKENS:1}
+        refill-period: ${TURNBASE_RATE_LIMIT_WS_SNAPSHOT_REFILL_PERIOD:3s}
+      action:
+        capacity: ${TURNBASE_RATE_LIMIT_WS_ACTION_CAPACITY:10}
+        refill-tokens: ${TURNBASE_RATE_LIMIT_WS_ACTION_REFILL_TOKENS:5}
+        refill-period: ${TURNBASE_RATE_LIMIT_WS_ACTION_REFILL_PERIOD:1s}
+      chat:
+        capacity: ${TURNBASE_RATE_LIMIT_WS_CHAT_CAPACITY:5}
+        refill-tokens: ${TURNBASE_RATE_LIMIT_WS_CHAT_REFILL_TOKENS:1}
+        refill-period: ${TURNBASE_RATE_LIMIT_WS_CHAT_REFILL_PERIOD:1s}
+      command:
+        capacity: ${TURNBASE_RATE_LIMIT_WS_COMMAND_CAPACITY:10}
+        refill-tokens: ${TURNBASE_RATE_LIMIT_WS_COMMAND_REFILL_TOKENS:2}
+        refill-period: ${TURNBASE_RATE_LIMIT_WS_COMMAND_REFILL_PERIOD:1s}
+      subscribe:
+        capacity: ${TURNBASE_RATE_LIMIT_WS_SUBSCRIBE_CAPACITY:20}
+        refill-tokens: ${TURNBASE_RATE_LIMIT_WS_SUBSCRIBE_REFILL_TOKENS:1}
+        refill-period: ${TURNBASE_RATE_LIMIT_WS_SUBSCRIBE_REFILL_PERIOD:1s}
+      max-connections-per-user: ${TURNBASE_RATE_LIMIT_WS_MAX_CONNECTIONS_PER_USER:4}
+      violations-before-close: ${TURNBASE_RATE_LIMIT_WS_VIOLATIONS_BEFORE_CLOSE:20}
+      violation-window: ${TURNBASE_RATE_LIMIT_WS_VIOLATION_WINDOW:10s}
+      lockout:
+        initial: ${TURNBASE_RATE_LIMIT_WS_LOCKOUT_INITIAL:30s}
+        max: ${TURNBASE_RATE_LIMIT_WS_LOCKOUT_MAX:15m}
   security:
     trusted-proxies: ${TURNBASE_SECURITY_TRUSTED_PROXIES:10.0.0.0/8,172.16.0.0/12}
   platform:

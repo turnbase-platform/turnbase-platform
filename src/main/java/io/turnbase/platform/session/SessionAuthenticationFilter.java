@@ -10,8 +10,6 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.security.Principal;
-import java.time.Instant;
-import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -44,15 +42,13 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
   static final String AUTH_FAILURE_REASON_ATTRIBUTE =
       "io.turnbase.platform.session.authFailureReason";
 
-  static final String EXPIRED_REASON = "expired";
-  static final String INVALID_REASON = "invalid";
+  static final String EXPIRED_REASON = SessionService.EXPIRED_REASON;
+  static final String INVALID_REASON = SessionService.INVALID_REASON;
 
-  private final JwtService jwtService;
-  private final UserSessionRepository sessions;
+  private final SessionService sessionService;
 
-  SessionAuthenticationFilter(JwtService jwtService, UserSessionRepository sessions) {
-    this.jwtService = jwtService;
-    this.sessions = sessions;
+  SessionAuthenticationFilter(SessionService sessionService) {
+    this.sessionService = sessionService;
   }
 
   @Override
@@ -65,36 +61,14 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
       return;
     }
 
-    JwtClaims claims;
-    try {
-      claims = jwtService.verify(token);
-    } catch (JwtVerificationException e) {
-      request.setAttribute(AUTH_FAILURE_REASON_ATTRIBUTE, INVALID_REASON);
-      filterChain.doFilter(request, response);
-      return;
+    switch (sessionService.resolve(token)) {
+      case SessionService.Resolution.Valid valid ->
+          filterChain.doFilter(new PrincipalRequestWrapper(request, valid.user()), response);
+      case SessionService.Resolution.Invalid invalid -> {
+        request.setAttribute(AUTH_FAILURE_REASON_ATTRIBUTE, invalid.reason());
+        filterChain.doFilter(request, response);
+      }
     }
-
-    Optional<UserSession> maybeSession = sessions.findById(claims.sessionId());
-    if (maybeSession.isEmpty()) {
-      request.setAttribute(AUTH_FAILURE_REASON_ATTRIBUTE, INVALID_REASON);
-      filterChain.doFilter(request, response);
-      return;
-    }
-
-    UserSession session = maybeSession.get();
-    if (session.revokedAt() != null) {
-      request.setAttribute(AUTH_FAILURE_REASON_ATTRIBUTE, session.revokedReason());
-      filterChain.doFilter(request, response);
-      return;
-    }
-    if (!session.expiresAt().isAfter(Instant.now())) {
-      request.setAttribute(AUTH_FAILURE_REASON_ATTRIBUTE, EXPIRED_REASON);
-      filterChain.doFilter(request, response);
-      return;
-    }
-
-    AuthenticatedUser principal = new AuthenticatedUser(session.userId(), session.sessionId());
-    filterChain.doFilter(new PrincipalRequestWrapper(request, principal), response);
   }
 
   private static @Nullable String cookieValue(HttpServletRequest request) {
