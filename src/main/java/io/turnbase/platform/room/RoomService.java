@@ -6,6 +6,7 @@ import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.PaginationMetadata;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.domain.Pageable;
@@ -13,8 +14,11 @@ import org.springframework.stereotype.Service;
 
 /**
  * {@code room-rest-api.md} — the five membership endpoints, orchestrating {@link RoomRepository}'s
- * transactions with {@link RoomOwnershipService}'s claim (run *after* commit, per {@code
- * room-lifecycle.md} §4's "no remote call inside a transaction" rule and §5 step 7's own ordering).
+ * transactions with {@link RoomOwnershipService}'s claim. Create and get claim after their own
+ * (unversioned) work, purely to set the affinity header; join claims first — step 0, {@code
+ * IMP-GATE-44} — so its mutation can run fenced and versioned inside {@link RoomEventExecutor}'s
+ * lock, per {@code room-lifecycle.md} §2.1's "lock outer → transaction inner → publish after
+ * commit" nesting.
  */
 @Service
 class RoomService {
@@ -24,16 +28,19 @@ class RoomService {
 
   private final RoomRepository repository;
   private final RoomOwnershipService ownership;
+  private final RoomEventExecutor events;
   private final PodIdentity pod;
   private final RoomProperties properties;
 
   RoomService(
       RoomRepository repository,
       RoomOwnershipService ownership,
+      RoomEventExecutor events,
       PodIdentity pod,
       RoomProperties properties) {
     this.repository = repository;
     this.ownership = ownership;
+    this.events = events;
     this.pod = pod;
     this.properties = properties;
   }
@@ -52,21 +59,57 @@ class RoomService {
     return new ClaimedResult<>(fetchResponse(roomId, creatorId), header);
   }
 
-  /** {@code room-rest-api.md} §5. */
+  /**
+   * {@code room-rest-api.md} §5. Claim runs first (step 0, {@code IMP-GATE-44}) so the join
+   * transaction — steps 1-6 — can run inside {@link RoomEventExecutor}'s lock, fenced by the epoch
+   * that claim just established.
+   */
   ClaimedResult<JoinRoomResponse> join(
       UUID userId, UUID roomId, JoinRoomRequest request, @Nullable String inviteCode) {
-    RoomRepository.JoinOutcome outcome =
-        repository.joinRoom(
-            userId, roomId, request.role(), inviteCode, properties.spectatorCapacity());
     String header = claimAndGetInstanceHeader(roomId);
+    RoomRepository.JoinOutcome outcome =
+        events.execute(
+            roomId,
+            () -> {
+              RoomRepository.JoinOutcome joinOutcome =
+                  repository.joinRoom(
+                      userId, roomId, request.role(), inviteCode, properties.spectatorCapacity());
+              RoomEventExecutor.RoomEvent event =
+                  joinOutcome
+                      .playerJoined()
+                      .map(payload -> new RoomEventExecutor.RoomEvent("PLAYER_JOINED", payload))
+                      .orElse(null);
+              return new RoomEventExecutor.MutationOutcome<>(joinOutcome, event);
+            });
     RoomResponse room = fetchResponse(roomId, userId);
     ReleasedRoomResponse released = outcome.releasedRoom().orElse(null);
     return new ClaimedResult<>(new JoinRoomResponse(room, released), header);
   }
 
-  /** {@code room-rest-api.md} §6. */
+  /**
+   * {@code room-rest-api.md} §6, {@code IMP-GATE-44}. Unlike join, a failed claim does not fail the
+   * request — this handler may run on an instance that does not own the room (its own text already
+   * accepts that); the departure still commits, just without the lock/version/broadcast, deferring
+   * the announcement to the owning instance's next sweep.
+   */
   void leave(UUID userId, UUID roomId) {
-    repository.leaveRoom(userId, roomId);
+    RoomOwnershipService.ClaimOutcome outcome = ownership.claim(roomId);
+    boolean owned =
+        outcome instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine
+            || outcome instanceof RoomOwnershipService.ClaimOutcome.Adopted;
+    if (!owned) {
+      repository.leaveRoom(userId, roomId);
+      return;
+    }
+    events.execute(
+        roomId,
+        () -> {
+          Optional<RoomRepository.PlayerLeftPayload> left = repository.leaveRoom(userId, roomId);
+          RoomEventExecutor.RoomEvent event =
+              left.map(payload -> new RoomEventExecutor.RoomEvent("PLAYER_LEFT", payload))
+                  .orElse(null);
+          return new RoomEventExecutor.MutationOutcome<>(Boolean.TRUE, event);
+        });
   }
 
   /** {@code room-rest-api.md} §4. */

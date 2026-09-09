@@ -303,6 +303,18 @@ class RoomOwnershipService {
     return state.version().incrementAndGet();
   }
 
+  /**
+   * {@code room-lifecycle.md} §2.1: "a failed CAS leaves the in-memory room state dirty... this is
+   * why self-eviction drops in-memory state rather than attempting to repair it." Called by {@link
+   * RoomEventExecutor} when its fenced version commit affects zero rows — the room's local view,
+   * including {@link #nextVersion}'s counter, is no longer trustworthy regardless of whether the
+   * cause was a genuine ownership change or this instance's own prior failed attempt; either way
+   * the fix is the same: drop it and let the next claim re-initialize from the database.
+   */
+  void evictAfterFailedCas(UUID roomId) {
+    evictRoom(roomId, "fenced version commit failed");
+  }
+
   private String livenessKey() {
     return "pod:" + pod.id() + ":alive";
   }

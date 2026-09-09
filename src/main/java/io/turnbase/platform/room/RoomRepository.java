@@ -165,7 +165,7 @@ class RoomRepository {
     }
 
     if (isCurrentParticipant(roomId, userId)) {
-      return new JoinOutcome(roomId, releaseCallersCurrentRoom(userId, roomId));
+      return new JoinOutcome(roomId, releaseCallersCurrentRoom(userId, roomId), Optional.empty());
     }
 
     if ("CLOSED".equals(room.state())) {
@@ -209,7 +209,17 @@ class RoomRepository {
         .update();
 
     Optional<ReleasedRoomResponse> released = releaseCallersCurrentRoom(userId, roomId);
-    return new JoinOutcome(roomId, released);
+    PlayerJoinedPayload joined =
+        new PlayerJoinedPayload(userId, usernameOf(userId), role.name(), teamId, nextJoinOrder);
+    return new JoinOutcome(roomId, released, Optional.of(joined));
+  }
+
+  private String usernameOf(UUID userId) {
+    return jdbcClient
+        .sql("select username from app_user where user_id = :userId")
+        .param("userId", userId)
+        .query(String.class)
+        .single();
   }
 
   private Optional<UUID> findAvailableTeam(UUID roomId) {
@@ -319,13 +329,25 @@ class RoomRepository {
   // ---------------------------------------------------------------------
 
   /**
-   * {@code FR-LIFE-004}: an immediate, confirmed departure — no grace period. {@code
-   * lost_announced_at} is left {@code null} for the same reason as {@link
-   * #releaseCallersCurrentRoom} — no ownership/broadcast mechanism is attempted here. Idempotent: a
-   * caller with no active membership in this room updates zero rows and still succeeds.
+   * {@code FR-LIFE-004}: an immediate, confirmed departure — no grace period. Idempotent: a caller
+   * with no active membership in this room updates zero rows and returns empty, distinct from a
+   * real departure so {@code RoomService} knows whether a {@code PLAYER_LEFT} broadcast is owed.
    */
   @Transactional
-  void leaveRoom(UUID userId, UUID roomId) {
+  Optional<PlayerLeftPayload> leaveRoom(UUID userId, UUID roomId) {
+    Optional<String> role =
+        jdbcClient
+            .sql(
+                "select role from room_participant"
+                    + " where room_id = :roomId and user_id = :userId and left_at is null"
+                    + " for update")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(String.class)
+            .optional();
+    if (role.isEmpty()) {
+      return Optional.empty();
+    }
     jdbcClient
         .sql(
             """
@@ -337,6 +359,7 @@ class RoomRepository {
         .param("roomId", roomId)
         .param("userId", userId)
         .update();
+    return Optional.of(new PlayerLeftPayload(userId, role.get()));
   }
 
   // ---------------------------------------------------------------------
@@ -755,5 +778,15 @@ class RoomRepository {
       boolean supportsMidGameJoin,
       long spectatorCount) {}
 
-  record JoinOutcome(UUID roomId, Optional<ReleasedRoomResponse> releasedRoom) {}
+  record JoinOutcome(
+      UUID roomId,
+      Optional<ReleasedRoomResponse> releasedRoom,
+      Optional<PlayerJoinedPayload> playerJoined) {}
+
+  /** {@code room-websocket.md} `PLAYER_JOINED` payload shape, verbatim field-for-field. */
+  record PlayerJoinedPayload(
+      UUID playerId, String username, String role, @Nullable UUID teamId, long joinOrder) {}
+
+  /** {@code room-websocket.md} `PLAYER_LEFT` payload shape. */
+  record PlayerLeftPayload(UUID playerId, String role) {}
 }

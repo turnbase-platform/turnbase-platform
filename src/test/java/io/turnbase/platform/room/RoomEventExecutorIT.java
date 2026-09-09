@@ -1,0 +1,171 @@
+package io.turnbase.platform.room;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.common.RoomUnavailableRetryException;
+import java.util.Map;
+import java.util.UUID;
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.jdbc.core.simple.JdbcClient;
+
+/**
+ * {@code IMP-M2-04}'s own Done-when, at the mechanism level (the end-to-end broadcast is {@link
+ * RoomEventFanoutIT}): the version is committed before it is ever handed to a mutation's caller,
+ * assignment comes from {@link RoomOwnershipService#nextVersion} rather than a fresh read, a
+ * no-event mutation never touches {@code room.version}, and a fenced commit failure evicts the room
+ * rather than leaving this instance's dirty in-memory state in play.
+ */
+class RoomEventExecutorIT extends PostgresIntegrationTest {
+
+  private @Nullable ConfigurableApplicationContext context;
+
+  @AfterEach
+  void stopApplication() {
+    if (context != null) {
+      context.close();
+    }
+  }
+
+  @Test
+  void aMutationWithAnEventAssignsAndCommitsTheNextVersion() {
+    context = boot();
+    RoomEventExecutor executor = context.getBean(RoomEventExecutor.class);
+    RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(context);
+    ownership.claim(roomId);
+
+    String result =
+        executor.execute(
+            roomId,
+            () ->
+                new RoomEventExecutor.MutationOutcome<>(
+                    "applied", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of("k", "v"))));
+
+    assertThat(result).isEqualTo("applied");
+    assertThat(roomVersion(context, roomId)).isEqualTo(1L);
+
+    // A second mutation assigns from the counter, not from a fresh max() of the database.
+    executor.execute(
+        roomId,
+        () ->
+            new RoomEventExecutor.MutationOutcome<>(
+                "applied again", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of())));
+    assertThat(roomVersion(context, roomId)).isEqualTo(2L);
+  }
+
+  @Test
+  void aMutationWithNoEventNeverBumpsTheVersion() {
+    context = boot();
+    RoomEventExecutor executor = context.getBean(RoomEventExecutor.class);
+    RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(context);
+    ownership.claim(roomId);
+
+    String result =
+        executor.execute(roomId, () -> new RoomEventExecutor.MutationOutcome<>("no-op", null));
+
+    assertThat(result).isEqualTo("no-op");
+    assertThat(roomVersion(context, roomId)).isEqualTo(0L);
+  }
+
+  @Test
+  void aFencedCommitFailureEvictsTheRoomRatherThanRetryingInPlace() {
+    context = boot();
+    RoomEventExecutor executor = context.getBean(RoomEventExecutor.class);
+    RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(context);
+    ownership.claim(roomId);
+    // Simulate a stale owner: another tenure's epoch is now recorded, as adoption would leave it,
+    // without this instance's own claim having re-run to notice.
+    context
+        .getBean(JdbcClient.class)
+        .sql("update room set owner_epoch = owner_epoch + 1 where room_id = :roomId")
+        .param("roomId", roomId)
+        .update();
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    roomId,
+                    () ->
+                        new RoomEventExecutor.MutationOutcome<>(
+                            "applied", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of()))))
+        .isInstanceOf(RoomUnavailableRetryException.class);
+
+    assertThat(ownership.epochOf(roomId)).isEmpty();
+  }
+
+  @Test
+  void executingAgainstARoomThisInstanceHasNotClaimedFailsWithoutMutating() {
+    context = boot();
+    RoomEventExecutor executor = context.getBean(RoomEventExecutor.class);
+    UUID roomId = insertRoom(context);
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    roomId,
+                    () ->
+                        new RoomEventExecutor.MutationOutcome<>(
+                            "applied", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of()))))
+        .isInstanceOf(RoomUnavailableRetryException.class);
+
+    assertThat(roomVersion(context, roomId)).isEqualTo(0L);
+  }
+
+  private static ConfigurableApplicationContext boot() {
+    return SpringApplication.run(
+        TurnBaseApplication.class,
+        "--server.port=0",
+        "--management.server.port=0",
+        "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+        "--spring.datasource.username=" + POSTGRES.getUsername(),
+        "--spring.datasource.password=" + POSTGRES.getPassword(),
+        "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+        "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+        "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+        "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+        "--turnbase.admin.username=admin",
+        "--turnbase.admin.password=admin",
+        "--spring.data.redis.url=" + redisUrl(),
+        "--turnbase.room.lease.renew-interval=1h");
+  }
+
+  private static UUID insertRoom(ConfigurableApplicationContext context) {
+    UUID gameId = UUID.randomUUID();
+    UUID roomId = UUID.randomUUID();
+    JdbcClient jdbcClient = context.getBean(JdbcClient.class);
+    jdbcClient
+        .sql(
+            "INSERT INTO game (game_id, title, short_description, badge, owner_user_id)"
+                + " VALUES (:gameId, 'Test Game', 'A game for testing.', 'OFFICIAL', NULL)")
+        .param("gameId", gameId)
+        .update();
+    jdbcClient
+        .sql(
+            "INSERT INTO room (room_id, game_id, game_version, visibility, state)"
+                + " VALUES (:roomId, :gameId, '1.0.0', 'PUBLIC', 'LOBBY')")
+        .param("roomId", roomId)
+        .param("gameId", gameId)
+        .update();
+    return roomId;
+  }
+
+  private static long roomVersion(ConfigurableApplicationContext context, UUID roomId) {
+    Number version =
+        context
+            .getBean(JdbcClient.class)
+            .sql("select version from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query(Number.class)
+            .single();
+    return version.longValue();
+  }
+}
