@@ -117,10 +117,27 @@
       class M1-01 adds.
     -->
     <jacoco.line.coverage>0.70</jacoco.line.coverage>
+
+    <!--
+      CVE-2026-75595 (CRITICAL): software.amazon.awssdk:s3's netty-nio-client transitively pulls
+      Netty 4.1.135.Final, which the CI Trivy gate rejects. Not introduced by any work item — the
+      AWS SDK client has been here since IMP-M0-07 — but it blocks every push until pinned forward,
+      so it is fixed here rather than carried as a known-broken build. 4.1.137.Final is the fix
+      version on the same major/minor line the AWS SDK's netty-nio-client was built against, so this
+      stays a patch bump, not a Netty major-version jump.
+    -->
+    <netty.version>4.1.137.Final</netty.version>
   </properties>
 
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
       <dependency>
         <groupId>org.springframework.modulith</groupId>
         <artifactId>spring-modulith-bom</artifactId>

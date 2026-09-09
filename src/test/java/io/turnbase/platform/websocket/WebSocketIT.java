@@ -122,31 +122,25 @@ class WebSocketIT extends PostgresIntegrationTest {
     WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
     handshakeHeaders.add(HttpHeaders.COOKIE, outsiderCookie);
     List<Object> errorFrames = new CopyOnWriteArrayList<>();
+    // Subscriptions run strictly sequentially on the main thread — the underlying client
+    // WebSocket session does not tolerate concurrent sends from afterConnected() and this thread.
     StompSession session =
         stompClient
-            .connectAsync(
-                wsUrl,
-                handshakeHeaders,
-                new StompSessionHandlerAdapter() {
-                  @Override
-                  public void afterConnected(StompSession s, StompHeaders connectedHeaders) {
-                    s.subscribe(
-                        "/user/queue/errors",
-                        new StompFrameHandler() {
-                          @Override
-                          public Type getPayloadType(StompHeaders headers) {
-                            return Map.class;
-                          }
-
-                          @Override
-                          public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-                            errorFrames.add(payload);
-                          }
-                        });
-                  }
-                })
+            .connectAsync(wsUrl, handshakeHeaders, new StompSessionHandlerAdapter() {})
             .get(5, TimeUnit.SECONDS);
+    session.subscribe(
+        "/user/queue/errors",
+        new StompFrameHandler() {
+          @Override
+          public Type getPayloadType(StompHeaders headers) {
+            return Map.class;
+          }
 
+          @Override
+          public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+            errorFrames.add(payload);
+          }
+        });
     session.subscribe("/topic/room." + roomId, new StompSessionHandlerAdapter() {});
     Thread.sleep(1000); // no positive signal exists for "nothing happened" — a bounded wait is it.
 
