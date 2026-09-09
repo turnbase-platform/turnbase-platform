@@ -1,0 +1,428 @@
+package io.turnbase.platform.room;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.TurnBaseApplication;
+import java.lang.reflect.Type;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.messaging.simp.stomp.StompFrameHandler;
+import org.springframework.messaging.simp.stomp.StompHeaders;
+import org.springframework.messaging.simp.stomp.StompSession;
+import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.socket.WebSocketHttpHeaders;
+import org.springframework.web.socket.client.standard.StandardWebSocketClient;
+import org.springframework.web.socket.messaging.WebSocketStompClient;
+
+/**
+ * {@code IMP-M2-05}'s own share of {@code room-websocket.md}'s Client→Server Command Catalogue, end
+ * to end on real STOMP clients: the Member Commands table ({@code TOGGLE_READY}, {@code
+ * SWITCH_TO_SPECTATOR}, {@code SWITCH_TO_PLAYER}, {@code REQUEST_ROOM_STATE}) and this item's slice
+ * of the Host Commands table ({@code ADD_TEAM}, {@code REMOVE_TEAM}, {@code RESIZE_TEAM}, {@code
+ * REASSIGN_PLAYER}, {@code ADD_AI_PLAYER}).
+ */
+class RoomCommandControllerIT extends PostgresIntegrationTest {
+
+  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
+
+  private @Nullable ConfigurableApplicationContext context;
+  private String baseUrl = "";
+  private String wsUrl = "";
+
+  @BeforeEach
+  void bootApplication() {
+    ConfigurableApplicationContext booted =
+        SpringApplication.run(
+            TurnBaseApplication.class,
+            "--server.port=0",
+            "--management.server.port=0",
+            "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+            "--spring.datasource.username=" + POSTGRES.getUsername(),
+            "--spring.datasource.password=" + POSTGRES.getPassword(),
+            "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+            "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+            "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+            "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+            "--turnbase.admin.username=admin",
+            "--turnbase.admin.password=admin",
+            "--spring.data.redis.url=" + redisUrl(),
+            "--turnbase.rate-limit.minting.guest.capacity=1000000");
+    context = booted;
+    int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
+    baseUrl = "http://127.0.0.1:" + port;
+    wsUrl = "ws://127.0.0.1:" + port + "/ws";
+  }
+
+  @AfterEach
+  void stopApplication() {
+    if (context != null) {
+      context.close();
+    }
+  }
+
+  @Test
+  void readinessAndRoleSwitchCommandsEnforcePreconditionsAndBroadcast() throws Exception {
+    String hostCookie = mintGuestCookie();
+    UUID gameId = seedGame();
+    UUID roomId = createPublicRoom(hostCookie, gameId);
+
+    String joinerCookie = mintGuestCookie();
+    UUID joinerId = join(joinerCookie, roomId);
+
+    Session host = connect(hostCookie, roomId);
+    Session joiner = connect(joinerCookie, roomId);
+
+    // The host never sends TOGGLE_READY — ROLE_NOT_ELIGIBLE (IMP-GATE-45).
+    host.send("TOGGLE_READY", "c1", Map.of("ready", true));
+    Map<String, Object> hostError = poll(host.errors);
+    assertThat(errorCode(hostError)).isEqualTo("ROLE_NOT_ELIGIBLE");
+    assertThat(((Map<?, ?>) Objects.requireNonNull(hostError.get("payload"))).get("correlationId"))
+        .isEqualTo("c1");
+
+    joiner.send("TOGGLE_READY", "c2", Map.of("ready", true));
+    Map<String, Object> readinessChanged = poll(host.roomTopic);
+    assertThat(readinessChanged.get("type")).isEqualTo("READINESS_CHANGED");
+    Map<?, ?> readinessPayload =
+        (Map<?, ?>) Objects.requireNonNull(readinessChanged.get("payload"));
+    assertThat(readinessPayload.get("playerId")).isEqualTo(joinerId.toString());
+    assertThat(readinessPayload.get("ready")).isEqualTo(true);
+    assertThat(readyFlag(roomId, joinerId)).isTrue();
+
+    joiner.send("SWITCH_TO_SPECTATOR", "c3", null);
+    Map<String, Object> roleChanged = poll(host.roomTopic);
+    assertThat(roleChanged.get("type")).isEqualTo("PLAYER_ROLE_CHANGED");
+    Map<?, ?> rolePayload = (Map<?, ?>) Objects.requireNonNull(roleChanged.get("payload"));
+    assertThat(rolePayload.get("newRole")).isEqualTo("SPECTATOR");
+    assertThat(rolePayload.get("teamId")).isNull();
+    assertThat(rolePayload.get("readinessCleared")).isEqualTo(true);
+
+    // The host cannot switch to spectator either — same ROLE_NOT_ELIGIBLE.
+    host.send("SWITCH_TO_SPECTATOR", "c4", null);
+    assertThat(errorCode(poll(host.errors))).isEqualTo("ROLE_NOT_ELIGIBLE");
+
+    joiner.send("SWITCH_TO_PLAYER", "c5", null);
+    Map<String, Object> backToPlayer = poll(host.roomTopic);
+    assertThat(backToPlayer.get("type")).isEqualTo("PLAYER_ROLE_CHANGED");
+    assertThat(((Map<?, ?>) Objects.requireNonNull(backToPlayer.get("payload"))).get("newRole"))
+        .isEqualTo("PLAYER");
+  }
+
+  @Test
+  void teamManagementCommandsEnforcePreconditionsAndBroadcast() throws Exception {
+    String hostCookie = mintGuestCookie();
+    UUID gameId = seedGame();
+    UUID roomId = createPublicRoom(hostCookie, gameId);
+
+    String joinerCookie = mintGuestCookie();
+    UUID joinerId = join(joinerCookie, roomId);
+
+    Session host = connect(hostCookie, roomId);
+    Session joiner = connect(joinerCookie, roomId);
+
+    // Non-host sender — NOT_HOST.
+    joiner.send("ADD_TEAM", "n1", Map.of("templateName", "Red", "configuredSize", 2));
+    assertThat(errorCode(poll(joiner.errors))).isEqualTo("NOT_HOST");
+
+    host.send("ADD_TEAM", "t1", Map.of("templateName", "Red", "configuredSize", 2));
+    Map<String, Object> teamAdded = poll(host.roomTopic);
+    assertThat(teamAdded.get("type")).isEqualTo("TEAM_ADDED");
+    Map<?, ?> teamAddedPayload = (Map<?, ?>) Objects.requireNonNull(teamAdded.get("payload"));
+    assertThat(teamAddedPayload.get("templateName")).isEqualTo("Red");
+    assertThat(teamAddedPayload.get("index")).isEqualTo(1);
+    UUID newTeamId = UUID.fromString((String) teamAddedPayload.get("teamId"));
+
+    // Red's count.max is 2 — a second addition is TEMPLATE_MAX_TEAMS.
+    host.send("ADD_TEAM", "t2", Map.of("templateName", "Red", "configuredSize", 2));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("TEMPLATE_MAX_TEAMS");
+
+    // Red's size.max is 2 — an oversized team is SIZE_OUT_OF_RANGE.
+    host.send("REMOVE_TEAM", "t3", Map.of("teamId", newTeamId.toString()));
+    Map<String, Object> teamRemoved = poll(host.roomTopic);
+    assertThat(teamRemoved.get("type")).isEqualTo("TEAM_REMOVED");
+    assertThat(((Map<?, ?>) Objects.requireNonNull(teamRemoved.get("payload"))).get("teamId"))
+        .isEqualTo(newTeamId.toString());
+
+    host.send("ADD_TEAM", "t4", Map.of("templateName", "Red", "configuredSize", 5));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("SIZE_OUT_OF_RANGE");
+
+    // The host occupies Red's only team alone — resizing down to 0 is out of range; to 1 succeeds.
+    UUID redTeamId = firstTeamId(roomId, "Red");
+    host.send("RESIZE_TEAM", "t5", Map.of("teamId", redTeamId.toString(), "newSize", 0));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("SIZE_OUT_OF_RANGE");
+
+    host.send("RESIZE_TEAM", "t6", Map.of("teamId", redTeamId.toString(), "newSize", 1));
+    Map<String, Object> teamResized = poll(host.roomTopic);
+    assertThat(teamResized.get("type")).isEqualTo("TEAM_RESIZED");
+    assertThat(
+            ((Map<?, ?>) Objects.requireNonNull(teamResized.get("payload")))
+                .get("newConfiguredSize"))
+        .isEqualTo(1);
+
+    // The joiner auto-assigned to Blue (fewer members than Red at join time); Red is now full
+    // again at size 1 with only the host — reassigning the joiner there is TEAM_FULL.
+    host.send(
+        "REASSIGN_PLAYER",
+        "t7",
+        Map.of("playerId", joinerId.toString(), "toTeamId", redTeamId.toString()));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("TEAM_FULL");
+
+    // ADD_AI_PLAYER is wire-present, behaviour-absent (IR-12).
+    UUID blueTeamId = firstTeamId(roomId, "Blue");
+    host.send("ADD_AI_PLAYER", "t8", Map.of("teamId", blueTeamId.toString()));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("AI_NOT_SUPPORTED");
+
+    host.send("NOT_A_REAL_COMMAND", "t9", null);
+    assertThat(errorCode(poll(host.errors))).isEqualTo("UNKNOWN_COMMAND");
+  }
+
+  @Test
+  void requestRoomStateDeliversAUnicastVersionedSnapshot() throws Exception {
+    String hostCookie = mintGuestCookie();
+    UUID gameId = seedGame();
+    UUID roomId = createPublicRoom(hostCookie, gameId);
+    UUID hostId = meUserId(hostCookie);
+
+    Session host = connect(hostCookie, roomId);
+    host.send("REQUEST_ROOM_STATE", "s1", null);
+
+    Map<String, Object> snapshot = poll(host.roomState);
+    assertThat(snapshot.get("type")).isEqualTo("ROOM_STATE");
+    assertThat(((Number) Objects.requireNonNull(snapshot.get("version"))).longValue())
+        .isEqualTo(0L);
+    Map<?, ?> payload = (Map<?, ?>) Objects.requireNonNull(snapshot.get("payload"));
+    assertThat(payload.get("roomId")).isEqualTo(roomId.toString());
+    assertThat(payload.get("state")).isEqualTo("LOBBY");
+    assertThat(payload.get("hostId")).isEqualTo(hostId.toString());
+    assertThat((List<?>) payload.get("aiPlayers")).isEmpty();
+    assertThat((List<?>) payload.get("disconnectedPlayers")).isEmpty();
+    List<?> players = (List<?>) Objects.requireNonNull(payload.get("players"));
+    assertThat(players).hasSize(1);
+    Map<?, ?> hostPlayer = (Map<?, ?>) players.get(0);
+    assertThat(hostPlayer.get("playerId")).isEqualTo(hostId.toString());
+    assertThat(hostPlayer.get("connected")).isEqualTo(true);
+  }
+
+  // ---------------------------------------------------------------------
+  // Harness
+  // ---------------------------------------------------------------------
+
+  private static final List<String> HOST_COMMANDS =
+      List.of("ADD_TEAM", "REMOVE_TEAM", "RESIZE_TEAM", "REASSIGN_PLAYER", "ADD_AI_PLAYER");
+
+  private record Session(
+      StompSession stompSession,
+      UUID roomId,
+      BlockingQueue<Map<String, Object>> roomTopic,
+      BlockingQueue<Map<String, Object>> errors,
+      BlockingQueue<Map<String, Object>> roomState) {
+
+    void send(String type, String correlationId, @Nullable Map<String, Object> payload) {
+      java.util.HashMap<String, Object> envelope = new java.util.HashMap<>();
+      envelope.put("type", type);
+      envelope.put("correlationId", correlationId);
+      if (payload != null) {
+        envelope.put("payload", payload);
+      }
+      String channel = HOST_COMMANDS.contains(type) ? "host" : "member";
+      stompSession.send("/app/room." + roomId + "." + channel, envelope);
+    }
+  }
+
+  private Map<String, Object> poll(BlockingQueue<Map<String, Object>> queue) throws Exception {
+    Map<String, Object> message = queue.poll(5, TimeUnit.SECONDS);
+    return Objects.requireNonNull(message, "expected a message but none arrived");
+  }
+
+  /** {@code room-websocket.md} § Error Handling — {@code code} lives inside {@code payload}. */
+  private String errorCode(Map<String, Object> errorFrame) {
+    Map<?, ?> payload = (Map<?, ?>) Objects.requireNonNull(errorFrame.get("payload"));
+    return (String) Objects.requireNonNull(payload.get("code"));
+  }
+
+  private Session connect(String cookie, UUID roomId) throws Exception {
+    WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
+    stompClient.setMessageConverter(new MappingJackson2MessageConverter());
+    WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
+    handshakeHeaders.add(HttpHeaders.COOKIE, cookie);
+
+    StompSession session =
+        stompClient
+            .connectAsync(wsUrl, handshakeHeaders, new StompSessionHandlerAdapter() {})
+            .get(5, TimeUnit.SECONDS);
+
+    BlockingQueue<Map<String, Object>> roomTopic = new LinkedBlockingQueue<>();
+    BlockingQueue<Map<String, Object>> errors = new LinkedBlockingQueue<>();
+    BlockingQueue<Map<String, Object>> roomState = new LinkedBlockingQueue<>();
+    subscribe(session, "/topic/room." + roomId, roomTopic);
+    subscribe(session, "/user/queue/errors", errors);
+    subscribe(session, "/user/queue/room-state", roomState);
+    Thread.sleep(300);
+    return new Session(session, roomId, roomTopic, errors, roomState);
+  }
+
+  private void subscribe(
+      StompSession session, String destination, BlockingQueue<Map<String, Object>> sink) {
+    session.subscribe(
+        destination,
+        new StompFrameHandler() {
+          @Override
+          public Type getPayloadType(StompHeaders headers) {
+            return Map.class;
+          }
+
+          @Override
+          public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = (Map<String, Object>) Objects.requireNonNull(payload);
+            sink.add(body);
+          }
+        });
+  }
+
+  private UUID join(String cookie, UUID roomId) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.add(HttpHeaders.COOKIE, cookie);
+    HttpEntity<String> request = new HttpEntity<>("{\"role\":\"PLAYER\"}", headers);
+    restTemplate.exchange(
+        baseUrl + "/api/rooms/" + roomId + "/participants", HttpMethod.POST, request, String.class);
+    return meUserId(cookie);
+  }
+
+  private UUID meUserId(String cookie) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.add(HttpHeaders.COOKIE, cookie);
+    ResponseEntity<String> response =
+        restTemplate.exchange(
+            baseUrl + "/api/auth/session", HttpMethod.GET, new HttpEntity<>(headers), String.class);
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = objectMapper.readValue(response.getBody(), Map.class);
+      return UUID.fromString((String) Objects.requireNonNull(body.get("userId")));
+    } catch (Exception e) {
+      throw new IllegalStateException("could not resolve the caller's own userId", e);
+    }
+  }
+
+  private boolean readyFlag(UUID roomId, UUID userId) {
+    Boolean ready =
+        context()
+            .getBean(JdbcClient.class)
+            .sql(
+                "select ready from room_participant where room_id = :roomId and user_id ="
+                    + " :userId")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(Boolean.class)
+            .single();
+    return Boolean.TRUE.equals(ready);
+  }
+
+  private UUID firstTeamId(UUID roomId, String templateName) {
+    // Red is template_index 0, Blue is template_index 1 (declaration order in seedGame's manifest).
+    int templateIndex = "Red".equals(templateName) ? 0 : 1;
+    return context()
+        .getBean(JdbcClient.class)
+        .sql(
+            "select team_id from room_team where room_id = :roomId and template_index ="
+                + " :templateIndex order by team_index limit 1")
+        .param("roomId", roomId)
+        .param("templateIndex", templateIndex)
+        .query(UUID.class)
+        .single();
+  }
+
+  private UUID seedGame() {
+    JdbcClient jdbcClient = context().getBean(JdbcClient.class);
+    UUID gameId = UUID.randomUUID();
+    UUID versionId = UUID.randomUUID();
+    jdbcClient
+        .sql(
+            "insert into game (game_id, title, short_description, badge, listed)"
+                + " values (:gameId, 'Test Game', 'A game for tests', 'OFFICIAL', true)")
+        .param("gameId", gameId)
+        .update();
+    jdbcClient
+        .sql(
+            """
+            insert into game_version (version_id, game_id, version, status, manifest,
+                declared_size_bytes, upload_expires_at, min_players, max_players,
+                supports_ai, supports_spectators, supports_mid_game_join, activated_at)
+            values (:versionId, :gameId, '1.0.0', 'ACTIVE', :manifest::jsonb,
+                1024, now(), 1, 5, false, true, true, now())
+            """)
+        .param("versionId", versionId)
+        .param("gameId", gameId)
+        .param(
+            "manifest",
+            """
+            {"teamTemplates":[
+              {"name":"Red","size":{"min":1,"max":2},"count":{"min":1,"max":2}},
+              {"name":"Blue","size":{"min":1,"max":1},"count":{"min":1,"max":1}}
+            ]}
+            """)
+        .update();
+    jdbcClient
+        .sql("update game set active_version_id = :versionId where game_id = :gameId")
+        .param("versionId", versionId)
+        .param("gameId", gameId)
+        .update();
+    return gameId;
+  }
+
+  private UUID createPublicRoom(String cookie, UUID gameId) throws Exception {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.add(HttpHeaders.COOKIE, cookie);
+    HttpEntity<String> request =
+        new HttpEntity<>(
+            "{\"gameId\":\"%s\",\"visibility\":\"PUBLIC\",\"spectatingEnabled\":true}"
+                .formatted(gameId),
+            headers);
+    ResponseEntity<String> response =
+        restTemplate.exchange(baseUrl + "/api/rooms", HttpMethod.POST, request, String.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> body = objectMapper.readValue(response.getBody(), Map.class);
+    return UUID.fromString((String) body.get("roomId"));
+  }
+
+  private String mintGuestCookie() {
+    ResponseEntity<String> response =
+        restTemplate.exchange(
+            baseUrl + "/api/auth/guest", HttpMethod.POST, HttpEntity.EMPTY, String.class);
+    List<String> setCookies =
+        Objects.requireNonNull(response.getHeaders().get(HttpHeaders.SET_COOKIE));
+    return setCookies.stream()
+        .filter(c -> c.startsWith("turnbase_session="))
+        .findFirst()
+        .orElseThrow()
+        .split(";", 2)[0];
+  }
+
+  private ConfigurableApplicationContext context() {
+    return Objects.requireNonNull(context);
+  }
+}

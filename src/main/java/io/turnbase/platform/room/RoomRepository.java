@@ -89,10 +89,10 @@ class RoomRepository {
         .param("inviteCode", InviteCodeGenerator.generate())
         .update();
 
-    List<TeamTemplate> templates = parseTeamTemplates(game.manifest());
+    List<TeamTemplateInfo> templates = parseTeamTemplates(game.manifest());
     UUID firstTeamId = null;
     for (int templateIndex = 0; templateIndex < templates.size(); templateIndex++) {
-      TeamTemplate template = templates.get(templateIndex);
+      TeamTemplateInfo template = templates.get(templateIndex);
       for (int teamIndex = 0; teamIndex < template.countMin(); teamIndex++) {
         UUID teamId = UUID.randomUUID();
         if (firstTeamId == null) {
@@ -363,6 +363,522 @@ class RoomRepository {
   }
 
   // ---------------------------------------------------------------------
+  // Member commands (room-websocket.md, IMP-M2-05) — every method here runs inside
+  // RoomEventExecutor's lock and transaction, so the row(s) it reads are the authoritative,
+  // under-lock state room-websocket.md's Authorization Model requires.
+  // ---------------------------------------------------------------------
+
+  /** {@code TOGGLE_READY}, FR-READY-001/003. */
+  ReadinessChangedPayload toggleReady(UUID roomId, UUID userId, boolean ready) {
+    MemberForCommand member = requireEligiblePlayer(roomId, userId);
+    requireLobby(member.state());
+    jdbcClient
+        .sql(
+            "update room_participant set ready = :ready"
+                + " where room_id = :roomId and user_id = :userId and left_at is null")
+        .param("ready", ready)
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .update();
+    return new ReadinessChangedPayload(userId, ready);
+  }
+
+  /** {@code SWITCH_TO_SPECTATOR}, FR-LIFE-005. */
+  PlayerRoleChangedPayload switchToSpectator(UUID roomId, UUID userId, int spectatorCapacity) {
+    MemberForCommand member = requireEligiblePlayer(roomId, userId);
+    requireLobby(member.state());
+    if (!member.spectatingEnabled() || !member.supportsSpectators()) {
+      throw new RoomCommandException(
+          "SPECTATING_NOT_ENABLED", "This room does not support spectating.");
+    }
+    if (countParticipants(roomId, "SPECTATOR") >= spectatorCapacity) {
+      throw new RoomCommandException(
+          "SPECTATOR_CAPACITY_FULL", "Spectator capacity has been reached.");
+    }
+    jdbcClient
+        .sql(
+            "update room_participant set role = 'SPECTATOR', team_id = null, ready = false"
+                + " where room_id = :roomId and user_id = :userId and left_at is null")
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .update();
+    return new PlayerRoleChangedPayload(userId, "SPECTATOR", null, true);
+  }
+
+  /** {@code SWITCH_TO_PLAYER}, FR-LIFE-006. */
+  PlayerRoleChangedPayload switchToPlayer(UUID roomId, UUID userId) {
+    MemberAndState member = requireMember(roomId, userId);
+    requireLobby(member.state());
+    if (!"SPECTATOR".equals(member.role())) {
+      throw new RoomCommandException("ROLE_NOT_ELIGIBLE", "Only a spectator may switch to player.");
+    }
+    UUID teamId =
+        findAvailableTeam(roomId)
+            .orElseThrow(
+                () ->
+                    new RoomCommandException(
+                        "TEAM_FULL", "No player slot is available in this room."));
+    jdbcClient
+        .sql(
+            "update room_participant set role = 'PLAYER', team_id = :teamId, ready = false"
+                + " where room_id = :roomId and user_id = :userId and left_at is null")
+        .param("teamId", teamId)
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .update();
+    return new PlayerRoleChangedPayload(userId, "PLAYER", teamId, false);
+  }
+
+  /** {@code TOGGLE_READY}/{@code SWITCH_TO_SPECTATOR}: non-host human player, any room state. */
+  private MemberForCommand requireEligiblePlayer(UUID roomId, UUID userId) {
+    Optional<MemberForCommand> row =
+        jdbcClient
+            .sql(
+                """
+                select rp.role, r.host_user_id, r.state, r.spectating_enabled,
+                       gv.supports_spectators
+                from room_participant rp
+                join room r on r.room_id = rp.room_id
+                join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
+                where rp.room_id = :roomId and rp.user_id = :userId and rp.left_at is null
+                """)
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(
+                (rs, rowNum) ->
+                    new MemberForCommand(
+                        rs.getString("role"),
+                        rs.getObject("host_user_id", UUID.class),
+                        rs.getString("state"),
+                        rs.getBoolean("spectating_enabled"),
+                        rs.getBoolean("supports_spectators")))
+            .optional();
+    MemberForCommand member =
+        row.orElseThrow(
+            () -> new RoomCommandException("NOT_MEMBER", "You are not a member of this room."));
+    if (!"PLAYER".equals(member.role()) || userId.equals(member.hostUserId())) {
+      throw new RoomCommandException(
+          "ROLE_NOT_ELIGIBLE", "Only a non-host player may send this command.");
+    }
+    return member;
+  }
+
+  private MemberAndState requireMember(UUID roomId, UUID userId) {
+    Optional<MemberAndState> row =
+        jdbcClient
+            .sql(
+                "select rp.role, r.state from room_participant rp join room r"
+                    + " on r.room_id = rp.room_id"
+                    + " where rp.room_id = :roomId and rp.user_id = :userId and rp.left_at is null")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query((rs, rowNum) -> new MemberAndState(rs.getString("role"), rs.getString("state")))
+            .optional();
+    return row.orElseThrow(
+        () -> new RoomCommandException("NOT_MEMBER", "You are not a member of this room."));
+  }
+
+  private void requireLobby(String state) {
+    if (!"LOBBY".equals(state)) {
+      throw new RoomCommandException("ROOM_NOT_LOBBY", "This command requires the Lobby state.");
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Host commands (room-websocket.md, IMP-M2-05's own share: ADD_TEAM, REMOVE_TEAM, RESIZE_TEAM,
+  // REASSIGN_PLAYER, ADD_AI_PLAYER — KICK_PLAYER/CHANGE_PARAMETERS/START_GAME/TRANSFER_HOST are
+  // IMP-M2-06's, whose FR-HOST-*/FR-XFER-* requirements this item's read-list never names.
+  // ---------------------------------------------------------------------
+
+  /** {@code ADD_TEAM}, FR-TEAM-002. */
+  TeamAddedPayload addTeam(UUID roomId, UUID hostUserId, String templateName, int configuredSize) {
+    requireLobby(requireHost(roomId, hostUserId));
+    List<TeamTemplateInfo> templates = teamTemplatesForRoom(roomId);
+    int templateIndex = -1;
+    TeamTemplateInfo template = null;
+    for (int i = 0; i < templates.size(); i++) {
+      if (templates.get(i).name().equals(templateName)) {
+        templateIndex = i;
+        template = templates.get(i);
+        break;
+      }
+    }
+    if (template == null) {
+      throw new RoomCommandException(
+          "VALIDATION_FAILED",
+          "No such team template.",
+          Map.of("field", "templateName", "value", templateName));
+    }
+    if (configuredSize < template.sizeMin() || configuredSize > template.sizeMax()) {
+      throw new RoomCommandException(
+          "SIZE_OUT_OF_RANGE",
+          "configuredSize must be within [%d, %d]."
+              .formatted(template.sizeMin(), template.sizeMax()));
+    }
+    long currentCount = countTeamsForTemplate(roomId, templateIndex);
+    if (currentCount >= template.countMax()) {
+      throw new RoomCommandException(
+          "TEMPLATE_MAX_TEAMS", "This template already has the maximum number of teams.");
+    }
+    UUID teamId = UUID.randomUUID();
+    int teamIndex = (int) currentCount;
+    jdbcClient
+        .sql(
+            """
+            insert into room_team (team_id, room_id, template_index, team_index, configured_size)
+            values (:teamId, :roomId, :templateIndex, :teamIndex, :configuredSize)
+            """)
+        .param("teamId", teamId)
+        .param("roomId", roomId)
+        .param("templateIndex", templateIndex)
+        .param("teamIndex", teamIndex)
+        .param("configuredSize", configuredSize)
+        .update();
+    return new TeamAddedPayload(teamId, templateName, configuredSize, teamIndex);
+  }
+
+  /** {@code REMOVE_TEAM}, FR-TEAM-003. */
+  TeamRemovedPayload removeTeam(UUID roomId, UUID hostUserId, UUID teamId) {
+    requireLobby(requireHost(roomId, hostUserId));
+    requireTeamInRoom(roomId, teamId);
+    long occupied = teamOccupancy(teamId);
+    if (occupied > 0) {
+      throw new RoomCommandException("TEAM_NOT_EMPTY", "This team still has members.");
+    }
+    jdbcClient
+        .sql("delete from room_team where team_id = :teamId and room_id = :roomId")
+        .param("teamId", teamId)
+        .param("roomId", roomId)
+        .update();
+    return new TeamRemovedPayload(teamId);
+  }
+
+  /** {@code RESIZE_TEAM}, FR-TEAM-004. */
+  TeamResizedPayload resizeTeam(UUID roomId, UUID hostUserId, UUID teamId, int newSize) {
+    requireLobby(requireHost(roomId, hostUserId));
+    int templateIndex = requireTeamInRoom(roomId, teamId);
+    TeamTemplateInfo template = teamTemplatesForRoom(roomId).get(templateIndex);
+    if (newSize < template.sizeMin() || newSize > template.sizeMax()) {
+      throw new RoomCommandException(
+          "SIZE_OUT_OF_RANGE",
+          "newSize must be within [%d, %d].".formatted(template.sizeMin(), template.sizeMax()));
+    }
+    long occupied = teamOccupancy(teamId);
+    if (newSize < occupied) {
+      throw new RoomCommandException(
+          "OVER_CAPACITY", "newSize would reduce capacity below the current member count.");
+    }
+    jdbcClient
+        .sql("update room_team set configured_size = :newSize where team_id = :teamId")
+        .param("newSize", newSize)
+        .param("teamId", teamId)
+        .update();
+    return new TeamResizedPayload(teamId, newSize);
+  }
+
+  /** {@code REASSIGN_PLAYER}, FR-TEAM-006/007. */
+  PlayerReassignedPayload reassignPlayer(
+      UUID roomId, UUID hostUserId, UUID playerId, UUID toTeamId) {
+    requireLobby(requireHost(roomId, hostUserId));
+    UUID fromTeamId =
+        jdbcClient
+            .sql(
+                "select team_id from room_participant where room_id = :roomId"
+                    + " and user_id = :playerId and role = 'PLAYER' and left_at is null")
+            .param("roomId", roomId)
+            .param("playerId", playerId)
+            .query(UUID.class)
+            .optional()
+            .orElseThrow(
+                () -> new RoomCommandException("PLAYER_NOT_FOUND", "No such player in this room."));
+    int configuredSize =
+        jdbcClient
+            .sql(
+                "select configured_size from room_team where team_id = :teamId and room_id ="
+                    + " :roomId")
+            .param("teamId", toTeamId)
+            .param("roomId", roomId)
+            .query(Integer.class)
+            .optional()
+            .orElseThrow(
+                () ->
+                    new RoomCommandException(
+                        "VALIDATION_FAILED",
+                        "No such team.",
+                        Map.of("field", "toTeamId", "value", toTeamId.toString())));
+    if (teamOccupancy(toTeamId) >= configuredSize) {
+      throw new RoomCommandException("TEAM_FULL", "The target team has no available slot.");
+    }
+    jdbcClient
+        .sql(
+            "update room_participant set team_id = :teamId, ready = false"
+                + " where room_id = :roomId and user_id = :playerId and left_at is null")
+        .param("teamId", toTeamId)
+        .param("roomId", roomId)
+        .param("playerId", playerId)
+        .update();
+    return new PlayerReassignedPayload(playerId, fromTeamId, toTeamId, true);
+  }
+
+  /**
+   * {@code ADD_AI_PLAYER} — wire-present, behaviour-absent (IR-12). Always fails once the sender is
+   * confirmed to be the host; no v1 game may declare {@code capabilities.ai}. Returns rather than
+   * throws so the caller — inside a {@code RoomMutation} lambda that must otherwise return a {@code
+   * MutationOutcome} — can express "always fails" as a single {@code throw} statement.
+   */
+  RoomCommandException addAiPlayer(UUID roomId, UUID hostUserId) {
+    requireHost(roomId, hostUserId);
+    return new RoomCommandException(
+        "AI_NOT_SUPPORTED", "AI players are not supported in this version of the platform.");
+  }
+
+  /** Returns the room's current state; throws {@code NOT_HOST} if {@code userId} is not it. */
+  private String requireHost(UUID roomId, UUID userId) {
+    RoomHostAndState row =
+        jdbcClient
+            .sql("select host_user_id, state from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query(
+                (rs, rowNum) ->
+                    new RoomHostAndState(
+                        rs.getObject("host_user_id", UUID.class), rs.getString("state")))
+            .optional()
+            .orElseThrow(() -> new IllegalStateException("room " + roomId + " vanished"));
+    if (!userId.equals(row.hostUserId())) {
+      throw new RoomCommandException("NOT_HOST", "Only the room's host may send this command.");
+    }
+    return row.state();
+  }
+
+  /** Validates {@code teamId} belongs to {@code roomId}; returns its {@code template_index}. */
+  private int requireTeamInRoom(UUID roomId, UUID teamId) {
+    return jdbcClient
+        .sql("select template_index from room_team where team_id = :teamId and room_id = :roomId")
+        .param("teamId", teamId)
+        .param("roomId", roomId)
+        .query(Integer.class)
+        .optional()
+        .orElseThrow(
+            () ->
+                new RoomCommandException(
+                    "VALIDATION_FAILED",
+                    "No such team.",
+                    Map.of("field", "teamId", "value", teamId.toString())));
+  }
+
+  private long countTeamsForTemplate(UUID roomId, int templateIndex) {
+    Long count =
+        jdbcClient
+            .sql(
+                "select count(*) from room_team where room_id = :roomId"
+                    + " and template_index = :templateIndex")
+            .param("roomId", roomId)
+            .param("templateIndex", templateIndex)
+            .query(Long.class)
+            .single();
+    return count == null ? 0 : count;
+  }
+
+  private long teamOccupancy(UUID teamId) {
+    Long count =
+        jdbcClient
+            .sql(
+                "select count(*) from room_participant where team_id = :teamId"
+                    + " and role = 'PLAYER' and left_at is null")
+            .param("teamId", teamId)
+            .query(Long.class)
+            .single();
+    return count == null ? 0 : count;
+  }
+
+  // ---------------------------------------------------------------------
+  // ROOM_STATE snapshot (room-websocket.md § Snapshot Delivery, IMP-M2-05)
+  // ---------------------------------------------------------------------
+
+  /**
+   * {@code version} is returned alongside, not inside, the snapshot: {@code room-websocket.md} §
+   * Message Envelope carries it at the envelope level ({@code {"type","version","payload"}}), and
+   * {@code ROOM_STATE}'s own payload shape does not list it as a field.
+   */
+  RoomStateSnapshotWithVersion roomStateSnapshot(UUID roomId, int spectatorCapacity) {
+    RoomSnapshotHeader header =
+        jdbcClient
+            .sql(
+                """
+                select r.room_id, r.state, r.game_id, g.title as game_name,
+                       r.spectating_enabled, r.host_user_id, r.parameters,
+                       r.active_session_id, r.version
+                from room r join game g on g.game_id = r.game_id
+                where r.room_id = :roomId
+                """)
+            .param("roomId", roomId)
+            .query(
+                (rs, rowNum) ->
+                    new RoomSnapshotHeader(
+                        rs.getObject("room_id", UUID.class),
+                        rs.getString("state"),
+                        rs.getObject("game_id", UUID.class),
+                        rs.getString("game_name"),
+                        rs.getBoolean("spectating_enabled"),
+                        rs.getObject("host_user_id", UUID.class),
+                        rs.getString("parameters"),
+                        rs.getObject("active_session_id", UUID.class),
+                        rs.getLong("version")))
+            .optional()
+            .orElseThrow(() -> new IllegalStateException("room " + roomId + " vanished"));
+
+    List<ParticipantRow> participants =
+        jdbcClient
+            .sql(
+                """
+                select rp.user_id, au.username, rp.role, rp.team_id, rp.ready, rp.join_order
+                from room_participant rp join app_user au on au.user_id = rp.user_id
+                where rp.room_id = :roomId and rp.left_at is null
+                order by rp.join_order
+                """)
+            .param("roomId", roomId)
+            .query(
+                (rs, rowNum) ->
+                    new ParticipantRow(
+                        rs.getObject("user_id", UUID.class),
+                        rs.getString("username"),
+                        rs.getString("role"),
+                        rs.getObject("team_id", UUID.class),
+                        rs.getBoolean("ready"),
+                        rs.getLong("join_order")))
+            .list();
+
+    List<RoomStateSnapshot.PlayerEntry> players = new ArrayList<>();
+    List<RoomStateSnapshot.SpectatorEntry> spectators = new ArrayList<>();
+    // team_id -> member ids, join-order preserved by the query's own ORDER BY above.
+    Map<UUID, List<UUID>> membersByTeam = new java.util.LinkedHashMap<>();
+    for (ParticipantRow row : participants) {
+      if ("SPECTATOR".equals(row.role())) {
+        spectators.add(new RoomStateSnapshot.SpectatorEntry(row.userId(), row.username()));
+      } else {
+        // connected is unconditionally true: connection_count/disconnect tracking is IMP-M2-07's,
+        // so no present participant can be anything but connected before that item lands.
+        players.add(
+            new RoomStateSnapshot.PlayerEntry(
+                row.userId(), row.username(), row.teamId(), row.ready(), true, row.joinOrder()));
+        if (row.teamId() != null) {
+          membersByTeam.computeIfAbsent(row.teamId(), id -> new ArrayList<>()).add(row.userId());
+        }
+      }
+    }
+
+    List<TeamTemplateInfo> templates = teamTemplatesForRoom(roomId);
+    List<RoomStateSnapshot.TeamEntry> teams =
+        jdbcClient
+            .sql(
+                """
+                select team_id, template_index, team_index, configured_size
+                from room_team where room_id = :roomId
+                order by template_index, team_index
+                """)
+            .param("roomId", roomId)
+            .query(
+                (rs, rowNum) -> {
+                  UUID teamId = rs.getObject("team_id", UUID.class);
+                  int templateIndex = rs.getInt("template_index");
+                  return new RoomStateSnapshot.TeamEntry(
+                      teamId,
+                      templates.get(templateIndex).name(),
+                      rs.getInt("configured_size"),
+                      rs.getInt("team_index"),
+                      membersByTeam.getOrDefault(teamId, List.of()));
+                })
+            .list();
+
+    Map<String, Object> parameters = readParameters(header.parametersJson());
+
+    RoomStateSnapshot snapshot =
+        new RoomStateSnapshot(
+            header.roomId(),
+            header.state(),
+            header.gameId(),
+            header.gameName(),
+            header.spectatingEnabled(),
+            spectatorCapacity,
+            header.hostUserId(),
+            players,
+            List.of(),
+            spectators,
+            teams,
+            parameters,
+            List.of(),
+            null,
+            null);
+    return new RoomStateSnapshotWithVersion(header.version(), snapshot);
+  }
+
+  private Map<String, Object> readParameters(@Nullable String parametersJson) {
+    if (parametersJson == null) {
+      return Map.of();
+    }
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> parsed = objectMapper.readValue(parametersJson, Map.class);
+      return parsed;
+    } catch (Exception e) {
+      throw new IllegalStateException("Stored room.parameters is not valid JSON", e);
+    }
+  }
+
+  private record MemberForCommand(
+      String role,
+      @Nullable UUID hostUserId,
+      String state,
+      boolean spectatingEnabled,
+      boolean supportsSpectators) {}
+
+  private record MemberAndState(String role, String state) {}
+
+  private record RoomHostAndState(@Nullable UUID hostUserId, String state) {}
+
+  private record ParticipantRow(
+      UUID userId,
+      String username,
+      String role,
+      @Nullable UUID teamId,
+      boolean ready,
+      long joinOrder) {}
+
+  private record RoomSnapshotHeader(
+      UUID roomId,
+      String state,
+      UUID gameId,
+      String gameName,
+      boolean spectatingEnabled,
+      @Nullable UUID hostUserId,
+      @Nullable String parametersJson,
+      @Nullable UUID activeSessionId,
+      long version) {}
+
+  /** {@code version} at the envelope level, {@code snapshot} as {@code ROOM_STATE}'s payload. */
+  record RoomStateSnapshotWithVersion(long version, RoomStateSnapshot snapshot) {}
+
+  /** {@code room-websocket.md} `READINESS_CHANGED` payload shape. */
+  record ReadinessChangedPayload(UUID playerId, boolean ready) {}
+
+  /** {@code room-websocket.md} `PLAYER_ROLE_CHANGED` payload shape. */
+  record PlayerRoleChangedPayload(
+      UUID playerId, String newRole, @Nullable UUID teamId, boolean readinessCleared) {}
+
+  /** {@code room-websocket.md} `TEAM_ADDED` payload shape. */
+  record TeamAddedPayload(UUID teamId, String templateName, int configuredSize, int index) {}
+
+  /** {@code room-websocket.md} `TEAM_REMOVED` payload shape. */
+  record TeamRemovedPayload(UUID teamId) {}
+
+  /** {@code room-websocket.md} `TEAM_RESIZED` payload shape. */
+  record TeamResizedPayload(UUID teamId, int newConfiguredSize) {}
+
+  /** {@code room-websocket.md} `PLAYER_REASSIGNED` payload shape. */
+  record PlayerReassignedPayload(
+      UUID playerId, UUID fromTeamId, UUID toTeamId, boolean readinessReset) {}
+
+  // ---------------------------------------------------------------------
   // Reads (room-rest-api.md §3, §3.1, §4)
   // ---------------------------------------------------------------------
 
@@ -600,7 +1116,7 @@ class RoomRepository {
     return false;
   }
 
-  private List<TeamTemplate> parseTeamTemplates(@Nullable String manifestJson) {
+  private List<TeamTemplateInfo> parseTeamTemplates(@Nullable String manifestJson) {
     if (manifestJson == null) {
       throw new IllegalStateException("An ACTIVE game_version must carry a validated manifest.");
     }
@@ -610,14 +1126,37 @@ class RoomRepository {
     } catch (Exception e) {
       throw new IllegalStateException("Stored manifest is not valid JSON", e);
     }
-    List<TeamTemplate> templates = new ArrayList<>();
+    List<TeamTemplateInfo> templates = new ArrayList<>();
     for (JsonNode templateNode : manifest.path("teamTemplates")) {
+      JsonNode size = templateNode.path("size");
+      JsonNode count = templateNode.path("count");
+      // manifest-schema.md § teamTemplates: name defaults to "Team" for a single template.
       templates.add(
-          new TeamTemplate(
-              templateNode.path("count").path("min").asInt(),
-              templateNode.path("size").path("max").asInt()));
+          new TeamTemplateInfo(
+              templateNode.path("name").asText("Team"),
+              size.path("min").asInt(),
+              size.path("max").asInt(),
+              count.path("min").asInt(),
+              count.path("max").asInt()));
     }
     return templates;
+  }
+
+  /** {@code IMP-M2-05} — team management commands need the manifest's fuller template shape. */
+  List<TeamTemplateInfo> teamTemplatesForRoom(UUID roomId) {
+    String manifest =
+        jdbcClient
+            .sql(
+                """
+                select gv.manifest
+                from room r join game_version gv
+                  on gv.game_id = r.game_id and gv.version = r.game_version
+                where r.room_id = :roomId
+                """)
+            .param("roomId", roomId)
+            .query(String.class)
+            .single();
+    return parseTeamTemplates(manifest);
   }
 
   private static CreatableGameCandidate mapCreatableGameCandidate(ResultSet rs, int rowNum)
@@ -702,7 +1241,7 @@ class RoomRepository {
 
   private record WhereClause(String sql, Map<String, Object> params) {}
 
-  private record TeamTemplate(int countMin, int sizeMax) {}
+  record TeamTemplateInfo(String name, int sizeMin, int sizeMax, int countMin, int countMax) {}
 
   private record CreatableGameCandidate(
       CreatableGame game,

@@ -112,6 +112,122 @@ class RoomService {
         });
   }
 
+  // ---------------------------------------------------------------------
+  // STOMP member commands (room-websocket.md, IMP-M2-05). Every call already runs on the owning
+  // pod (subscribe-time re-verification, IMP-M2-02's RoomSubscriptionAuthorizer) — events.execute
+  // still resolves the epoch fresh, so a claim lost between subscribe and this command surfaces as
+  // ROOM_UNAVAILABLE_RETRY rather than a silent write.
+  // ---------------------------------------------------------------------
+
+  RoomRepository.ReadinessChangedPayload toggleReady(UUID roomId, UUID userId, boolean ready) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.ReadinessChangedPayload payload =
+              repository.toggleReady(roomId, userId, ready);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("READINESS_CHANGED", payload));
+        });
+  }
+
+  RoomRepository.PlayerRoleChangedPayload switchToSpectator(UUID roomId, UUID userId) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.PlayerRoleChangedPayload payload =
+              repository.switchToSpectator(roomId, userId, properties.spectatorCapacity());
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("PLAYER_ROLE_CHANGED", payload));
+        });
+  }
+
+  RoomRepository.PlayerRoleChangedPayload switchToPlayer(UUID roomId, UUID userId) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.PlayerRoleChangedPayload payload =
+              repository.switchToPlayer(roomId, userId);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("PLAYER_ROLE_CHANGED", payload));
+        });
+  }
+
+  /** {@code REQUEST_ROOM_STATE} — a read, so its {@code MutationOutcome} carries no event. */
+  RoomRepository.RoomStateSnapshotWithVersion roomState(UUID roomId, UUID userId) {
+    return events.execute(
+        roomId,
+        () -> {
+          if (!repository.isCurrentParticipant(roomId, userId)) {
+            throw new RoomCommandException("NOT_MEMBER", "You are not a member of this room.");
+          }
+          RoomRepository.RoomStateSnapshotWithVersion snapshot =
+              repository.roomStateSnapshot(roomId, properties.spectatorCapacity());
+          return new RoomEventExecutor.MutationOutcome<>(snapshot, null);
+        });
+  }
+
+  // ---------------------------------------------------------------------
+  // STOMP host commands — IMP-M2-05's own share only (ADD_TEAM, REMOVE_TEAM, RESIZE_TEAM,
+  // REASSIGN_PLAYER, ADD_AI_PLAYER). KICK_PLAYER/CHANGE_PARAMETERS/START_GAME/TRANSFER_HOST are
+  // IMP-M2-06's.
+  // ---------------------------------------------------------------------
+
+  RoomRepository.TeamAddedPayload addTeam(
+      UUID roomId, UUID hostUserId, String templateName, int configuredSize) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.TeamAddedPayload payload =
+              repository.addTeam(roomId, hostUserId, templateName, configuredSize);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("TEAM_ADDED", payload));
+        });
+  }
+
+  RoomRepository.TeamRemovedPayload removeTeam(UUID roomId, UUID hostUserId, UUID teamId) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.TeamRemovedPayload payload =
+              repository.removeTeam(roomId, hostUserId, teamId);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("TEAM_REMOVED", payload));
+        });
+  }
+
+  RoomRepository.TeamResizedPayload resizeTeam(
+      UUID roomId, UUID hostUserId, UUID teamId, int newSize) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.TeamResizedPayload payload =
+              repository.resizeTeam(roomId, hostUserId, teamId, newSize);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("TEAM_RESIZED", payload));
+        });
+  }
+
+  RoomRepository.PlayerReassignedPayload reassignPlayer(
+      UUID roomId, UUID hostUserId, UUID playerId, UUID toTeamId) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.PlayerReassignedPayload payload =
+              repository.reassignPlayer(roomId, hostUserId, playerId, toTeamId);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("PLAYER_REASSIGNED", payload));
+        });
+  }
+
+  /** {@code ADD_AI_PLAYER} — always throws {@code AI_NOT_SUPPORTED} once host is confirmed. */
+  void addAiPlayer(UUID roomId, UUID hostUserId) {
+    events.execute(
+        roomId,
+        () -> {
+          throw repository.addAiPlayer(roomId, hostUserId);
+        });
+  }
+
   /** {@code room-rest-api.md} §4. */
   ClaimedResult<RoomResponse> get(UUID roomId, UUID viewerId) {
     RoomRepository.RoomResourceRow row =
