@@ -1,0 +1,248 @@
+package io.turnbase.platform.room;
+
+import io.turnbase.platform.common.RoomUnavailableRetryException;
+import java.util.Optional;
+import java.util.UUID;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/**
+ * {@code room-lifecycle.md} §5.1 — the 5s deadline sweep, run by {@link
+ * GraceDeadlineSweepSchedulingConfig} on {@code turnbase.jobs.deadline-sweep.interval}. Ownership-
+ * partitioned like {@code RoomOwnershipService}'s own lease renewal: every instance runs this tick,
+ * each sweeping only the rooms {@code room.owner_instance_id} names as its own — no
+ * {@code @SchedulerLock}, since a cluster-wide "exactly one instance" lock would leave every other
+ * instance's owned rooms unswept.
+ *
+ * <p>The four duties run in this exact order every tick (§5.1's own ordering note: closing in duty
+ * 2 discards that session's undelivered outbox rows, so draining first would dispatch a {@code
+ * player_left} for a session about to be torn down).
+ */
+@Component
+class GraceDeadlineSweepJob {
+
+  private static final Logger log = LoggerFactory.getLogger(GraceDeadlineSweepJob.class);
+
+  /** No document names a batch size for the drain; a reasoned default, not a measurement. */
+  private static final int OUTBOX_DRAIN_BATCH = 100;
+
+  private final RoomRepository repository;
+  private final RoomEventExecutor events;
+  private final PodIdentity pod;
+  private final RoomSessionDetacher detacher;
+  private final GameInputDispatcher dispatcher;
+
+  GraceDeadlineSweepJob(
+      RoomRepository repository,
+      RoomEventExecutor events,
+      PodIdentity pod,
+      RoomSessionDetacher detacher,
+      GameInputDispatcher dispatcher) {
+    this.repository = repository;
+    this.events = events;
+    this.pod = pod;
+    this.detacher = detacher;
+    this.dispatcher = dispatcher;
+  }
+
+  void run() {
+    dueExpiries();
+    deferredTails();
+    elapsedMigrationWindows();
+    drainOutbox();
+  }
+
+  // ---------------------------------------------------------------------
+  // Duty 1 — due expiries (§3.2/§3.3).
+  // ---------------------------------------------------------------------
+
+  private void dueExpiries() {
+    for (RoomRepository.DueReservation due : repository.dueGraceReservations(pod.id())) {
+      resolveOne(due);
+    }
+  }
+
+  private void resolveOne(RoomRepository.DueReservation due) {
+    Optional<RoomRepository.PlayerLostPayload> lost;
+    try {
+      lost =
+          events.execute(
+              due.roomId(),
+              () -> {
+                Optional<RoomRepository.ResolvedReservation> resolved =
+                    repository.resolveExpiredReservation(due);
+                RoomRepository.PlayerLostPayload payload =
+                    resolved
+                        .map(
+                            r ->
+                                new RoomRepository.PlayerLostPayload(
+                                    due.userId(), r.teamId(), "GRACE_PERIOD_EXPIRED"))
+                        .orElse(null);
+                RoomEventExecutor.RoomEvent event =
+                    payload == null
+                        ? null
+                        : new RoomEventExecutor.RoomEvent("PLAYER_LOST", payload);
+                return new RoomEventExecutor.MutationOutcome<>(Optional.ofNullable(payload), event);
+              });
+    } catch (RoomUnavailableRetryException e) {
+      // Ownership moved since dueGraceReservations() ran; leave the row for whichever instance
+      // owns it now — this tick's own query already filtered on ownership, so a fresh claim
+      // elsewhere will pick this up on its own next tick.
+      return;
+    }
+    lost.ifPresent(
+        payload -> evaluateClosureIfNoHumanRemains(due.roomId(), "GRACE_EXPIRED_NO_HUMAN"));
+  }
+
+  private void evaluateClosureIfNoHumanRemains(UUID roomId, String closedReason) {
+    if (repository.anyHumanRemains(roomId)) {
+      return;
+    }
+    UUID sessionId = repository.activeSessionId(roomId);
+    detacher.detach(roomId, sessionId, closedReason, "CLOSED");
+  }
+
+  // ---------------------------------------------------------------------
+  // Duty 2 — deferred tails: resolutions a foreign instance committed, still owed an announcement.
+  // ---------------------------------------------------------------------
+
+  private void deferredTails() {
+    for (RoomRepository.DeferredTail tail : repository.deferredTails(pod.id())) {
+      announceOne(tail);
+    }
+  }
+
+  private void announceOne(RoomRepository.DeferredTail tail) {
+    boolean announced;
+    try {
+      announced =
+          events.execute(
+              tail.roomId(),
+              () -> {
+                boolean won = repository.announceDeferredTail(tail.roomId(), tail.userId());
+                RoomEventExecutor.RoomEvent event =
+                    won
+                        ? new RoomEventExecutor.RoomEvent(
+                            "PLAYER_LOST",
+                            new RoomRepository.PlayerLostPayload(
+                                tail.userId(), tail.teamId(), "GRACE_PERIOD_EXPIRED"))
+                        : null;
+                return new RoomEventExecutor.MutationOutcome<>(won, event);
+              });
+    } catch (RoomUnavailableRetryException e) {
+      return;
+    }
+    if (!announced) {
+      return;
+    }
+    applyHostDispositionIfNeeded(tail);
+    evaluateClosureIfNoHumanRemains(tail.roomId(), "NO_PLAYERS_REMAINING");
+  }
+
+  /**
+   * §5.1 duty 2's host disposition: if the departed participant was the host, transfer to the next
+   * connected human, if one exists. If none is connected but at least one human still remains (in
+   * grace), {@link #evaluateClosureIfNoHumanRemains} below will not close the room and {@code
+   * host_user_id} is left pointing at the departed user until someone reconnects — the same
+   * "legitimately has no host" state `data-model.md` §1 already documents for the individual-grace
+   * case; nulling it out here as well needs its own version-bumping room mutation with no event to
+   * carry, which this item leaves as a known simplification rather than inventing a wire event no
+   * document specifies.
+   */
+  private void applyHostDispositionIfNeeded(RoomRepository.DeferredTail tail) {
+    if (!tail.userId().equals(tail.hostUserId())) {
+      return;
+    }
+    Optional<UUID> nextHuman = repository.nextConnectedHumanExcluding(tail.roomId(), tail.userId());
+    if (nextHuman.isEmpty()) {
+      return;
+    }
+    try {
+      events.execute(
+          tail.roomId(),
+          () -> {
+            RoomRepository.HostTransferredPayload payload =
+                repository.transferHostAutomatically(
+                    tail.roomId(), nextHuman.get(), tail.userId(), "HOST_LEFT");
+            return new RoomEventExecutor.MutationOutcome<>(
+                payload, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
+          });
+    } catch (RoomUnavailableRetryException e) {
+      // Not this instance's problem any more.
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Duty 3 — elapsed migration windows (FR-HDISC-004).
+  // ---------------------------------------------------------------------
+
+  private void elapsedMigrationWindows() {
+    for (UUID roomId : repository.elapsedMigrationWindowRoomIds(pod.id())) {
+      closeMigrationWindow(roomId);
+    }
+  }
+
+  private void closeMigrationWindow(UUID roomId) {
+    @Nullable UUID hostUserId = repository.hostUserIdOf(roomId);
+    boolean hostConnected = hostUserId != null && repository.isConnected(roomId, hostUserId);
+    Optional<UUID> nextHuman =
+        hostConnected
+            ? Optional.empty()
+            : repository.nextConnectedHumanExcluding(roomId, hostUserId);
+    try {
+      events.execute(
+          roomId,
+          () -> {
+            repository.clearMigrationWindow(roomId);
+            if (nextHuman.isEmpty()) {
+              return new RoomEventExecutor.MutationOutcome<>(Boolean.FALSE, null);
+            }
+            RoomRepository.HostTransferredPayload payload =
+                repository.transferHostAutomatically(
+                    roomId, nextHuman.get(), hostUserId, "HOST_DISCONNECTED");
+            return new RoomEventExecutor.MutationOutcome<>(
+                Boolean.TRUE, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
+          });
+    } catch (RoomUnavailableRetryException e) {
+      // Not this instance's room any more.
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Duty 4 — outbox drain (data-model.md §4.2). Not ownership-partitioned: a gRPC call needs no
+  // room claim, unlike the other three duties' STOMP broadcasts.
+  // ---------------------------------------------------------------------
+
+  private void drainOutbox() {
+    for (RoomRepository.OutboxRow row : repository.pendingOutboxRows(OUTBOX_DRAIN_BATCH)) {
+      drainOne(row);
+    }
+  }
+
+  private void drainOne(RoomRepository.OutboxRow row) {
+    // data-model.md §4.2: allocated once, persisted, reused on every retry — the value itself is
+    // Orchestration's real per-session `seq:{sessionId}` Redis counter (IMP-M3-05), which does not
+    // exist yet; the row's own stable, monotonic identity stands in until it does. What this item's
+    // own tests hold it to is "allocated once, never re-rolled," which holds regardless of source.
+    long sequence =
+        row.sequence() != null
+            ? row.sequence()
+            : repository.allocateOutboxSequence(row.id(), row.id());
+    boolean delivered;
+    try {
+      delivered = dispatcher.dispatch(row.id(), sequence, row.payloadJson());
+    } catch (RuntimeException e) {
+      log.warn("outbox row {} dispatch threw", row.id(), e);
+      repository.recordOutboxAttemptFailure(
+          row.id(), e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+      return;
+    }
+    if (delivered) {
+      repository.markOutboxDispatched(row.id());
+    } else {
+      repository.recordOutboxAttemptFailure(row.id(), "dispatch reported failure");
+    }
+  }
+}

@@ -21,11 +21,12 @@ import org.springframework.stereotype.Component;
 /**
  * {@code room-lifecycle.md} §1 (all six subsections) — the atomic claim script that is also the
  * failure detector (§1.2), compare-and-delete release (§1.3), the room-row half of adoption (§1.4
- * steps 1–3 and 7; steps 4–6 and 8 need participant/session infrastructure {@code IMP-M2-07},
- * {@code IMP-M2-08} and Game Host dispatch build later — recorded here, not gated, since this
- * item's own Done-when never requires them), the owner-epoch fence primitive other room-mutating
- * items build on (§1.5 layer 4), and the liveness lease with self-eviction on lapse (§1.5 layers
- * 2–3).
+ * steps 1–5 and 7, the mass grace-reservation open added by {@code IMP-M2-07}, {@code IMP-GATE-48};
+ * step 6 needs Game Host session-dispatch infrastructure that does not exist until M3 — recorded
+ * here, not gated, since this item's own Done-when never required it; step 8 needs no code, since
+ * this method never publishes a per-player event), the owner-epoch fence primitive other
+ * room-mutating items build on (§1.5 layer 4), and the liveness lease with self-eviction on lapse
+ * (§1.5 layers 2–3).
  *
  * <p>Package-private: every {@code IMP-M2-*} consumer of the claim (REST in {@code IMP-M2-01},
  * STOMP subscribe-time re-verification in {@code IMP-M2-02}) lives in this same {@code room}
@@ -226,11 +227,11 @@ class RoomOwnershipService {
   }
 
   /**
-   * {@code room-lifecycle.md} §1.4 steps 1–3 and 7: the room-row half of adoption. Steps 4–6 and 8
-   * (grace-period reservations, connection-count reset, session re-dispatch, suppressed disconnect
-   * events) need {@code room_participant} and session infrastructure that does not exist yet
-   * ({@code IMP-M2-07}, {@code IMP-M2-08}, Game Host dispatch) and are therefore each of those
-   * items' own duty when built, not this one's.
+   * {@code room-lifecycle.md} §1.4 steps 1–3, 4–5 and 7: the room-row half of adoption, plus the
+   * mass grace-reservation open ({@code IMP-GATE-48}). Steps 6 and 8 (session re-dispatch,
+   * suppressed disconnect events) need Game Host dispatch infrastructure that does not exist yet
+   * (Game Host session dispatch, M3) and emit no events respectively — step 8 needs no code, since
+   * this method never publishes a per-player event.
    */
   private ClaimOutcome adopt(UUID roomId, long epoch) {
     Optional<Long> version =
@@ -261,8 +262,52 @@ class RoomOwnershipService {
           epoch);
       return new ClaimOutcome.Superseded();
     }
+    // §1.4 steps 4-5 only apply to a genuine takeover from a previous, now-dead tenure — never to
+    // a room's very first claim ever. The claim script's own "free, or lease lapsed" comment (§1.2)
+    // conflates both into the same ADOPTED result, but the Redis epoch counter (INCR'd from 0)
+    // still distinguishes them: epoch 1 is always a fresh room's first claim, when every
+    // participant genuinely has connection_count = 0 because nobody has subscribed yet — not
+    // because anyone was orphaned. Running the mass-open there would hand a brand-new joiner a
+    // grace reservation before their own first SUBSCRIBE ever completes.
+    if (epoch > 1) {
+      openMassGraceReservations(roomId);
+    }
     owned.put(roomId, new OwnedRoom(epoch, new AtomicLong(version.get())));
     return new ClaimOutcome.Adopted(epoch, version.get());
+  }
+
+  /**
+   * {@code room-lifecycle.md} §1.4 steps 4–5 ({@code IMP-GATE-48}): every participant left with
+   * {@code connection_count > 0} lost their connection along with the previous owner (FR-DC-006).
+   * Step 5 zeroes {@code connection_count} for every role — a spectator's socket died too, and
+   * {@link RoomStateSnapshot.PlayerEntry#connected} / {@link RoomStateSnapshot.SpectatorEntry} both
+   * read this column. Step 4 additionally opens a grace reservation, but only for {@code PLAYER}
+   * role, matching §3.1's own scope (a spectator is dropped immediately, FR-DC-003, never given a
+   * reservation) — this is §3.1's statement applied to every eligible player in one pass rather
+   * than one row, {@code COALESCE}-guarded so a reservation already running from an earlier
+   * individual disconnect is never reset. No event is published (§1.4 step 8) — every client of
+   * this room is already disconnected by I1.
+   */
+  private void openMassGraceReservations(UUID roomId) {
+    jdbcClient
+        .sql(
+            "UPDATE room_participant SET connection_count = 0"
+                + " WHERE room_id = :roomId AND connection_count > 0 AND left_at IS NULL")
+        .param("roomId", roomId)
+        .update();
+    jdbcClient
+        .sql(
+            """
+            UPDATE room_participant
+               SET grace_reservation_id = COALESCE(grace_reservation_id, gen_random_uuid()),
+                   grace_expires_at =
+                     COALESCE(grace_expires_at, now() + make_interval(secs => :graceSeconds))
+             WHERE room_id = :roomId AND role = 'PLAYER' AND left_at IS NULL
+               AND connection_count = 0
+            """)
+        .param("roomId", roomId)
+        .param("graceSeconds", (int) properties.gracePeriod().toSeconds())
+        .update();
   }
 
   /**

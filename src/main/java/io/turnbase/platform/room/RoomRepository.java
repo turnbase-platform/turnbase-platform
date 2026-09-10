@@ -7,6 +7,7 @@ import io.turnbase.platform.common.NotFoundException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -285,16 +286,24 @@ class RoomRepository {
    * so a released membership names a different room than {@code newRoomId} by construction. {@code
    * lost_announced_at} is left {@code null} unconditionally: this handler makes no attempt to
    * determine or claim ownership of the *old* room, so the departure is honestly recorded as owed
-   * an announcement, for the deferred-tail sweep (`room-lifecycle.md` §5.1 duty 2) to pick up once
-   * that mechanism exists.
+   * an announcement, for the deferred-tail sweep (`room-lifecycle.md` §5.1 duty 2) to discharge.
+   *
+   * <p>{@code EARLY_RELEASE} (`reconnection-flow.md` FR-EXPIRY-004) additionally notifies the game
+   * backend exactly as a normal expiry would ({@code game-contracts.md} FR-IN-005's closed reason
+   * set has no fourth value for this case — early release is reported as {@code
+   * grace_period_expired}, same as any other resolution of the reservation) — performed by this,
+   * the acting instance, regardless of whether it owns the old room, since the outbox insert needs
+   * no room-ownership fence, only the old room's own {@code active_session_id} ({@link
+   * #insertPlayerLeftOutbox} is itself the conditional-on-session-existing guard).
    */
   private Optional<ReleasedRoomResponse> releaseCallersCurrentRoom(UUID userId, UUID newRoomId) {
-    record ActiveMembership(UUID roomId, @Nullable UUID graceReservationId) {}
+    record ActiveMembership(
+        UUID roomId, @Nullable UUID graceReservationId, @Nullable UUID teamId) {}
 
     Optional<ActiveMembership> active =
         jdbcClient
             .sql(
-                "select room_id, grace_reservation_id from room_participant"
+                "select room_id, grace_reservation_id, team_id from room_participant"
                     + " where user_id = :userId and left_at is null and room_id <> :newRoomId")
             .param("userId", userId)
             .param("newRoomId", newRoomId)
@@ -302,13 +311,15 @@ class RoomRepository {
                 (rs, rowNum) ->
                     new ActiveMembership(
                         rs.getObject("room_id", UUID.class),
-                        rs.getObject("grace_reservation_id", UUID.class)))
+                        rs.getObject("grace_reservation_id", UUID.class),
+                        rs.getObject("team_id", UUID.class)))
             .optional();
     if (active.isEmpty()) {
       return Optional.empty();
     }
     ActiveMembership membership = active.get();
-    String reason = membership.graceReservationId() != null ? "EARLY_RELEASE" : "LEFT";
+    boolean earlyRelease = membership.graceReservationId() != null;
+    String reason = earlyRelease ? "EARLY_RELEASE" : "LEFT";
     jdbcClient
         .sql(
             """
@@ -321,6 +332,10 @@ class RoomRepository {
         .param("roomId", membership.roomId())
         .param("userId", userId)
         .update();
+    if (earlyRelease) {
+      insertPlayerLeftOutbox(
+          membership.roomId(), userId, membership.teamId(), "grace_period_expired");
+    }
     return Optional.of(new ReleasedRoomResponse(membership.roomId(), reason));
   }
 
@@ -332,9 +347,14 @@ class RoomRepository {
    * {@code FR-LIFE-004}: an immediate, confirmed departure — no grace period. Idempotent: a caller
    * with no active membership in this room updates zero rows and returns empty, distinct from a
    * real departure so {@code RoomService} knows whether a {@code PLAYER_LEFT} broadcast is owed.
+   *
+   * <p>{@code announceInline} is {@code room-lifecycle.md} §3.2's {@code :announceInline} — {@code
+   * true} exactly when the caller owns the room and is about to broadcast immediately
+   * (`RoomService#leave`'s claimed branch, and every socket-disconnect-triggered immediate leave);
+   * {@code false} when it does not, leaving the departure for §5.1 duty 2 to announce.
    */
   @Transactional
-  Optional<PlayerLeftPayload> leaveRoom(UUID userId, UUID roomId) {
+  Optional<PlayerLeftPayload> leaveRoom(UUID userId, UUID roomId, boolean announceInline) {
     Optional<String> role =
         jdbcClient
             .sql(
@@ -352,10 +372,12 @@ class RoomRepository {
         .sql(
             """
             update room_participant
-               set left_at = now(), leave_reason = 'LEFT', lost_announced_at = null,
+               set left_at = now(), leave_reason = 'LEFT',
+                   lost_announced_at = case when :announceInline then now() else null end,
                    grace_reservation_id = null, grace_expires_at = null
              where room_id = :roomId and user_id = :userId and left_at is null
             """)
+        .param("announceInline", announceInline)
         .param("roomId", roomId)
         .param("userId", userId)
         .update();
@@ -1105,7 +1127,7 @@ class RoomRepository {
   record ParametersChangedPayload(Map<String, Object> parameters) {}
 
   /** {@code room-websocket.md} `HOST_TRANSFERRED` payload shape. */
-  record HostTransferredPayload(UUID newHostId, UUID previousHostId, String reason) {}
+  record HostTransferredPayload(UUID newHostId, @Nullable UUID previousHostId, String reason) {}
 
   // ---------------------------------------------------------------------
   // ROOM_STATE snapshot (room-websocket.md § Snapshot Delivery, IMP-M2-05)
@@ -1147,7 +1169,10 @@ class RoomRepository {
         jdbcClient
             .sql(
                 """
-                select rp.user_id, au.username, rp.role, rp.team_id, rp.ready, rp.join_order
+                select rp.user_id, au.username, rp.role, rp.team_id, rp.ready, rp.join_order,
+                       rp.connection_count,
+                       ceil(greatest(0, extract(epoch from rp.grace_expires_at - now())))::bigint
+                         as grace_remaining_seconds
                 from room_participant rp join app_user au on au.user_id = rp.user_id
                 where rp.room_id = :roomId and rp.left_at is null
                 order by rp.join_order
@@ -1161,22 +1186,39 @@ class RoomRepository {
                         rs.getString("role"),
                         rs.getObject("team_id", UUID.class),
                         rs.getBoolean("ready"),
-                        rs.getLong("join_order")))
+                        rs.getLong("join_order"),
+                        rs.getInt("connection_count") > 0,
+                        rs.getObject("grace_remaining_seconds", Long.class)))
             .list();
 
     List<RoomStateSnapshot.PlayerEntry> players = new ArrayList<>();
     List<RoomStateSnapshot.SpectatorEntry> spectators = new ArrayList<>();
+    // room-lifecycle.md §3.4: disconnectedPlayers only lists a reservation still live
+    // (grace_expires_at > now(), i.e. a non-null remaining-seconds row here), clamped to min 1 —
+    // a due-but-unswept reservation is never advertised as live.
+    List<RoomStateSnapshot.DisconnectedPlayerEntry> disconnected = new ArrayList<>();
     // team_id -> member ids, join-order preserved by the query's own ORDER BY above.
     Map<UUID, List<UUID>> membersByTeam = new java.util.LinkedHashMap<>();
     for (ParticipantRow row : participants) {
       if ("SPECTATOR".equals(row.role())) {
         spectators.add(new RoomStateSnapshot.SpectatorEntry(row.userId(), row.username()));
       } else {
-        // connected is unconditionally true: connection_count/disconnect tracking is IMP-M2-07's,
-        // so no present participant can be anything but connected before that item lands.
         players.add(
             new RoomStateSnapshot.PlayerEntry(
-                row.userId(), row.username(), row.teamId(), row.ready(), true, row.joinOrder()));
+                row.userId(),
+                row.username(),
+                row.teamId(),
+                row.ready(),
+                row.connected(),
+                row.joinOrder()));
+        // ceil(...) is 0 exactly when grace_expires_at <= now() (due but unswept) — excluded, per
+        // §3.4: "a due-but-unswept reservation is never advertised as live." A row that clears
+        // this filter is always > now(), so ceil() is already >= 1 with no separate clamp needed.
+        if (row.graceRemainingSeconds() != null && row.graceRemainingSeconds() > 0) {
+          disconnected.add(
+              new RoomStateSnapshot.DisconnectedPlayerEntry(
+                  row.userId(), row.graceRemainingSeconds().intValue()));
+        }
         if (row.teamId() != null) {
           membersByTeam.computeIfAbsent(row.teamId(), id -> new ArrayList<>()).add(row.userId());
         }
@@ -1222,8 +1264,8 @@ class RoomRepository {
             spectators,
             teams,
             parameters,
-            List.of(),
-            null,
+            disconnected,
+            header.activeSessionId(),
             null);
     return new RoomStateSnapshotWithVersion(header.version(), snapshot);
   }
@@ -1258,7 +1300,9 @@ class RoomRepository {
       String role,
       @Nullable UUID teamId,
       boolean ready,
-      long joinOrder) {}
+      long joinOrder,
+      boolean connected,
+      @Nullable Long graceRemainingSeconds) {}
 
   private record RoomSnapshotHeader(
       UUID roomId,
@@ -1744,4 +1788,414 @@ class RoomRepository {
 
   /** {@code room-websocket.md} `PLAYER_LEFT` payload shape. */
   record PlayerLeftPayload(UUID playerId, String role) {}
+
+  // ---------------------------------------------------------------------
+  // Disconnect (IMP-M2-07, room-lifecycle.md §3.1 / flows/04-disconnect-and-return.md §A).
+  // ---------------------------------------------------------------------
+
+  /**
+   * Flow A steps 3-5: decrement, stop if still connected, else branch by room state and role.
+   * Always runs on the owning instance (a STOMP session only exists after subscribe-time ownership
+   * verification), so a Lobby/spectator departure announces inline and an In-Progress player
+   * departure opens a reservation, both under {@link RoomEventExecutor}'s lock the caller already
+   * holds.
+   */
+  DisconnectOutcome registerDisconnect(UUID roomId, UUID userId, Duration gracePeriod) {
+    Optional<Integer> remaining =
+        jdbcClient
+            .sql(
+                """
+                update room_participant set connection_count = connection_count - 1
+                 where room_id = :roomId and user_id = :userId
+                   and left_at is null and connection_count > 0
+                returning connection_count
+                """)
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(Integer.class)
+            .optional();
+    if (remaining.isEmpty() || remaining.get() > 0) {
+      // Empty: already left, or a duplicate disconnect event for an already-processed drop —
+      // either way, nothing to do. > 0: another of this user's tabs is still open (FR-GRACE-006).
+      return new DisconnectOutcome.StillConnected();
+    }
+
+    record RoomForDisconnect(String state, @Nullable UUID hostUserId) {}
+    RoomForDisconnect room =
+        jdbcClient
+            .sql("select state, host_user_id from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query(
+                (rs, n) ->
+                    new RoomForDisconnect(
+                        rs.getString("state"), rs.getObject("host_user_id", UUID.class)))
+            .single();
+    String role =
+        jdbcClient
+            .sql(
+                "select role from room_participant"
+                    + " where room_id = :roomId and user_id = :userId and left_at is null")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(String.class)
+            .single();
+
+    if (!"IN_PROGRESS".equals(room.state()) || "SPECTATOR".equals(role)) {
+      // FR-DC-002 (Lobby) / FR-DC-003 (spectator, any state): immediate leave, no reservation.
+      return leaveRoom(userId, roomId, true)
+          .<DisconnectOutcome>map(DisconnectOutcome.LeftImmediately::new)
+          .orElse(new DisconnectOutcome.StillConnected());
+    }
+
+    // IN_PROGRESS, PLAYER: open a grace reservation (§3.1). Guarded on grace_reservation_id IS
+    // NULL so a duplicate disconnect event (connection_count already decremented once but this
+    // method re-entered before the first call's own transaction visibly committed) never resets
+    // an already-running window.
+    jdbcClient
+        .sql(
+            """
+            update room_participant
+               set grace_reservation_id = gen_random_uuid(),
+                   grace_expires_at = now() + make_interval(secs => :graceSeconds)
+             where room_id = :roomId and user_id = :userId
+               and left_at is null and grace_reservation_id is null
+            """)
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .param("graceSeconds", (int) gracePeriod.toSeconds())
+        .update();
+    boolean wasHost = userId.equals(room.hostUserId());
+    return new DisconnectOutcome.GraceOpened(
+        new PlayerDisconnectedPayload(userId, gracePeriod.toSeconds()), wasHost);
+  }
+
+  sealed interface DisconnectOutcome {
+    record StillConnected() implements DisconnectOutcome {}
+
+    record LeftImmediately(PlayerLeftPayload payload) implements DisconnectOutcome {}
+
+    record GraceOpened(PlayerDisconnectedPayload payload, boolean wasHost)
+        implements DisconnectOutcome {}
+  }
+
+  /** {@code room-websocket.md} `PLAYER_DISCONNECTED` payload shape. */
+  record PlayerDisconnectedPayload(UUID playerId, long gracePeriodSeconds) {}
+
+  // ---------------------------------------------------------------------
+  // Host transfer helpers, shared by disconnect (FR-HDISC-001), the migration-window sweep duty
+  // (FR-HDISC-004) and the deferred-tail duty.
+  // ---------------------------------------------------------------------
+
+  /**
+   * {@code room-lifecycle.md} §3.1's host-transfer note: skip while the migration window is open.
+   */
+  boolean migrationWindowOpen(UUID roomId) {
+    Boolean open =
+        jdbcClient
+            .sql(
+                "select migration_window_expires_at is not null and migration_window_expires_at > now()"
+                    + " from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query(Boolean.class)
+            .single();
+    return Boolean.TRUE.equals(open);
+  }
+
+  /** FR-XFER-001's tie-break: the earliest-joined currently-connected human player, if any. */
+  Optional<UUID> nextConnectedHumanExcluding(UUID roomId, @Nullable UUID excludeUserId) {
+    return jdbcClient
+        .sql(
+            """
+            select user_id from room_participant
+             where room_id = :roomId and role = 'PLAYER' and left_at is null
+               and connection_count > 0
+               and (:excludeUserId::uuid is null or user_id <> :excludeUserId)
+             order by join_order asc limit 1
+            """)
+        .param("roomId", roomId)
+        .param("excludeUserId", excludeUserId)
+        .query(UUID.class)
+        .optional();
+  }
+
+  /**
+   * The mirror of {@link #registerDisconnect}'s decrement: a session subscribing to the room's
+   * topic for the first time (`room.RoomSubscriptionAuthorizer`) establishes presence. Unfenced —
+   * Postgres already serializes concurrent {@code +1}/{@code -1} updates to the same row, so this
+   * needs no {@code RoomEventExecutor} lock, and no wire event exists for it (only grace
+   * *resolution*, §3.2, is ever broadcast).
+   */
+  void incrementConnectionCount(UUID roomId, UUID userId) {
+    jdbcClient
+        .sql(
+            "update room_participant set connection_count = connection_count + 1"
+                + " where room_id = :roomId and user_id = :userId and left_at is null")
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .update();
+  }
+
+  boolean isConnected(UUID roomId, UUID userId) {
+    Boolean connected =
+        jdbcClient
+            .sql(
+                "select connection_count > 0 from room_participant"
+                    + " where room_id = :roomId and user_id = :userId and left_at is null")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(Boolean.class)
+            .optional()
+            .orElse(false);
+    return Boolean.TRUE.equals(connected);
+  }
+
+  HostTransferredPayload transferHostAutomatically(
+      UUID roomId, UUID newHostId, @Nullable UUID previousHostId, String reason) {
+    jdbcClient
+        .sql("update room set host_user_id = :newHostId where room_id = :roomId")
+        .param("newHostId", newHostId)
+        .param("roomId", roomId)
+        .update();
+    return new HostTransferredPayload(newHostId, previousHostId, reason);
+  }
+
+  void clearMigrationWindow(UUID roomId) {
+    jdbcClient
+        .sql("update room set migration_window_expires_at = null where room_id = :roomId")
+        .param("roomId", roomId)
+        .update();
+  }
+
+  // ---------------------------------------------------------------------
+  // The deadline sweep (IMP-M2-07, room-lifecycle.md §5.1).
+  // ---------------------------------------------------------------------
+
+  /** §5.1 duty 1's query: this instance's own due reservations. */
+  List<DueReservation> dueGraceReservations(String instanceId) {
+    return jdbcClient
+        .sql(
+            """
+            select rp.room_id, rp.user_id, rp.grace_reservation_id, rp.team_id,
+                   r.active_session_id
+              from room_participant rp join room r using (room_id)
+             where rp.grace_expires_at <= now() and rp.left_at is null
+               and r.owner_instance_id = :instanceId
+            """)
+        .param("instanceId", instanceId)
+        .query(
+            (rs, n) ->
+                new DueReservation(
+                    rs.getObject("room_id", UUID.class),
+                    rs.getObject("user_id", UUID.class),
+                    rs.getObject("grace_reservation_id", UUID.class),
+                    rs.getObject("team_id", UUID.class),
+                    rs.getObject("active_session_id", UUID.class)))
+        .list();
+  }
+
+  record DueReservation(
+      UUID roomId,
+      UUID userId,
+      UUID reservationId,
+      @Nullable UUID teamId,
+      @Nullable UUID activeSessionId) {}
+
+  /**
+   * {@code room-lifecycle.md} §3.2's resolve statement, guarded for the expiry path (`:dueCheck =
+   * true`) with {@code announceInline} always {@code true} — the sweep only ever resolves rows on
+   * rooms it owns (duty 1's own query already filters on that). §3.3 step 2's conditional outbox
+   * insert runs in the same transaction on a win.
+   *
+   * @return present iff this call's rowcount was 1 (this caller won and owns the side effects).
+   */
+  Optional<ResolvedReservation> resolveExpiredReservation(DueReservation due) {
+    // A list, not .optional() on a single nullable column: RETURNING team_id can legitimately
+    // return a row whose team_id is itself null, which .optional() cannot distinguish from "no
+    // row matched" — the rowcount, not the value, is the entire idempotency story (§3.2).
+    List<@Nullable UUID> rows =
+        jdbcClient
+            .sql(
+                """
+                update room_participant
+                   set left_at = now(), leave_reason = 'GRACE_EXPIRED',
+                       grace_reservation_id = null, grace_expires_at = null,
+                       lost_announced_at = now()
+                 where room_id = :roomId and user_id = :userId
+                   and grace_reservation_id = :reservationId
+                   and left_at is null and grace_expires_at <= now()
+                returning team_id
+                """)
+            .param("roomId", due.roomId())
+            .param("userId", due.userId())
+            .param("reservationId", due.reservationId())
+            .query(UUID.class)
+            .list();
+    if (rows.isEmpty()) {
+      return Optional.empty();
+    }
+    UUID teamId = rows.get(0);
+    if (due.activeSessionId() != null) {
+      insertPlayerLeftOutbox(due.roomId(), due.userId(), teamId, "grace_period_expired");
+    }
+    return Optional.of(new ResolvedReservation(teamId));
+  }
+
+  record ResolvedReservation(@Nullable UUID teamId) {}
+
+  /** {@code room-websocket.md} `PLAYER_LOST` payload shape. */
+  record PlayerLostPayload(UUID playerId, @Nullable UUID teamId, String reason) {}
+
+  /**
+   * §3.3 step 4 / §5.1 duty 2's shared closure predicate: no participant remains with {@code
+   * left_at IS NULL AND role = 'PLAYER'} — a participant still in grace counts as present.
+   */
+  boolean anyHumanRemains(UUID roomId) {
+    Boolean exists =
+        jdbcClient
+            .sql(
+                "select exists(select 1 from room_participant"
+                    + " where room_id = :roomId and role = 'PLAYER' and left_at is null)")
+            .param("roomId", roomId)
+            .query(Boolean.class)
+            .single();
+    return Boolean.TRUE.equals(exists);
+  }
+
+  @Nullable UUID activeSessionId(UUID roomId) {
+    return jdbcClient
+        .sql("select active_session_id from room where room_id = :roomId")
+        .param("roomId", roomId)
+        .query(UUID.class)
+        .optional()
+        .orElse(null);
+  }
+
+  /** §5.1 duty 2's query: departures a foreign instance resolved, still owed an announcement. */
+  List<DeferredTail> deferredTails(String instanceId) {
+    return jdbcClient
+        .sql(
+            """
+            select rp.room_id, rp.user_id, rp.team_id, rp.leave_reason, r.host_user_id
+              from room_participant rp join room r using (room_id)
+             where rp.left_at is not null and rp.lost_announced_at is null
+               and rp.leave_reason in ('GRACE_EXPIRED', 'EARLY_RELEASE', 'LEFT')
+               and r.owner_instance_id = :instanceId
+            """)
+        .param("instanceId", instanceId)
+        .query(
+            (rs, n) ->
+                new DeferredTail(
+                    rs.getObject("room_id", UUID.class),
+                    rs.getObject("user_id", UUID.class),
+                    rs.getObject("team_id", UUID.class),
+                    rs.getString("leave_reason"),
+                    rs.getObject("host_user_id", UUID.class)))
+        .list();
+  }
+
+  record DeferredTail(
+      UUID roomId,
+      UUID userId,
+      @Nullable UUID teamId,
+      String leaveReason,
+      @Nullable UUID hostUserId) {}
+
+  /**
+   * §5.1 duty 2's announcement half: stamp {@code lost_announced_at}, guarded so a row another
+   * concurrent tick already announced is a no-op.
+   */
+  boolean announceDeferredTail(UUID roomId, UUID userId) {
+    int updated =
+        jdbcClient
+            .sql(
+                "update room_participant set lost_announced_at = now()"
+                    + " where room_id = :roomId and user_id = :userId and lost_announced_at is null")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .update();
+    return updated > 0;
+  }
+
+  /** §5.1 duty 3's query: elapsed migration windows on rooms this instance owns. */
+  List<UUID> elapsedMigrationWindowRoomIds(String instanceId) {
+    return jdbcClient
+        .sql(
+            "select room_id from room"
+                + " where migration_window_expires_at <= now() and owner_instance_id = :instanceId")
+        .param("instanceId", instanceId)
+        .query(UUID.class)
+        .list();
+  }
+
+  @Nullable UUID hostUserIdOf(UUID roomId) {
+    return jdbcClient
+        .sql("select host_user_id from room where room_id = :roomId")
+        .param("roomId", roomId)
+        .query(UUID.class)
+        .optional()
+        .orElse(null);
+  }
+
+  // ---------------------------------------------------------------------
+  // Outbox drain (§5.1 duty 4, data-model.md §4.2). Not ownership-partitioned — a gRPC call, not a
+  // room-topic broadcast, needs no claim.
+  // ---------------------------------------------------------------------
+
+  record OutboxRow(long id, UUID sessionId, @Nullable Long sequence, String payloadJson) {}
+
+  List<OutboxRow> pendingOutboxRows(int limit) {
+    return jdbcClient
+        .sql(
+            """
+            select id, session_id, sequence, payload::text as payload
+              from game_input_outbox
+             where dispatched_at is null
+             order by id
+             limit :limit
+             for update skip locked
+            """)
+        .param("limit", limit)
+        .query(
+            (rs, n) ->
+                new OutboxRow(
+                    rs.getLong("id"),
+                    rs.getObject("session_id", UUID.class),
+                    rs.getObject("sequence") == null ? null : rs.getLong("sequence"),
+                    rs.getString("payload")))
+        .list();
+  }
+
+  /**
+   * Allocates the row's {@code sequence} once, per {@code data-model.md} §4.2 — never re-rolled.
+   */
+  long allocateOutboxSequence(long outboxRowId, long sequence) {
+    jdbcClient
+        .sql(
+            "update game_input_outbox set sequence = :sequence where id = :id and sequence is null")
+        .param("sequence", sequence)
+        .param("id", outboxRowId)
+        .update();
+    return jdbcClient
+        .sql("select sequence from game_input_outbox where id = :id")
+        .param("id", outboxRowId)
+        .query(Long.class)
+        .single();
+  }
+
+  void markOutboxDispatched(long outboxRowId) {
+    jdbcClient
+        .sql("update game_input_outbox set dispatched_at = now() where id = :id")
+        .param("id", outboxRowId)
+        .update();
+  }
+
+  void recordOutboxAttemptFailure(long outboxRowId, String error) {
+    jdbcClient
+        .sql(
+            "update game_input_outbox set attempts = attempts + 1, last_error = :error"
+                + " where id = :id")
+        .param("error", error)
+        .param("id", outboxRowId)
+        .update();
+  }
 }

@@ -103,18 +103,89 @@ class RoomService {
         outcome instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine
             || outcome instanceof RoomOwnershipService.ClaimOutcome.Adopted;
     if (!owned) {
-      repository.leaveRoom(userId, roomId);
+      repository.leaveRoom(userId, roomId, false);
       return;
     }
     events.execute(
         roomId,
         () -> {
-          Optional<RoomRepository.PlayerLeftPayload> left = repository.leaveRoom(userId, roomId);
+          Optional<RoomRepository.PlayerLeftPayload> left =
+              repository.leaveRoom(userId, roomId, true);
           RoomEventExecutor.RoomEvent event =
               left.map(payload -> new RoomEventExecutor.RoomEvent("PLAYER_LEFT", payload))
                   .orElse(null);
           return new RoomEventExecutor.MutationOutcome<>(Boolean.TRUE, event);
         });
+  }
+
+  // ---------------------------------------------------------------------
+  // Disconnect (IMP-M2-07, room-lifecycle.md §3.1, flows/04-disconnect-and-return.md §A). Called by
+  // room.RoomSubscriptionAuthorizer on a genuine SessionDisconnectEvent — one it has already
+  // resolved to a (roomId, userId) pair and confirmed is not an instance-initiated close.
+  // ---------------------------------------------------------------------
+
+  /**
+   * A lost socket always reaches here on the owning instance (subscribe-time ownership verification
+   * is the only way a session's room membership is tracked at all) — but ownership can still move
+   * between the socket closing and this async event firing, so a lost claim is a quiet no-op: the
+   * new owner's adoption (`IMP-GATE-48`) or its own sweep picks the participant up.
+   */
+  void onDisconnect(UUID roomId, UUID userId) {
+    RoomRepository.DisconnectOutcome outcome;
+    try {
+      outcome =
+          events.execute(
+              roomId,
+              () -> {
+                RoomRepository.DisconnectOutcome o =
+                    repository.registerDisconnect(roomId, userId, properties.gracePeriod());
+                RoomEventExecutor.RoomEvent event =
+                    switch (o) {
+                      case RoomRepository.DisconnectOutcome.StillConnected ignored -> null;
+                      case RoomRepository.DisconnectOutcome.LeftImmediately left ->
+                          new RoomEventExecutor.RoomEvent("PLAYER_LEFT", left.payload());
+                      case RoomRepository.DisconnectOutcome.GraceOpened opened ->
+                          new RoomEventExecutor.RoomEvent("PLAYER_DISCONNECTED", opened.payload());
+                    };
+                return new RoomEventExecutor.MutationOutcome<>(o, event);
+              });
+    } catch (RoomUnavailableRetryException e) {
+      return;
+    }
+    if (outcome instanceof RoomRepository.DisconnectOutcome.GraceOpened opened
+        && opened.wasHost()) {
+      transferHostOnDisconnect(roomId, userId);
+    }
+  }
+
+  /**
+   * FR-HDISC-001, a second fenced mutation after the disconnect's own commit — {@code
+   * PLAYER_DISCONNECTED} and {@code HOST_TRANSFERRED} are two distinct events, hence two versions.
+   * §3.1's own note: skipped while the migration window is open (FR-HDISC-004 performs it later);
+   * skipped with no other human connected (FR-HDISC-003 defers it to the grace period instead).
+   */
+  private void transferHostOnDisconnect(UUID roomId, UUID disconnectedHostId) {
+    if (repository.migrationWindowOpen(roomId)) {
+      return;
+    }
+    Optional<UUID> nextHuman = repository.nextConnectedHumanExcluding(roomId, disconnectedHostId);
+    if (nextHuman.isEmpty()) {
+      return;
+    }
+    try {
+      events.execute(
+          roomId,
+          () -> {
+            RoomRepository.HostTransferredPayload payload =
+                repository.transferHostAutomatically(
+                    roomId, nextHuman.get(), disconnectedHostId, "HOST_DISCONNECTED");
+            return new RoomEventExecutor.MutationOutcome<>(
+                payload, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
+          });
+    } catch (RoomUnavailableRetryException e) {
+      // Ownership moved between the two calls above and this one; the room's next owner (or its
+      // own adoption/sweep) is responsible for this room now, not a retry here.
+    }
   }
 
   // ---------------------------------------------------------------------

@@ -236,6 +236,99 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
     assertThat(ownershipA.nextVersion(roomId)).isEqualTo(2L);
   }
 
+  @Test
+  void adoptionOpensAMassGraceReservationForEveryConnectedPlayer_IMP_GATE_48() {
+    instanceA = boot();
+    instanceB = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomOwnershipService ownershipB = instanceB.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(instanceA);
+    setRoomState(instanceA, roomId, "IN_PROGRESS");
+    UUID connectedPlayer = insertParticipant(instanceA, roomId, "PLAYER", 1, 1);
+    UUID alreadyInGrace = insertParticipant(instanceA, roomId, "PLAYER", 2, 1);
+    UUID existingReservation = UUID.randomUUID();
+    instanceA
+        .getBean(JdbcClient.class)
+        .sql(
+            "update room_participant set connection_count = 0, grace_reservation_id = :res,"
+                + " grace_expires_at = now() + interval '5 seconds'"
+                + " where room_id = :roomId and user_id = :userId")
+        .param("res", existingReservation)
+        .param("roomId", roomId)
+        .param("userId", alreadyInGrace)
+        .update();
+    UUID connectedSpectator = insertParticipant(instanceA, roomId, "SPECTATOR", 3, 1);
+    ownershipA.claim(roomId);
+
+    deleteLivenessKey(instanceA, instanceA.getBean(PodIdentity.class).id());
+    ownershipB.claim(roomId); // adopts
+
+    Map<String, Object> connectedRow = participantRow(instanceA, roomId, connectedPlayer);
+    assertThat(((Number) Objects.requireNonNull(connectedRow.get("connection_count"))).intValue())
+        .isZero();
+    assertThat(connectedRow.get("grace_reservation_id")).isNotNull();
+    assertThat(connectedRow.get("grace_expires_at")).isNotNull();
+
+    Map<String, Object> alreadyInGraceRow = participantRow(instanceA, roomId, alreadyInGrace);
+    assertThat(alreadyInGraceRow.get("grace_reservation_id")).isEqualTo(existingReservation);
+
+    Map<String, Object> spectatorRow = participantRow(instanceA, roomId, connectedSpectator);
+    assertThat(((Number) Objects.requireNonNull(spectatorRow.get("connection_count"))).intValue())
+        .isZero();
+    assertThat(spectatorRow.get("grace_reservation_id")).isNull(); // FR-DC-003: never reserved
+  }
+
+  private static void setRoomState(
+      ConfigurableApplicationContext context, UUID roomId, String state) {
+    context
+        .getBean(JdbcClient.class)
+        .sql("update room set state = :state where room_id = :roomId")
+        .param("state", state)
+        .param("roomId", roomId)
+        .update();
+  }
+
+  private static UUID insertParticipant(
+      ConfigurableApplicationContext context,
+      UUID roomId,
+      String role,
+      long joinOrder,
+      int connectionCount) {
+    UUID userId = UUID.randomUUID();
+    String username = "user" + joinOrder + "-" + userId.toString().substring(0, 8);
+    JdbcClient jdbcClient = context.getBean(JdbcClient.class);
+    jdbcClient
+        .sql(
+            "insert into app_user (user_id, kind, username, username_skeleton, guest_serial)"
+                + " values (:userId, 'GUEST', :username, :username, :serial)")
+        .param("userId", userId)
+        .param("username", username)
+        .param("serial", userId.getLeastSignificantBits() & Long.MAX_VALUE)
+        .update();
+    jdbcClient
+        .sql(
+            "insert into room_participant (room_id, user_id, role, join_order, connection_count)"
+                + " values (:roomId, :userId, :role, :joinOrder, :connectionCount)")
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .param("role", role)
+        .param("joinOrder", joinOrder)
+        .param("connectionCount", connectionCount)
+        .update();
+    return userId;
+  }
+
+  private static Map<String, Object> participantRow(
+      ConfigurableApplicationContext context, UUID roomId, UUID userId) {
+    return context
+        .getBean(JdbcClient.class)
+        .sql("select * from room_participant where room_id = :roomId and user_id = :userId")
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .query()
+        .singleRow();
+  }
+
   private static ConfigurableApplicationContext boot() {
     return SpringApplication.run(
         TurnBaseApplication.class,

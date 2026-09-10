@@ -29,8 +29,9 @@ class RoomSubscriptionAuthorizerTest {
   private final RoomOwnershipService ownership = mock(RoomOwnershipService.class);
   private final WebSocketConnectionRegistry connectionRegistry =
       mock(WebSocketConnectionRegistry.class);
+  private final RoomService roomService = mock(RoomService.class);
   private final RoomSubscriptionAuthorizer authorizer =
-      new RoomSubscriptionAuthorizer(repository, ownership, connectionRegistry);
+      new RoomSubscriptionAuthorizer(repository, ownership, connectionRegistry, roomService);
 
   private final AuthenticatedUser user =
       new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID());
@@ -114,6 +115,33 @@ class RoomSubscriptionAuthorizerTest {
     authorizer.onRoomOwnershipLost(new RoomOwnershipLostEvent(roomId, "test"));
 
     verify(connectionRegistry, never()).closeSession(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aGenuineSessionDisconnectFeedsTheDisconnectHandler() {
+    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(ownership.claimWithRetry(roomId))
+        .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+
+    authorizer.onSessionDisconnect(disconnectEvent("stomp-session-1"));
+
+    verify(roomService).onDisconnect(roomId, user.userId());
+  }
+
+  @Test
+  void anInstanceInitiatedCloseNeverReachesTheDisconnectHandler() {
+    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(ownership.claimWithRetry(roomId))
+        .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+
+    // room-lifecycle.md §1.6: the session was already tagged and severed before the transport
+    // layer's own async SessionDisconnectEvent fires for it.
+    authorizer.onRoomOwnershipLost(new RoomOwnershipLostEvent(roomId, "test"));
+    authorizer.onSessionDisconnect(disconnectEvent("stomp-session-1"));
+
+    verify(roomService, never()).onDisconnect(any(), any());
   }
 
   private static SessionDisconnectEvent disconnectEvent(String stompSessionId) {

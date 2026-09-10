@@ -21,9 +21,21 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
  * here between a REST join and its own {@code SUBSCRIBE} after another pod's reconciliation sweep
  * took the room, so holding the socket is never itself evidence of owning the client's room.
  *
- * <p>Also tracks which STOMP sessions are subscribed to which room, purely so {@link
- * #onRoomOwnershipLost} can sever exactly that room's sockets — {@code room.RoomOwnershipLostEvent}
- * carries no session ids, and this is the only place that knows the mapping.
+ * <p>Also tracks which (room, user) a STOMP session is subscribed to, for two purposes: {@link
+ * #onRoomOwnershipLost} severs exactly that room's sockets ({@code room.RoomOwnershipLostEvent}
+ * carries no session ids, and this is the only place that knows the mapping), and {@link
+ * #onSessionDisconnect} feeds a genuine socket loss into {@code IMP-M2-07}'s disconnect handling
+ * (`room-lifecycle.md` §3.1). The two are the same map precisely so {@link #onRoomOwnershipLost}
+ * can remove a session from it *before* severing the socket: by the time the resulting {@code
+ * SessionDisconnectEvent} fires (asynchronously, after the transport layer notices the closed
+ * connection), the entry is already gone and {@link #onSessionDisconnect} correctly treats it as an
+ * instance-initiated close, not a player disconnect — §1.6's "the disconnect handler returns early
+ * on a tagged session," implemented as tag-by-absence rather than a separate flag, since this map
+ * is already the one place that knows the (room, user) a session belongs to. A revoked or
+ * rate-limited session is deliberately *not* pre-removed here — {@code
+ * WebSocketConnectionRegistry#closeSession} unregisters the user's identity for its own,
+ * session-scoped purposes, but this room-membership map is untouched, so that socket's eventual
+ * disconnect is still processed as a genuine involuntary disconnect (FR-DC-001) — it is one.
  */
 @Component
 class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
@@ -36,16 +48,22 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
   private final RoomRepository repository;
   private final RoomOwnershipService ownership;
   private final WebSocketConnectionRegistry connectionRegistry;
+  private final RoomService roomService;
   private final Map<UUID, Set<String>> sessionsByRoom = new ConcurrentHashMap<>();
+  private final Map<String, RoomMembership> membershipBySession = new ConcurrentHashMap<>();
 
   RoomSubscriptionAuthorizer(
       RoomRepository repository,
       RoomOwnershipService ownership,
-      WebSocketConnectionRegistry connectionRegistry) {
+      WebSocketConnectionRegistry connectionRegistry,
+      RoomService roomService) {
     this.repository = repository;
     this.ownership = ownership;
     this.connectionRegistry = connectionRegistry;
+    this.roomService = roomService;
   }
+
+  private record RoomMembership(UUID roomId, UUID userId) {}
 
   @Override
   public boolean supports(String destination) {
@@ -75,6 +93,14 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
       sessionsByRoom
           .computeIfAbsent(roomId, id -> ConcurrentHashMap.newKeySet())
           .add(stompSessionId);
+      // room-lifecycle.md §1.1: connection_count is a refcount over a user's concurrent
+      // connections (FR-GRACE-006), incremented once per session that subscribes to this room's
+      // topic — the mirror of registerDisconnect's decrement. Guarded so a session re-subscribing
+      // to the same topic (a client retry, not a new tab) is not counted twice.
+      if (membershipBySession.put(stompSessionId, new RoomMembership(roomId, user.userId()))
+          == null) {
+        repository.incrementConnectionCount(roomId, user.userId());
+      }
       return new SubscriptionDecision.Allow();
     }
     return new SubscriptionDecision.RejectWithError(
@@ -95,6 +121,10 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
       return;
     }
     for (String stompSessionId : sessions) {
+      // Removed here, synchronously, before the socket is actually severed — see the class
+      // Javadoc: this is what makes the eventual SessionDisconnectEvent read as instance-initiated
+      // rather than a player disconnect once it fires.
+      membershipBySession.remove(stompSessionId);
       connectionRegistry.closeSession(
           stompSessionId,
           "ROOM_OWNERSHIP_LOST",
@@ -102,12 +132,23 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
     }
   }
 
-  /** Bookkeeping only — an unbounded map would otherwise grow with every past connection. */
+  /**
+   * {@code room-lifecycle.md} §3.1 (`IMP-M2-07`): a session with no recorded room membership here
+   * is either one that never subscribed to a room topic, or one {@link #onRoomOwnershipLost} has
+   * already tagged instance-initiated — both are correctly a no-op. A session that still has an
+   * entry is a genuine socket loss (FR-DC-001): every cause other than an instance-initiated close
+   * reaches here with the entry intact, including a revoked or rate-limited connection, which are
+   * real involuntary disconnects from the room's own perspective.
+   */
   @EventListener
   void onSessionDisconnect(SessionDisconnectEvent event) {
     String stompSessionId = event.getSessionId();
-    for (Set<String> sessions : sessionsByRoom.values()) {
-      sessions.remove(stompSessionId);
+    RoomMembership membership = membershipBySession.remove(stompSessionId);
+    for (Set<String> roomSessions : sessionsByRoom.values()) {
+      roomSessions.remove(stompSessionId);
+    }
+    if (membership != null) {
+      roomService.onDisconnect(membership.roomId(), membership.userId());
     }
   }
 }

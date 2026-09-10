@@ -39,6 +39,5 @@ record RoomStateSnapshot(
   record TeamEntry(
       UUID teamId, String templateName, int configuredSize, int index, List<UUID> memberIds) {}
 
-  /** Always empty until {@code IMP-M2-07} gives a participant a live grace reservation. */
   record DisconnectedPlayerEntry(UUID playerId, int graceRemainingSeconds) {}
 }
