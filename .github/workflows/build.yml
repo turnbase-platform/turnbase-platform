@@ -144,13 +144,42 @@ jobs:
         # independently usable without the root, ADR-0012), so its image is built from a
         # sibling checkout here — the same bootstrap-PAT pattern conventions.md §5 already
         # uses for turnbase-common: a fine-grained PAT, read-only on Contents, scoped to
-        # turnbase-game-host only. Provisioning it is a human action (creating a PAT means
-        # signing in to GitHub), so this job's first real run waits on that secret existing.
+        # turnbase-game-host only.
         uses: actions/checkout@v7
         with:
           repository: turnbase-platform/turnbase-game-host
           token: ${{ secrets.TURNBASE_GAME_HOST_PAT }}
           path: turnbase-game-host
+
+      - name: Set up GraalVM CE 21
+        # turnbase-game-host's own Dockerfile expects target/turnbase-game-host-*.jar to
+        # already exist (it packages, it does not build) — this job builds it from the
+        # sibling checkout above before e2e-smoke.sh runs `docker build` against it.
+        uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: graalvm-community
+          java-version: '21'
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install turnbase-common (bootstrap — conventions.md §5)
+        # turnbase-game-host pins the same <turnbase-common.version> as the `build` job's
+        # own bootstrap step above — but `e2e` is a separate job on its own fresh runner
+        # (jobs share nothing but secrets/outputs), so that earlier install isn't visible
+        # here and this step repeats it. Same secret works: it belongs to turnbase-platform
+        # itself, and both jobs run in that repo's workflow.
+        env:
+          TURNBASE_COMMON_PAT: ${{ secrets.TURNBASE_COMMON_PAT }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TURNBASE_COMMON_PAT}@github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
+          cd /tmp/turnbase-common
+          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
+
+      - name: Build turnbase-game-host
+        # -DskipTests: turnbase-game-host's own CI (its own repo) already runs its full
+        # verify; this job only needs the jar Dockerfile:25's COPY expects.
+        working-directory: turnbase-game-host
+        run: ./mvnw --batch-mode --no-transfer-progress package -DskipTests
 
       - name: Run the e2e smoke test
         env:
