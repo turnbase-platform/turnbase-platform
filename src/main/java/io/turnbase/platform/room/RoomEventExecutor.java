@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -73,21 +74,7 @@ class RoomEventExecutor {
    * gets wrong.
    */
   <T> T execute(UUID roomId, RoomMutation<T> mutation) {
-    ReentrantLock lock = locks.computeIfAbsent(roomId, id -> new ReentrantLock());
-    boolean acquired;
-    try {
-      acquired = lock.tryLock(LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new RoomUnavailableRetryException(
-          "Interrupted while waiting for the room lock.", RETRY_AFTER_MS);
-    }
-    if (!acquired) {
-      // A lock-acquisition timeout is not proof of lost ownership (room-lifecycle.md §2.1) — fail
-      // the command, publish nothing, and do not evict.
-      throw new RoomUnavailableRetryException(
-          "Timed out waiting for room " + roomId + " to become available.", RETRY_AFTER_MS);
-    }
+    ReentrantLock lock = acquireLock(roomId);
     try {
       long epoch =
           ownership
@@ -141,6 +128,49 @@ class RoomEventExecutor {
     } finally {
       lock.unlock();
     }
+  }
+
+  /**
+   * Lock + fresh ownership check only — no transaction, no version bump, no publish. For
+   * lock-serialized reads that must still fail the same way a stale-owner pod's mutation would,
+   * matching every other STOMP command handler's authoritative re-check ({@code
+   * room-chat-websocket.md}: sender team resolution and monotonic {@code serverTimestamp}
+   * assignment — {@code chat} publishes to its own topic itself, since {@link #execute} only ever
+   * publishes to the bare room topic).
+   */
+  <T> T withLock(UUID roomId, Supplier<T> op) {
+    ReentrantLock lock = acquireLock(roomId);
+    try {
+      Long unused =
+          ownership
+              .epochOf(roomId)
+              .orElseThrow(
+                  () ->
+                      new RoomUnavailableRetryException(
+                          "This instance does not own room " + roomId + ".", RETRY_AFTER_MS));
+      return op.get();
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private ReentrantLock acquireLock(UUID roomId) {
+    ReentrantLock lock = locks.computeIfAbsent(roomId, id -> new ReentrantLock());
+    boolean acquired;
+    try {
+      acquired = lock.tryLock(LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new RoomUnavailableRetryException(
+          "Interrupted while waiting for the room lock.", RETRY_AFTER_MS);
+    }
+    if (!acquired) {
+      // A lock-acquisition timeout is not proof of lost ownership (room-lifecycle.md §2.1) — fail
+      // the command, publish nothing, and do not evict.
+      throw new RoomUnavailableRetryException(
+          "Timed out waiting for room " + roomId + " to become available.", RETRY_AFTER_MS);
+    }
+    return lock;
   }
 
   private void publish(UUID roomId, RoomEvent event, long version) {

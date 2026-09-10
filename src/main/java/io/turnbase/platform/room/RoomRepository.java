@@ -478,6 +478,45 @@ class RoomRepository {
         () -> new RoomCommandException("NOT_MEMBER", "You are not a member of this room."));
   }
 
+  // ---------------------------------------------------------------------
+  // Chat (room-chat-websocket.md, IMP-M2-11) — the read RoomChatSupport exposes on room's public
+  // API to the chat feature. Unlocked: the bare-topic subscribe authorizer's own
+  // isCurrentParticipant precedent above is a plain read too; only the send path needs
+  // RoomEventExecutor's lock, for its serverTimestamp/team-resolution race with REASSIGN_PLAYER.
+  // ---------------------------------------------------------------------
+
+  /**
+   * {@code room-chat-websocket.md} § Authorization / § `CHAT_MESSAGE`: the sender's current role
+   * and team, plus whether the room has any team at all ({@code teamChatAvailable}, FR-TEAM-001 — a
+   * team channel exists only once the game's manifest declared at least one team template, which is
+   * exactly when {@code createRoom} inserted a {@code room_team} row).
+   */
+  Optional<ChatParticipantRow> currentParticipantForChat(UUID roomId, UUID userId) {
+    return jdbcClient
+        .sql(
+            """
+            select rp.role, rp.team_id, au.username,
+                   exists(select 1 from room_team rt where rt.room_id = rp.room_id)
+                     as team_chat_available
+            from room_participant rp
+            join app_user au on au.user_id = rp.user_id
+            where rp.room_id = :roomId and rp.user_id = :userId and rp.left_at is null
+            """)
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .query(
+            (rs, rowNum) ->
+                new ChatParticipantRow(
+                    rs.getString("role"),
+                    rs.getObject("team_id", UUID.class),
+                    rs.getString("username"),
+                    rs.getBoolean("team_chat_available")))
+        .optional();
+  }
+
+  record ChatParticipantRow(
+      String role, @Nullable UUID teamId, String username, boolean teamChatAvailable) {}
+
   private void requireLobby(String state) {
     if (!"LOBBY".equals(state)) {
       throw new RoomCommandException("ROOM_NOT_LOBBY", "This command requires the Lobby state.");

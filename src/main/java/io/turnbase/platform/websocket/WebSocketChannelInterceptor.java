@@ -31,6 +31,7 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
   private final WebSocketConnectionRegistry registry;
   private final WebSocketRateLimiter rateLimiter;
   private final WebSocketRateLimitProperties properties;
+  private final WebSocketFrameSizeGuard frameSizeGuard;
   private final List<SubscriptionAuthorizer> subscriptionAuthorizers;
   private final SimpMessagingTemplate messagingTemplate;
 
@@ -39,12 +40,14 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
       WebSocketConnectionRegistry registry,
       WebSocketRateLimiter rateLimiter,
       WebSocketRateLimitProperties properties,
+      WebSocketFrameSizeGuard frameSizeGuard,
       List<SubscriptionAuthorizer> subscriptionAuthorizers,
       SimpMessagingTemplate messagingTemplate) {
     this.sessionService = sessionService;
     this.registry = registry;
     this.rateLimiter = rateLimiter;
     this.properties = properties;
+    this.frameSizeGuard = frameSizeGuard;
     this.subscriptionAuthorizers = subscriptionAuthorizers;
     this.messagingTemplate = messagingTemplate;
   }
@@ -64,7 +67,21 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
     AuthenticatedUser user = principalOf(accessor);
     String stompSessionId = requireSessionId(accessor);
 
-    // Tier 6 first — cheap, classified from headers alone — before any per-destination
+    // input-validation.md's pipeline: Size precedes Authorize (Tier 6 is part of that step) —
+    // both are cheap, classified from headers/raw payload length alone, before any deserialization.
+    WebSocketFrameSizeGuard.Violation sizeViolation =
+        frameSizeGuard.check(command, accessor.getDestination(), payloadLength(message));
+    if (sizeViolation != null) {
+      sendError(
+          user,
+          stompSessionId,
+          sizeViolation.code(),
+          "Frame exceeds the " + sizeViolation.limitBytes() + "-byte limit for this destination.",
+          Map.of());
+      return null;
+    }
+
+    // Tier 6 next — cheap, classified from headers alone — before any per-destination
     // authorization that might do real work (room's subscribe-time ownership re-verification
     // retries against Redis). rate-limiting.md's own cost rationale is exactly this ordering.
     WebSocketRateLimiter.FrameDecision decision =
@@ -189,6 +206,14 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
     throw new IllegalStateException(
         "a non-CONNECT frame reached the interceptor with no principal set — CONNECT must have"
             + " been rejected");
+  }
+
+  /**
+   * {@code input-validation.md}: the frame's byte length, before any {@code @Payload} conversion —
+   * the raw STOMP frame body has not yet been parsed at this point in the channel.
+   */
+  private static int payloadLength(Message<?> message) {
+    return message.getPayload() instanceof byte[] bytes ? bytes.length : 0;
   }
 
   private static String requireSessionId(StompHeaderAccessor accessor) {
