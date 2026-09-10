@@ -37,11 +37,12 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 
 /**
- * {@code IMP-M2-05}'s own share of {@code room-websocket.md}'s Client→Server Command Catalogue, end
- * to end on real STOMP clients: the Member Commands table ({@code TOGGLE_READY}, {@code
- * SWITCH_TO_SPECTATOR}, {@code SWITCH_TO_PLAYER}, {@code REQUEST_ROOM_STATE}) and this item's slice
- * of the Host Commands table ({@code ADD_TEAM}, {@code REMOVE_TEAM}, {@code RESIZE_TEAM}, {@code
- * REASSIGN_PLAYER}, {@code ADD_AI_PLAYER}).
+ * {@code room-websocket.md}'s Client→Server Command Catalogue, end to end on real STOMP clients:
+ * the Member Commands table ({@code TOGGLE_READY}, {@code SWITCH_TO_SPECTATOR}, {@code
+ * SWITCH_TO_PLAYER}, {@code REQUEST_ROOM_STATE}), {@code IMP-M2-05}'s share of the Host Commands
+ * table ({@code ADD_TEAM}, {@code REMOVE_TEAM}, {@code RESIZE_TEAM}, {@code REASSIGN_PLAYER},
+ * {@code ADD_AI_PLAYER}), and {@code IMP-M2-06}'s share ({@code KICK_PLAYER}, {@code
+ * CHANGE_PARAMETERS}, {@code START_GAME}, {@code TRANSFER_HOST}).
  */
 class RoomCommandControllerIT extends PostgresIntegrationTest {
 
@@ -225,12 +226,122 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
     assertThat(hostPlayer.get("connected")).isEqualTo(true);
   }
 
+  @Test
+  void hostManagementCommandsEnforcePreconditionsAndBroadcast() throws Exception {
+    String hostCookie = mintGuestCookie();
+    UUID gameId = seedGame();
+    UUID roomId = createPublicRoom(hostCookie, gameId);
+    UUID hostId = meUserId(hostCookie);
+
+    String aliceCookie = mintGuestCookie();
+    UUID aliceId = join(aliceCookie, roomId);
+    String bobCookie = mintGuestCookie();
+    UUID bobId = join(bobCookie, roomId);
+
+    Session host = connect(hostCookie, roomId);
+    Session alice = connect(aliceCookie, roomId);
+    Session bob = connect(bobCookie, roomId);
+
+    // KICK_PLAYER: non-host sender, unknown target, then a real kick with the unicast KICKED
+    // notification (room-websocket.md — no correlationId at all, not even null).
+    alice.send("KICK_PLAYER", "k1", Map.of("playerId", bobId.toString()));
+    assertThat(errorCode(poll(alice.errors))).isEqualTo("NOT_HOST");
+
+    host.send("KICK_PLAYER", "k2", Map.of("playerId", UUID.randomUUID().toString()));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("PLAYER_NOT_FOUND");
+
+    host.send("KICK_PLAYER", "k3", Map.of("playerId", bobId.toString()));
+    Map<String, Object> kicked = poll(host.roomTopic);
+    assertThat(kicked.get("type")).isEqualTo("PLAYER_KICKED");
+    Map<?, ?> kickedPayload = (Map<?, ?>) Objects.requireNonNull(kicked.get("payload"));
+    assertThat(kickedPayload.get("playerId")).isEqualTo(bobId.toString());
+    assertThat(kickedPayload.get("byHostId")).isEqualTo(hostId.toString());
+
+    Map<String, Object> kickedNotice = poll(bob.errors);
+    assertThat(kickedNotice.get("type")).isEqualTo("ERROR");
+    Map<?, ?> kickedNoticePayload = (Map<?, ?>) Objects.requireNonNull(kickedNotice.get("payload"));
+    assertThat(kickedNoticePayload.get("code")).isEqualTo("KICKED");
+    assertThat(kickedNoticePayload.containsKey("correlationId")).isFalse();
+
+    // CHANGE_PARAMETERS: non-host, unknown key, type mismatch, out of range, then success —
+    // the full merged set (not just the changed key) is what broadcasts.
+    alice.send("CHANGE_PARAMETERS", "p1", Map.of("parameters", Map.of("moveTimer", 30)));
+    assertThat(errorCode(poll(alice.errors))).isEqualTo("NOT_HOST");
+
+    host.send("CHANGE_PARAMETERS", "p2", Map.of("parameters", Map.of("unknownKey", 1)));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("UNKNOWN_PARAMETER");
+
+    host.send("CHANGE_PARAMETERS", "p3", Map.of("parameters", Map.of("moveTimer", "fast")));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("PARAMETER_TYPE_MISMATCH");
+
+    host.send("CHANGE_PARAMETERS", "p4", Map.of("parameters", Map.of("moveTimer", 9999)));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("PARAMETER_OUT_OF_RANGE");
+
+    host.send("CHANGE_PARAMETERS", "p5", Map.of("parameters", Map.of("moveTimer", 30)));
+    Map<String, Object> paramsChanged = poll(host.roomTopic);
+    assertThat(paramsChanged.get("type")).isEqualTo("PARAMETERS_CHANGED");
+    Map<?, ?> paramsPayload = (Map<?, ?>) Objects.requireNonNull(paramsChanged.get("payload"));
+    Map<?, ?> parameters = (Map<?, ?>) Objects.requireNonNull(paramsPayload.get("parameters"));
+    assertThat(((Number) Objects.requireNonNull(parameters.get("moveTimer"))).intValue())
+        .isEqualTo(30);
+
+    // START_GAME: alice (a non-host PLAYER) is not ready — START_CONDITIONS_NOT_MET lists it.
+    host.send("START_GAME", "s1", null);
+    Map<String, Object> notMet = poll(host.errors);
+    assertThat(errorCode(notMet)).isEqualTo("START_CONDITIONS_NOT_MET");
+    Map<?, ?> notMetPayload = (Map<?, ?>) Objects.requireNonNull(notMet.get("payload"));
+    Map<?, ?> details = (Map<?, ?>) Objects.requireNonNull(notMetPayload.get("details"));
+    assertThat((List<?>) Objects.requireNonNull(details.get("failedConditions"))).isNotEmpty();
+
+    alice.send("TOGGLE_READY", "r1", Map.of("ready", true));
+    poll(host.roomTopic); // drain READINESS_CHANGED
+
+    // Preconditions now hold. IMP-GATE-46: this item stops at calling GameSessionStarter — no
+    // broadcast, no state change, until IMP-M3-05 gives it something real to announce.
+    host.send("START_GAME", "s2", null);
+    assertThat(pollOrNull(host.errors)).isNull();
+    assertThat(pollOrNull(host.roomTopic)).isNull();
+
+    host.send("REQUEST_ROOM_STATE", "s3", null);
+    Map<String, Object> stillLobby = poll(host.roomState);
+    assertThat(((Map<?, ?>) Objects.requireNonNull(stillLobby.get("payload"))).get("state"))
+        .isEqualTo("LOBBY");
+
+    // TRANSFER_HOST: non-host sender, a non-player target, then a real transfer.
+    alice.send("TRANSFER_HOST", "x1", Map.of("newHostId", hostId.toString()));
+    assertThat(errorCode(poll(alice.errors))).isEqualTo("NOT_HOST");
+
+    host.send("TRANSFER_HOST", "x2", Map.of("newHostId", UUID.randomUUID().toString()));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("TARGET_NOT_PLAYER");
+
+    host.send("TRANSFER_HOST", "x3", Map.of("newHostId", aliceId.toString()));
+    Map<String, Object> transferred = poll(host.roomTopic);
+    assertThat(transferred.get("type")).isEqualTo("HOST_TRANSFERRED");
+    Map<?, ?> transferPayload = (Map<?, ?>) Objects.requireNonNull(transferred.get("payload"));
+    assertThat(transferPayload.get("newHostId")).isEqualTo(aliceId.toString());
+    assertThat(transferPayload.get("previousHostId")).isEqualTo(hostId.toString());
+    assertThat(transferPayload.get("reason")).isEqualTo("VOLUNTARY");
+
+    // The former host retains their player slot (FR-XFER-004) but no longer holds host commands.
+    host.send("KICK_PLAYER", "x4", Map.of("playerId", aliceId.toString()));
+    assertThat(errorCode(poll(host.errors))).isEqualTo("NOT_HOST");
+  }
+
   // ---------------------------------------------------------------------
   // Harness
   // ---------------------------------------------------------------------
 
   private static final List<String> HOST_COMMANDS =
-      List.of("ADD_TEAM", "REMOVE_TEAM", "RESIZE_TEAM", "REASSIGN_PLAYER", "ADD_AI_PLAYER");
+      List.of(
+          "ADD_TEAM",
+          "REMOVE_TEAM",
+          "RESIZE_TEAM",
+          "REASSIGN_PLAYER",
+          "ADD_AI_PLAYER",
+          "KICK_PLAYER",
+          "CHANGE_PARAMETERS",
+          "START_GAME",
+          "TRANSFER_HOST");
 
   private record Session(
       StompSession stompSession,
@@ -254,6 +365,12 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
   private Map<String, Object> poll(BlockingQueue<Map<String, Object>> queue) throws Exception {
     Map<String, Object> message = queue.poll(5, TimeUnit.SECONDS);
     return Objects.requireNonNull(message, "expected a message but none arrived");
+  }
+
+  /** Asserts silence: a short wait, then {@code null} if nothing arrived. */
+  private @Nullable Map<String, Object> pollOrNull(BlockingQueue<Map<String, Object>> queue)
+      throws Exception {
+    return queue.poll(500, TimeUnit.MILLISECONDS);
   }
 
   /** {@code room-websocket.md} § Error Handling — {@code code} lives inside {@code payload}. */
@@ -382,6 +499,10 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
             {"teamTemplates":[
               {"name":"Red","size":{"min":1,"max":2},"count":{"min":1,"max":2}},
               {"name":"Blue","size":{"min":1,"max":1},"count":{"min":1,"max":1}}
+            ],
+            "parameters":[
+              {"key":"moveTimer","displayName":"Move timer","type":"integer","min":0,"max":600,
+               "default":60}
             ]}
             """)
         .update();

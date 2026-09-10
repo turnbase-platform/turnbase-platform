@@ -1,11 +1,13 @@
 package io.turnbase.platform.room;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.PaginationMetadata;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
@@ -31,18 +33,21 @@ class RoomService {
   private final RoomEventExecutor events;
   private final PodIdentity pod;
   private final RoomProperties properties;
+  private final GameSessionStarter gameSessionStarter;
 
   RoomService(
       RoomRepository repository,
       RoomOwnershipService ownership,
       RoomEventExecutor events,
       PodIdentity pod,
-      RoomProperties properties) {
+      RoomProperties properties,
+      GameSessionStarter gameSessionStarter) {
     this.repository = repository;
     this.ownership = ownership;
     this.events = events;
     this.pod = pod;
     this.properties = properties;
+    this.gameSessionStarter = gameSessionStarter;
   }
 
   /** {@code room-rest-api.md} §2. */
@@ -167,9 +172,8 @@ class RoomService {
   }
 
   // ---------------------------------------------------------------------
-  // STOMP host commands — IMP-M2-05's own share only (ADD_TEAM, REMOVE_TEAM, RESIZE_TEAM,
-  // REASSIGN_PLAYER, ADD_AI_PLAYER). KICK_PLAYER/CHANGE_PARAMETERS/START_GAME/TRANSFER_HOST are
-  // IMP-M2-06's.
+  // STOMP host commands — IMP-M2-05's share (ADD_TEAM, REMOVE_TEAM, RESIZE_TEAM, REASSIGN_PLAYER,
+  // ADD_AI_PLAYER), then IMP-M2-06's (KICK_PLAYER, CHANGE_PARAMETERS, START_GAME, TRANSFER_HOST).
   // ---------------------------------------------------------------------
 
   RoomRepository.TeamAddedPayload addTeam(
@@ -225,6 +229,54 @@ class RoomService {
         roomId,
         () -> {
           throw repository.addAiPlayer(roomId, hostUserId);
+        });
+  }
+
+  RoomRepository.PlayerKickedPayload kickPlayer(UUID roomId, UUID hostUserId, UUID targetPlayerId) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.PlayerKickedPayload payload =
+              repository.kickPlayer(roomId, hostUserId, targetPlayerId);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("PLAYER_KICKED", payload));
+        });
+  }
+
+  RoomRepository.ParametersChangedPayload changeParameters(
+      UUID roomId, UUID hostUserId, Map<String, JsonNode> parameters) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.ParametersChangedPayload payload =
+              repository.changeParameters(roomId, hostUserId, parameters);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("PARAMETERS_CHANGED", payload));
+        });
+  }
+
+  /**
+   * {@code START_GAME} — preconditions only; no event, since nothing about the room changes until
+   * {@code IMP-M3-05}'s real {@link GameSessionStarter} exists (`IMP-GATE-46`).
+   */
+  void startGame(UUID roomId, UUID hostUserId) {
+    events.execute(
+        roomId,
+        () -> {
+          repository.checkStartConditions(roomId, hostUserId);
+          gameSessionStarter.start(roomId, hostUserId);
+          return new RoomEventExecutor.MutationOutcome<>(Boolean.TRUE, null);
+        });
+  }
+
+  RoomRepository.HostTransferredPayload transferHost(UUID roomId, UUID hostUserId, UUID newHostId) {
+    return events.execute(
+        roomId,
+        () -> {
+          RoomRepository.HostTransferredPayload payload =
+              repository.transferHost(roomId, hostUserId, newHostId);
+          return new RoomEventExecutor.MutationOutcome<>(
+              payload, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
         });
   }
 

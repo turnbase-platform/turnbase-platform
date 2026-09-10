@@ -485,9 +485,9 @@ class RoomRepository {
   }
 
   // ---------------------------------------------------------------------
-  // Host commands (room-websocket.md, IMP-M2-05's own share: ADD_TEAM, REMOVE_TEAM, RESIZE_TEAM,
-  // REASSIGN_PLAYER, ADD_AI_PLAYER — KICK_PLAYER/CHANGE_PARAMETERS/START_GAME/TRANSFER_HOST are
-  // IMP-M2-06's, whose FR-HOST-*/FR-XFER-* requirements this item's read-list never names.
+  // Host commands (room-websocket.md). IMP-M2-05's own share: ADD_TEAM, REMOVE_TEAM, RESIZE_TEAM,
+  // REASSIGN_PLAYER, ADD_AI_PLAYER. IMP-M2-06's share (KICK_PLAYER, CHANGE_PARAMETERS, START_GAME,
+  // TRANSFER_HOST) follows below, after ADD_AI_PLAYER/requireHost.
   // ---------------------------------------------------------------------
 
   /** {@code ADD_TEAM}, FR-TEAM-002. */
@@ -690,6 +690,383 @@ class RoomRepository {
             .single();
     return count == null ? 0 : count;
   }
+
+  // ---------------------------------------------------------------------
+  // Host commands (room-websocket.md, IMP-M2-06's own share: KICK_PLAYER, CHANGE_PARAMETERS,
+  // START_GAME, TRANSFER_HOST).
+  // ---------------------------------------------------------------------
+
+  /**
+   * {@code KICK_PLAYER}, FR-HOST-006. Valid in any room state, against a player, spectator, or AI
+   * member — but no AI seat can ever exist (IR-12), so only the first two are reachable. The
+   * removal itself is the same {@code left_at}/{@code leave_reason} shape every other departure
+   * uses; {@code lost_announced_at} is stamped {@code now()} because this method only ever runs
+   * under {@link RoomEventExecutor}'s lock, i.e. on the owning instance, which announces inline.
+   */
+  PlayerKickedPayload kickPlayer(UUID roomId, UUID hostUserId, UUID targetPlayerId) {
+    String roomState = requireHost(roomId, hostUserId);
+    TargetMember target =
+        jdbcClient
+            .sql(
+                "select role, team_id from room_participant"
+                    + " where room_id = :roomId and user_id = :targetPlayerId and left_at is null")
+            .param("roomId", roomId)
+            .param("targetPlayerId", targetPlayerId)
+            .query(
+                (rs, rowNum) ->
+                    new TargetMember(rs.getString("role"), rs.getObject("team_id", UUID.class)))
+            .optional()
+            .orElseThrow(
+                () -> new RoomCommandException("PLAYER_NOT_FOUND", "No such player in this room."));
+
+    jdbcClient
+        .sql(
+            """
+            update room_participant
+               set left_at = now(), leave_reason = 'KICKED', lost_announced_at = now(),
+                   grace_reservation_id = null, grace_expires_at = null
+             where room_id = :roomId and user_id = :targetPlayerId and left_at is null
+            """)
+        .param("roomId", roomId)
+        .param("targetPlayerId", targetPlayerId)
+        .update();
+
+    // game-contracts.md FR-IN-005 — only a human PLAYER's removal is a game-backend input; a
+    // spectator was never represented to the game backend in the first place, and no session
+    // exists for the outbox row to reference until IMP-M3-05 (data-model.md §4.2, session_id NOT
+    // NULL) — the same conditional shape as room-lifecycle.md §3.3's grace-expiry insert.
+    if ("IN_PROGRESS".equals(roomState) && "PLAYER".equals(target.role())) {
+      insertPlayerLeftOutbox(roomId, targetPlayerId, target.teamId(), "kicked");
+    }
+    return new PlayerKickedPayload(targetPlayerId, hostUserId);
+  }
+
+  private void insertPlayerLeftOutbox(
+      UUID roomId, UUID playerId, @Nullable UUID teamId, String reason) {
+    UUID sessionId =
+        jdbcClient
+            .sql("select active_session_id from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query(UUID.class)
+            .optional()
+            .orElse(null);
+    if (sessionId == null) {
+      return;
+    }
+    String username = usernameOf(playerId);
+    Map<String, Object> payload =
+        Map.of(
+            "type",
+            "player_left",
+            "playerId",
+            playerId.toString(),
+            "displayName",
+            username,
+            "teamId",
+            teamId == null ? "" : teamId.toString(),
+            "reason",
+            reason);
+    String payloadJson;
+    try {
+      payloadJson = objectMapper.writeValueAsString(payload);
+    } catch (Exception e) {
+      throw new IllegalStateException("Failed to serialize player_left outbox payload", e);
+    }
+    jdbcClient
+        .sql(
+            "insert into game_input_outbox (session_id, payload) values (:sessionId, :payload::jsonb)")
+        .param("sessionId", sessionId)
+        .param("payload", payloadJson)
+        .update();
+  }
+
+  /**
+   * {@code CHANGE_PARAMETERS}, FR-HOST-007. {@code input-validation.md}'s whitelist: every key
+   * validated against the manifest's declared schema, then merged into the existing {@code
+   * room.parameters} — a key omitted from the command retains its stored value — and the full
+   * merged set persisted and returned for broadcast (FR-HOST-008 relies on this being the durable
+   * copy, not something reconstructed from the manifest's defaults).
+   */
+  ParametersChangedPayload changeParameters(
+      UUID roomId, UUID hostUserId, Map<String, JsonNode> requested) {
+    requireLobby(requireHost(roomId, hostUserId));
+    List<ParameterSchema> schemas = parameterSchemasForRoom(roomId);
+    Map<String, ParameterSchema> byKey = new java.util.LinkedHashMap<>();
+    for (ParameterSchema schema : schemas) {
+      byKey.put(schema.key(), schema);
+    }
+
+    RoomParametersRow row =
+        jdbcClient
+            .sql("select parameters from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query((rs, rowNum) -> new RoomParametersRow(rs.getString("parameters")))
+            .single();
+    Map<String, Object> merged =
+        new java.util.LinkedHashMap<>(readParameters(row.parametersJson()));
+
+    for (var entry : requested.entrySet()) {
+      String key = entry.getKey();
+      ParameterSchema schema = byKey.get(key);
+      if (schema == null) {
+        throw new RoomCommandException(
+            "UNKNOWN_PARAMETER", "No such parameter.", Map.of("field", key));
+      }
+      merged.put(key, validatedParameterValue(schema, entry.getValue()));
+    }
+
+    String mergedJson;
+    try {
+      mergedJson = objectMapper.writeValueAsString(merged);
+    } catch (Exception e) {
+      throw new IllegalStateException("Failed to serialize room.parameters", e);
+    }
+    jdbcClient
+        .sql("update room set parameters = :parameters::jsonb where room_id = :roomId")
+        .param("parameters", mergedJson)
+        .param("roomId", roomId)
+        .update();
+    return new ParametersChangedPayload(merged);
+  }
+
+  /** {@code input-validation.md}'s whitelist table, one parameter at a time. */
+  private Object validatedParameterValue(ParameterSchema schema, JsonNode value) {
+    String key = schema.key();
+    switch (schema.type()) {
+      case "integer" -> {
+        if (!value.isIntegralNumber()) {
+          throw parameterTypeMismatch(key);
+        }
+        long v = value.asLong();
+        if (v < schema.min() || v > schema.max()) {
+          throw parameterOutOfRange(key);
+        }
+        return v;
+      }
+      case "decimal" -> {
+        if (!value.isNumber()) {
+          throw parameterTypeMismatch(key);
+        }
+        double v = value.asDouble();
+        if (v < schema.min() || v > schema.max()) {
+          throw parameterOutOfRange(key);
+        }
+        return v;
+      }
+      case "boolean" -> {
+        if (!value.isBoolean()) {
+          throw parameterTypeMismatch(key);
+        }
+        return value.asBoolean();
+      }
+      case "string" -> {
+        if (!value.isTextual()) {
+          throw parameterTypeMismatch(key);
+        }
+        String v = value.asText();
+        if (schema.maxLength() != null && v.length() > schema.maxLength()) {
+          throw parameterOutOfRange(key);
+        }
+        return v;
+      }
+      case "enum" -> {
+        if (!value.isTextual()) {
+          throw parameterTypeMismatch(key);
+        }
+        String v = value.asText();
+        if (schema.options() == null || !schema.options().contains(v)) {
+          throw parameterOutOfRange(key);
+        }
+        return v;
+      }
+      default -> throw new IllegalStateException("Unrecognised parameter type: " + schema.type());
+    }
+  }
+
+  private static RoomCommandException parameterTypeMismatch(String key) {
+    return new RoomCommandException(
+        "PARAMETER_TYPE_MISMATCH", "Value does not match the declared type.", Map.of("field", key));
+  }
+
+  private static RoomCommandException parameterOutOfRange(String key) {
+    return new RoomCommandException(
+        "PARAMETER_OUT_OF_RANGE", "Value is outside the declared bounds.", Map.of("field", key));
+  }
+
+  /**
+   * {@code START_GAME}, FR-HOST-009. FR-TEAM-009's three conditions, evaluated atomically under the
+   * room lock; every unmet condition is collected before throwing, not just the first
+   * (`START_CONDITIONS_NOT_MET`'s `details` "lists the unmet conditions").
+   */
+  void checkStartConditions(UUID roomId, UUID hostUserId) {
+    requireLobby(requireHost(roomId, hostUserId));
+    List<String> failed = new ArrayList<>();
+
+    List<TeamTemplateInfo> templates = teamTemplatesForRoom(roomId);
+    List<TeamOccupancyRow> teamRows =
+        jdbcClient
+            .sql(
+                """
+                select t.team_id, t.template_index, coalesce(rc.occupied, 0) as occupied
+                from room_team t
+                left join (select team_id, count(*) as occupied from room_participant
+                           where role = 'PLAYER' and left_at is null group by team_id) rc
+                  on rc.team_id = t.team_id
+                where t.room_id = :roomId
+                """)
+            .param("roomId", roomId)
+            .query(
+                (rs, rowNum) ->
+                    new TeamOccupancyRow(
+                        rs.getObject("team_id", UUID.class),
+                        rs.getInt("template_index"),
+                        rs.getLong("occupied")))
+            .list();
+
+    Map<Integer, Long> teamCountByTemplate = new java.util.LinkedHashMap<>();
+    for (TeamOccupancyRow row : teamRows) {
+      teamCountByTemplate.merge(row.templateIndex(), 1L, Long::sum);
+      TeamTemplateInfo template = templates.get(row.templateIndex());
+      if (row.occupied() < template.sizeMin() || row.occupied() > template.sizeMax()) {
+        failed.add(
+            "Team %s has %d player(s), needs between %d and %d."
+                .formatted(row.teamId(), row.occupied(), template.sizeMin(), template.sizeMax()));
+      }
+    }
+    for (int i = 0; i < templates.size(); i++) {
+      TeamTemplateInfo template = templates.get(i);
+      long count = teamCountByTemplate.getOrDefault(i, 0L);
+      if (count < template.countMin() || count > template.countMax()) {
+        failed.add(
+            "Template \"%s\" has %d team(s), needs between %d and %d."
+                .formatted(template.name(), count, template.countMin(), template.countMax()));
+      }
+    }
+
+    List<String> notReady =
+        jdbcClient
+            .sql(
+                """
+                select au.username from room_participant rp join app_user au on au.user_id = rp.user_id
+                where rp.room_id = :roomId and rp.role = 'PLAYER' and rp.left_at is null
+                  and rp.user_id <> :hostUserId and rp.ready = false
+                """)
+            .param("roomId", roomId)
+            .param("hostUserId", hostUserId)
+            .query(String.class)
+            .list();
+    for (String username : notReady) {
+      failed.add("Player \"%s\" is not ready.".formatted(username));
+    }
+
+    if (!failed.isEmpty()) {
+      throw new RoomCommandException(
+          "START_CONDITIONS_NOT_MET",
+          "The team-validity conditions for starting the game are not met.",
+          Map.of("failedConditions", failed));
+    }
+  }
+
+  /**
+   * {@code TRANSFER_HOST}, FR-XFER-004. The former host keeps their slot and player role — only
+   * {@code room.host_user_id} moves.
+   */
+  HostTransferredPayload transferHost(UUID roomId, UUID hostUserId, UUID newHostId) {
+    requireHost(roomId, hostUserId);
+    Optional<String> targetRole =
+        jdbcClient
+            .sql(
+                "select role from room_participant"
+                    + " where room_id = :roomId and user_id = :newHostId and left_at is null")
+            .param("roomId", roomId)
+            .param("newHostId", newHostId)
+            .query(String.class)
+            .optional();
+    if (targetRole.isEmpty() || !"PLAYER".equals(targetRole.get())) {
+      throw new RoomCommandException(
+          "TARGET_NOT_PLAYER", "The new host must be a current human player.");
+    }
+    jdbcClient
+        .sql("update room set host_user_id = :newHostId where room_id = :roomId")
+        .param("newHostId", newHostId)
+        .param("roomId", roomId)
+        .update();
+    return new HostTransferredPayload(newHostId, hostUserId, "VOLUNTARY");
+  }
+
+  private List<ParameterSchema> parameterSchemasForRoom(UUID roomId) {
+    String manifest =
+        jdbcClient
+            .sql(
+                """
+                select gv.manifest
+                from room r join game_version gv
+                  on gv.game_id = r.game_id and gv.version = r.game_version
+                where r.room_id = :roomId
+                """)
+            .param("roomId", roomId)
+            .query(String.class)
+            .single();
+    return parseParameterSchemas(manifest);
+  }
+
+  private List<ParameterSchema> parseParameterSchemas(@Nullable String manifestJson) {
+    if (manifestJson == null) {
+      throw new IllegalStateException("An ACTIVE game_version must carry a validated manifest.");
+    }
+    JsonNode manifest;
+    try {
+      manifest = objectMapper.readTree(manifestJson);
+    } catch (Exception e) {
+      throw new IllegalStateException("Stored manifest is not valid JSON", e);
+    }
+    List<ParameterSchema> schemas = new ArrayList<>();
+    for (JsonNode node : manifest.path("parameters")) {
+      String type = node.path("type").asText();
+      schemas.add(
+          new ParameterSchema(
+              node.path("key").asText(),
+              type,
+              node.path("min").asDouble(0),
+              node.path("max").asDouble(0),
+              node.hasNonNull("maxLength") ? node.path("maxLength").asInt() : null,
+              node.has("options")
+                  ? java.util.stream.StreamSupport.stream(node.path("options").spliterator(), false)
+                      .map(JsonNode::asText)
+                      .toList()
+                  : null));
+    }
+    return schemas;
+  }
+
+  private record TargetMember(String role, @Nullable UUID teamId) {}
+
+  private record RoomParametersRow(@Nullable String parametersJson) {}
+
+  private record TeamOccupancyRow(UUID teamId, int templateIndex, long occupied) {}
+
+  /** {@code manifest-schema.md} § `parameters` — one entry's declared schema. */
+  /**
+   * {@code min}/{@code max} are primitive: manifest-schema.md requires them on every {@code
+   * integer}/{@code decimal} parameter, the only types that read them, so there is no null case to
+   * represent.
+   */
+  private record ParameterSchema(
+      String key,
+      String type,
+      double min,
+      double max,
+      @Nullable Integer maxLength,
+      @Nullable List<String> options) {}
+
+  /** {@code room-websocket.md} `PLAYER_KICKED` payload shape. */
+  record PlayerKickedPayload(UUID playerId, UUID byHostId) {}
+
+  /** {@code room-websocket.md} `PARAMETERS_CHANGED` payload shape. */
+  record ParametersChangedPayload(Map<String, Object> parameters) {}
+
+  /** {@code room-websocket.md} `HOST_TRANSFERRED` payload shape. */
+  record HostTransferredPayload(UUID newHostId, UUID previousHostId, String reason) {}
 
   // ---------------------------------------------------------------------
   // ROOM_STATE snapshot (room-websocket.md § Snapshot Delivery, IMP-M2-05)

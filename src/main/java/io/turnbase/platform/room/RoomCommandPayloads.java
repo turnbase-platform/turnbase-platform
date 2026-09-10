@@ -37,6 +37,14 @@ final class RoomCommandPayloads {
     return node.asInt();
   }
 
+  static JsonNode requireObject(JsonNode payload, String field) {
+    JsonNode node = payload.path(field);
+    if (!node.isObject()) {
+      throw validationFailed(field);
+    }
+    return node;
+  }
+
   static UUID requireUuid(JsonNode payload, String field) {
     JsonNode node = payload.path(field);
     if (!node.isTextual()) {

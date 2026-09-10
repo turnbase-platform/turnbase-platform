@@ -1,6 +1,7 @@
 package io.turnbase.platform.room;
 
 import static io.turnbase.platform.room.RoomCommandPayloads.requireInt;
+import static io.turnbase.platform.room.RoomCommandPayloads.requireObject;
 import static io.turnbase.platform.room.RoomCommandPayloads.requireString;
 import static io.turnbase.platform.room.RoomCommandPayloads.requireUuid;
 
@@ -9,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.security.Principal;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -18,17 +20,16 @@ import org.springframework.stereotype.Controller;
 
 /**
  * {@code room-websocket.md} § Host Commands — {@code /app/room.{roomId}.host}. {@code IMP-M2-05}'s
- * own share of the table: {@code ADD_TEAM}, {@code REMOVE_TEAM}, {@code RESIZE_TEAM}, {@code
- * REASSIGN_PLAYER}, {@code ADD_AI_PLAYER}. {@code KICK_PLAYER}, {@code CHANGE_PARAMETERS}, {@code
- * START_GAME} and {@code TRANSFER_HOST} are {@code IMP-M2-06}'s — this item's read-list never names
- * the FR-HOST and FR-XFER requirements those commands realize, and an unrecognised {@code type}
- * here falls through to {@code UNKNOWN_COMMAND} until that item adds them to the same switch.
+ * share of the table: {@code ADD_TEAM}, {@code REMOVE_TEAM}, {@code RESIZE_TEAM}, {@code
+ * REASSIGN_PLAYER}, {@code ADD_AI_PLAYER}. {@code IMP-M2-06}'s share follows: {@code KICK_PLAYER},
+ * {@code CHANGE_PARAMETERS}, {@code START_GAME}, {@code TRANSFER_HOST}.
  *
  * <p>The channel-level {@code principal.id == room.hostId} guard {@code room-websocket.md} §
  * Authorization Model describes as a "fast-fail optimisation only" does not exist for this
  * destination ({@code IMP-M2-02} deferred it); every command below re-verifies host identity
  * itself, under {@link RoomEventExecutor}'s lock, which is the authoritative check the section
- * requires regardless of whether a fast-fail also exists.
+ * requires regardless of whether a fast-fail also exists — required here in particular, since a
+ * racing {@code TRANSFER_HOST} can change {@code room.hostId} between the two.
  */
 @Controller
 class RoomHostCommandController {
@@ -94,6 +95,24 @@ class RoomHostCommandController {
         roomService.reassignPlayer(roomId, hostUserId, playerId, toTeamId);
       }
       case "ADD_AI_PLAYER" -> roomService.addAiPlayer(roomId, hostUserId);
+      case "KICK_PLAYER" -> {
+        UUID playerId = requireUuid(payload, "playerId");
+        roomService.kickPlayer(roomId, hostUserId, playerId);
+        errors.sendKicked(playerId, roomId);
+      }
+      case "CHANGE_PARAMETERS" -> {
+        JsonNode parameters = requireObject(payload, "parameters");
+        Map<String, JsonNode> requested = new LinkedHashMap<>();
+        parameters
+            .fields()
+            .forEachRemaining(entry -> requested.put(entry.getKey(), entry.getValue()));
+        roomService.changeParameters(roomId, hostUserId, requested);
+      }
+      case "START_GAME" -> roomService.startGame(roomId, hostUserId);
+      case "TRANSFER_HOST" -> {
+        UUID newHostId = requireUuid(payload, "newHostId");
+        roomService.transferHost(roomId, hostUserId, newHostId);
+      }
       default ->
           throw new RoomCommandException(
               "UNKNOWN_COMMAND", "Unrecognised command type: " + envelope.type());

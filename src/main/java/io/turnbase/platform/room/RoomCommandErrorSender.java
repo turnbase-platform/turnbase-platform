@@ -46,4 +46,19 @@ class RoomCommandErrorSender {
     messagingTemplate.convertAndSendToUser(
         principal.getName(), "/queue/errors", Map.of("type", "ERROR", "payload", payload));
   }
+
+  /**
+   * {@code room-websocket.md}'s {@code KICK_PLAYER} unicast — sent to the kicked player, not the
+   * command's sender, and deliberately not {@link #send}'s shape: no {@code correlationId} key at
+   * all (not even null), since this is not a response to a command the recipient sent.
+   */
+  void sendKicked(UUID targetUserId, UUID roomId) {
+    Map<String, Object> payload =
+        Map.of(
+            "code", "KICKED",
+            "message", "You were removed from the room by the host.",
+            "roomId", roomId);
+    messagingTemplate.convertAndSendToUser(
+        targetUserId.toString(), "/queue/errors", Map.of("type", "ERROR", "payload", payload));
+  }
 }
