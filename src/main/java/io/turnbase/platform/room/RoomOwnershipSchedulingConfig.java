@@ -30,6 +30,10 @@ class RoomOwnershipSchedulingConfig implements SchedulingConfigurer {
   @Override
   public void configureTasks(ScheduledTaskRegistrar registrar) {
     ownership.startLiveness();
+    // room-lifecycle.md §5.4 / game-host-internals.md §13: platform:sentinel has no TTL, so
+    // setIfAbsent here is a no-op on every restart except the very first boot of a fresh
+    // datastore — exactly the case the reconciliation sweep's mass-loss check needs (IMP-M2-10).
+    ownership.ensureSentinel();
     registrar.addTriggerTask(
         ownership::renewAndRecheck, new PeriodicTrigger(properties.lease().renewInterval()));
   }

@@ -116,6 +116,31 @@ class RoomOwnershipService {
   }
 
   /**
+   * {@code room-lifecycle.md} §5.2 duty (e)'s candidate query needs to know, for a room whose
+   * Postgres row still names an owner, whether that instance's liveness lease is actually gone —
+   * the same {@code pod:{id}:alive} key {@link #renewAndRecheck} checks for this instance's own
+   * owned rooms, generalised to an arbitrary instance id (`IMP-M2-10`).
+   */
+  boolean isInstanceAlive(String instanceId) {
+    return Boolean.TRUE.equals(metrics.record(() -> redis.hasKey("pod:" + instanceId + ":alive")));
+  }
+
+  /**
+   * {@code game-host-internals.md} §13 / {@code room-lifecycle.md} §5.4: "if {@code
+   * platform:sentinel} is absent while Redis is reachable, the datastore was reset." No TTL — set
+   * once, best-effort, and re-set by the reconciliation sweep itself once it has reported the
+   * resulting mass-loss event (`IMP-M2-10`).
+   */
+  void ensureSentinel() {
+    metrics.record(() -> redis.opsForValue().setIfAbsent("platform:sentinel", pod.id()));
+  }
+
+  /** {@code room-lifecycle.md} §5.4's reachability guard: {@code false} means a reset datastore. */
+  boolean sentinelPresent() {
+    return Boolean.TRUE.equals(metrics.record(() -> redis.hasKey("platform:sentinel")));
+  }
+
+  /**
    * {@code room-lifecycle.md} §1.1/§1.5 layers 2–3, run on {@code lease.renewInterval}: renew this
    * instance's liveness lease with {@code SET ... XX}, and independently re-verify {@code
    * room:{roomId}:pod} for every locally-owned room. A {@code SET ... XX} failure is a proven lease

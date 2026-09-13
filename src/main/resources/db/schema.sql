@@ -325,6 +325,16 @@ ALTER TABLE public.notification ALTER COLUMN event_seq ADD GENERATED ALWAYS AS I
 
 
 --
+-- Name: orphaned_session_flag; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.orphaned_session_flag (
+    session_id uuid NOT NULL,
+    first_observed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: room; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -566,6 +576,14 @@ ALTER TABLE ONLY public.game_version
 
 ALTER TABLE ONLY public.notification
     ADD CONSTRAINT notification_pkey PRIMARY KEY (notification_id);
+
+
+--
+-- Name: orphaned_session_flag orphaned_session_flag_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orphaned_session_flag
+    ADD CONSTRAINT orphaned_session_flag_pkey PRIMARY KEY (session_id);
 
 
 --

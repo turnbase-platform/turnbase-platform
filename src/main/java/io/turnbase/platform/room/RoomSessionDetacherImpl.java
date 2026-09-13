@@ -51,11 +51,23 @@ class RoomSessionDetacherImpl implements RoomSessionDetacher {
               () -> {
                 RoomRepository.DetachOutcome outcome2 =
                     repository.detachSession(roomId, sessionId, reason, nextState);
-                RoomEventExecutor.RoomEvent event =
-                    outcome2.detached() && "CLOSED".equals(nextState)
-                        ? new RoomEventExecutor.RoomEvent(
-                            "ROOM_CLOSED", new RoomRepository.RoomClosedPayload(reason))
-                        : null;
+                RoomEventExecutor.RoomEvent event = null;
+                if (outcome2.detached()) {
+                  if ("CLOSED".equals(nextState)) {
+                    event =
+                        new RoomEventExecutor.RoomEvent(
+                            "ROOM_CLOSED", new RoomRepository.RoomClosedPayload(reason));
+                  } else if ("LOBBY".equals(nextState)) {
+                    // FR-JOB-007c (IMP-GATE-55): the only caller today that fails back to Lobby
+                    // rather than closing. room-lifecycle.md §5.2's "clean keys, reset readiness,
+                    // notify participants" — GAME_ENDED's contract is shared verbatim with
+                    // FR-LIFE-002's normal game end (room-websocket.md § GAME_ENDED).
+                    repository.resetReadiness(roomId);
+                    event =
+                        new RoomEventExecutor.RoomEvent(
+                            "GAME_ENDED", new RoomRepository.GameEndedPayload(roomId, true));
+                  }
+                }
                 return new RoomEventExecutor.MutationOutcome<>(outcome2, event);
               });
     } catch (RoomUnavailableRetryException e) {

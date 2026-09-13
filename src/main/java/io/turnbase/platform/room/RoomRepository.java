@@ -2221,6 +2221,23 @@ class RoomRepository {
   /** {@code room-websocket.md} `ROOM_CLOSED` payload shape. */
   record RoomClosedPayload(String reason) {}
 
+  /** {@code room-websocket.md} `GAME_ENDED` payload shape, shared with FR-JOB-007c's trigger. */
+  record GameEndedPayload(UUID roomId, boolean readinessReset) {}
+
+  /**
+   * FR-JOB-007c / {@code room-lifecycle.md} §5.2: "clean keys, reset readiness, notify
+   * participants" — the readiness half, applied to every current participant of the room, not just
+   * players (a spectator has no {@code ready} value that means anything, but resetting it is
+   * harmless and avoids a role-conditional statement for no observable difference).
+   */
+  void resetReadiness(UUID roomId) {
+    jdbcClient
+        .sql(
+            "update room_participant set ready = false where room_id = :roomId and left_at is null")
+        .param("roomId", roomId)
+        .update();
+  }
+
   /** {@link RoomService#leave}'s own outcome: the session it closed, if closure was triggered. */
   record LeaveOutcome(@Nullable UUID closedSessionId) {}
 
@@ -2350,6 +2367,219 @@ class RoomRepository {
                 + " where id = :id")
         .param("error", error)
         .param("id", outboxRowId)
+        .update();
+  }
+
+  // ---------------------------------------------------------------------
+  // Reconciliation (IMP-M2-10, room-lifecycle.md §5.2/§5.3/§5.4) — ReconciliationJob's five duties
+  // and the closed-room purge.
+  // ---------------------------------------------------------------------
+
+  /** Duty (a)'s query: owed teardowns due for a re-drive attempt. */
+  List<DueTeardown> dueSessionTeardowns(int limit) {
+    return jdbcClient
+        .sql(
+            """
+            select session_id, room_id, reason from session_teardown
+             where next_attempt_at <= now()
+             order by next_attempt_at
+             limit :limit
+             for update skip locked
+            """)
+        .param("limit", limit)
+        .query(
+            (rs, n) ->
+                new DueTeardown(
+                    rs.getObject("session_id", UUID.class),
+                    rs.getObject("room_id", UUID.class),
+                    rs.getString("reason")))
+        .list();
+  }
+
+  record DueTeardown(UUID sessionId, UUID roomId, String reason) {}
+
+  /** {@code turnbase.teardown.owed} (§6): outstanding teardown debt, independent of due-ness. */
+  long countSessionTeardownOwed() {
+    Long count = jdbcClient.sql("select count(*) from session_teardown").query(Long.class).single();
+    return count == null ? 0 : count;
+  }
+
+  /**
+   * {@code room-lifecycle.md} §4's {@code terminateAndCleanup} step (c), moved here from either
+   * caller per the pseudocode's own placement: {@code attempts++}, {@code last_error}, and a
+   * backoff of 10s doubling to a 5-minute cap, computed from the row's pre-update {@code attempts}
+   * so the very first failure backs off 10s, the second 20s, and so on.
+   */
+  void recordSessionTeardownFailure(UUID sessionId, String error) {
+    jdbcClient
+        .sql(
+            """
+            update session_teardown
+               set attempts = attempts + 1,
+                   last_error = :error,
+                   next_attempt_at = now()
+                     + make_interval(secs => least(10 * power(2, attempts), 300)::double precision)
+             where session_id = :sessionId
+            """)
+        .param("error", error)
+        .param("sessionId", sessionId)
+        .update();
+  }
+
+  /**
+   * Duty (b)'s health check: a session is orphaned unless a non-closed room still names it as
+   * {@code active_session_id} (`room-lifecycle.md` §5.2 — "whose room no longer exists or is
+   * closed").
+   */
+  boolean sessionBelongsToOpenRoom(UUID sessionId) {
+    Boolean exists =
+        jdbcClient
+            .sql(
+                "select exists(select 1 from room"
+                    + " where active_session_id = :sessionId and state <> 'CLOSED')")
+            .param("sessionId", sessionId)
+            .query(Boolean.class)
+            .single();
+    return Boolean.TRUE.equals(exists);
+  }
+
+  /** {@code data-model.md} §4.3's first-observation insert, guarded so a repeat is a no-op. */
+  void flagOrphanedSessionIfAbsent(UUID sessionId) {
+    jdbcClient
+        .sql(
+            "insert into orphaned_session_flag (session_id) values (:sessionId)"
+                + " on conflict (session_id) do nothing")
+        .param("sessionId", sessionId)
+        .update();
+  }
+
+  Optional<Instant> orphanedSessionFirstObservedAt(UUID sessionId) {
+    return jdbcClient
+        .sql("select first_observed_at from orphaned_session_flag where session_id = :sessionId")
+        .param("sessionId", sessionId)
+        .query(Timestamp.class)
+        .optional()
+        .map(Timestamp::toInstant);
+  }
+
+  void clearOrphanedSessionFlag(UUID sessionId) {
+    jdbcClient
+        .sql("delete from orphaned_session_flag where session_id = :sessionId")
+        .param("sessionId", sessionId)
+        .update();
+  }
+
+  /**
+   * Duty (c)'s candidates: an {@code IN_PROGRESS} room still naming a session. {@link
+   * ReconciliationJob} checks the Game Host's own {@code session:{sessionId}} Redis record for each
+   * — "no Game Host probe" (`room-lifecycle.md` §5.2): the record is the source of truth.
+   */
+  List<RoomSessionPair> inProgressRoomsWithSession() {
+    return jdbcClient
+        .sql(
+            "select room_id, active_session_id from room"
+                + " where state = 'IN_PROGRESS' and active_session_id is not null"
+                + " for update skip locked")
+        .query(
+            (rs, n) ->
+                new RoomSessionPair(
+                    rs.getObject("room_id", UUID.class),
+                    rs.getObject("active_session_id", UUID.class)))
+        .list();
+  }
+
+  record RoomSessionPair(UUID roomId, UUID sessionId) {}
+
+  /** Duty (d)'s candidates: an idle Lobby room, past the configured idle window. */
+  List<UUID> idleLobbyRoomIds(Duration idleWindow) {
+    return jdbcClient
+        .sql(
+            """
+            select room_id from room r
+             where state = 'LOBBY'
+               and last_activity_at <= now() - make_interval(secs => :idleSeconds)
+               and not exists (select 1 from room_participant rp
+                                where rp.room_id = r.room_id and rp.connection_count > 0
+                                  and rp.left_at is null)
+             for update skip locked
+            """)
+        .param("idleSeconds", (int) idleWindow.toSeconds())
+        .query(UUID.class)
+        .list();
+  }
+
+  /** §5.4 guard 2, shared by duties (c)/(d): first observation, guarded against overwriting it. */
+  Optional<Instant> roomReconcileFlaggedAt(UUID roomId) {
+    return jdbcClient
+        .sql("select reconcile_flagged_at from room where room_id = :roomId")
+        .param("roomId", roomId)
+        .query(Timestamp.class)
+        .optional()
+        .map(Timestamp::toInstant);
+  }
+
+  void flagRoomForReconcileIfAbsent(UUID roomId) {
+    jdbcClient
+        .sql(
+            "update room set reconcile_flagged_at = now()"
+                + " where room_id = :roomId and reconcile_flagged_at is null")
+        .param("roomId", roomId)
+        .update();
+  }
+
+  /** Cleared "as soon as the room looks healthy" (§5.4 guard 2) — never left dangling. */
+  void clearRoomReconcileFlag(UUID roomId) {
+    jdbcClient
+        .sql("update room set reconcile_flagged_at = null where room_id = :roomId")
+        .param("roomId", roomId)
+        .update();
+  }
+
+  /** Duty (e)'s first pass: every instance currently named as an owner of a live room. */
+  List<String> distinctLiveOwnerInstanceIds() {
+    return jdbcClient
+        .sql(
+            "select distinct owner_instance_id from room"
+                + " where owner_instance_id is not null and state <> 'CLOSED'")
+        .query(String.class)
+        .list();
+  }
+
+  /**
+   * Duty (e)'s candidates (`room-lifecycle.md` §5.2): owned by a now-dead instance, or released and
+   * still unclaimed (`ownerless_since` set by §1.3's graceful release).
+   */
+  List<UUID> unownedRoomIds(List<String> deadOwnerInstanceIds) {
+    if (deadOwnerInstanceIds.isEmpty()) {
+      return jdbcClient
+          .sql(
+              "select room_id from room where state <> 'CLOSED'"
+                  + " and owner_instance_id is null and ownerless_since is not null"
+                  + " for update skip locked")
+          .query(UUID.class)
+          .list();
+    }
+    return jdbcClient
+        .sql(
+            """
+            select room_id from room
+             where state <> 'CLOSED'
+               and ( owner_instance_id in (:deadOwners)
+                  or (owner_instance_id is null and ownerless_since is not null) )
+             for update skip locked
+            """)
+        .param("deadOwners", deadOwnerInstanceIds)
+        .query(UUID.class)
+        .list();
+  }
+
+  /** FR-JOB-009 / §5.3: rooms Closed past the retention window; participant/team/invite cascade. */
+  int purgeClosedRooms(Duration retention) {
+    return jdbcClient
+        .sql(
+            "delete from room where state = 'CLOSED'"
+                + " and closed_at <= now() - make_interval(secs => :seconds)")
+        .param("seconds", (int) retention.toSeconds())
         .update();
   }
 }

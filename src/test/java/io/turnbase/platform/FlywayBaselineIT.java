@@ -45,6 +45,7 @@ class FlywayBaselineIT {
           "room_participant",
           "room_invitation",
           "session_teardown",
+          "orphaned_session_flag",
           "game_input_outbox",
           "game_session_completion",
           "game_history_entry",
@@ -78,7 +79,7 @@ class FlywayBaselineIT {
     MigrateResult result = flyway.migrate();
 
     assertThat(result.success).isTrue();
-    assertThat(result.migrationsExecuted).isEqualTo(1);
+    assertThat(result.migrationsExecuted).isEqualTo(2);
 
     try (Connection connection =
         DriverManager.getConnection(
