@@ -35,7 +35,14 @@ echo "Building turnbase/game-host:dev from ${GAME_HOST_DIR}..."
 docker build -t turnbase/game-host:dev "${GAME_HOST_DIR}"
 
 echo "Bringing up the core compose profile..."
-docker compose up -d --build --wait --wait-timeout 180
+# On failure, the cleanup trap's `docker compose down -v` discards every container before
+# anyone can see why one of them exited — print each service's log here first, so a startup
+# crash is diagnosable from the CI log alone rather than requiring a local reproduction.
+if ! docker compose up -d --build --wait --wait-timeout 180; then
+  echo "compose up --wait failed — service logs follow:" >&2
+  docker compose logs --no-color >&2
+  exit 1
+fi
 
 echo "Platform health:"
 # Actuator lives on the management port (8081), not the app port (8080) — IMP-M0-03. It's
