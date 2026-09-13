@@ -38,9 +38,14 @@ public abstract class PostgresIntegrationTest {
   protected static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>("postgres:16-alpine");
 
+  // IMP-GATE-52: MinIO no longer publishes to Docker Hub, so the image is pulled from its current
+  // registry — Testcontainers' MinIOContainer validates the image name against the bare
+  // "minio/minio" repository regardless of host, hence the explicit substitute declaration.
   @Container
   protected static final MinIOContainer MINIO =
-      new MinIOContainer(DockerImageName.parse("minio/minio:RELEASE.2025-09-07T16-13-09Z"));
+      new MinIOContainer(
+          DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
+              .asCompatibleSubstituteFor("minio/minio"));
 
   // No official Testcontainers Redis module exists; a plain GenericContainer with an explicit
   // @ServiceConnection name is Spring Boot's own documented way to wire one (local-environment.md
