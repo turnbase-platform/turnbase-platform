@@ -2137,6 +2137,93 @@ class RoomRepository {
         .orElse(null);
   }
 
+  // ---------------------------------------------------------------------
+  // Detaching a session (room-lifecycle.md §4, IMP-M2-09, IMP-GATE-49) — one method, five
+  // callers; this repository method is steps 1-6, always invoked from inside RoomEventExecutor's
+  // lock and transaction, matching resolveExpiredReservation's own precedent of relying on that
+  // wrapping transaction rather than declaring @Transactional itself. Step 3's version bump and
+  // epoch fence are RoomEventExecutor's own follow-up statement, the same split changeParameters
+  // and transferHost already use for a room-column mutation with no CAS of its own — the shared
+  // transaction rolls both back together if the fenced commit loses the race.
+  // ---------------------------------------------------------------------
+
+  /**
+   * @param sessionId the session the caller believes is still attached; {@code null} for a room
+   *     with none (a Lobby host-leave). Step 2's comparison against the row's actual {@code
+   *     active_session_id} — null-safe, so two nulls count as a match — is the whole idempotency
+   *     story: a second caller racing to detach the same session, or one arriving after another
+   *     already did, is a safe no-op.
+   */
+  DetachOutcome detachSession(
+      UUID roomId, @Nullable UUID sessionId, String reason, String nextState) {
+    // A list, not .optional() on a single nullable column, for the same reason
+    // resolveExpiredReservation is: a Lobby room's active_session_id is legitimately null, which
+    // .optional() cannot distinguish from "no row matched" (the room actually vanished).
+    List<@Nullable UUID> rows =
+        jdbcClient
+            .sql("select active_session_id from room where room_id = :roomId for update")
+            .param("roomId", roomId)
+            .query(UUID.class)
+            .list();
+    if (rows.isEmpty()) {
+      throw new IllegalStateException("room " + roomId + " vanished");
+    }
+    UUID currentSessionId = rows.get(0);
+    if (!java.util.Objects.equals(currentSessionId, sessionId)) {
+      return new DetachOutcome(false);
+    }
+    jdbcClient
+        .sql(
+            """
+            update room
+               set state = :nextState, active_session_id = null,
+                   closed_at = case when :nextState = 'CLOSED' then now() end,
+                   closed_reason = case when :nextState = 'CLOSED' then :reason end
+             where room_id = :roomId
+            """)
+        .param("nextState", nextState)
+        .param("reason", reason)
+        .param("roomId", roomId)
+        .update();
+    if ("CLOSED".equals(nextState)) {
+      // FR-INV-008: deleted at closure, not left to the room_invitation_room_id_fkey cascade,
+      // which only fires seven days later at FR-JOB-009's purge (data-model.md §1 Closure
+      // reasons).
+      jdbcClient
+          .sql("delete from room_invitation where room_id = :roomId")
+          .param("roomId", roomId)
+          .update();
+    }
+    if (sessionId != null) {
+      // ADR-0010: the owed teardown is a row keyed by sessionId, never a room-level flag, and any
+      // undelivered game input for that session is now moot (data-model.md §4.2).
+      jdbcClient
+          .sql(
+              "insert into session_teardown (session_id, room_id, reason)"
+                  + " values (:sessionId, :roomId, :reason) on conflict (session_id) do nothing")
+          .param("sessionId", sessionId)
+          .param("roomId", roomId)
+          .param("reason", reason)
+          .update();
+      jdbcClient
+          .sql(
+              "delete from game_input_outbox"
+                  + " where session_id = :sessionId and dispatched_at is null")
+          .param("sessionId", sessionId)
+          .update();
+    }
+    return new DetachOutcome(true);
+  }
+
+  /** {@code true} iff this call actually performed the detach (step 2's idempotency check). */
+  record DetachOutcome(boolean detached) {}
+
+  /** {@code room-websocket.md} `ROOM_CLOSED` payload shape. */
+  record RoomClosedPayload(String reason) {}
+
+  /** {@link RoomService#leave}'s own outcome: the session it closed, if closure was triggered. */
+  record LeaveOutcome(@Nullable UUID closedSessionId) {}
+
   /** §5.1 duty 2's query: departures a foreign instance resolved, still owed an announcement. */
   List<DeferredTail> deferredTails(String instanceId) {
     return jdbcClient

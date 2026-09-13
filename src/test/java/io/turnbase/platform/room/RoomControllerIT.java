@@ -224,6 +224,32 @@ class RoomControllerIT extends PostgresIntegrationTest {
     assertThat(stillActiveInFirst).isZero();
   }
 
+  /**
+   * {@code IMP-M2-09}, {@code IMP-GATE-53} (FR-XFER-002): the host is the room's only human player,
+   * so their own leave closes the room immediately with {@code NO_PLAYERS_REMAINING} rather than an
+   * ordinary {@code PLAYER_LEFT}.
+   */
+  @Test
+  void aSoleHostLeavingClosesTheRoomImmediately() throws Exception {
+    Registered host = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createPublicRoom(host, gameId);
+
+    ResponseEntity<String> leave =
+        deleteWithCookie("/api/rooms/" + roomId + "/participants/me", host.cookie());
+
+    assertThat(leave.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    Map<String, Object> room =
+        jdbcClient
+            .sql("select state, closed_reason, active_session_id from room where room_id = :roomId")
+            .param("roomId", roomId)
+            .query()
+            .singleRow();
+    assertThat(room.get("state")).isEqualTo("CLOSED");
+    assertThat(room.get("closed_reason")).isEqualTo("NO_PLAYERS_REMAINING");
+    assertThat(room.get("active_session_id")).isNull();
+  }
+
   /** {@code IMP-GATE-50}: a departed row is reused, never left to collide with a fresh insert. */
   @Test
   void rejoiningARoomAfterLeavingReusesTheParticipantRowInsteadOfCollidingOnItsKey()

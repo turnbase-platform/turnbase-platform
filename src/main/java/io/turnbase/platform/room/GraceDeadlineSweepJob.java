@@ -92,8 +92,15 @@ class GraceDeadlineSweepJob {
       // elsewhere will pick this up on its own next tick.
       return;
     }
-    lost.ifPresent(
-        payload -> evaluateClosureIfNoHumanRemains(due.roomId(), "GRACE_EXPIRED_NO_HUMAN"));
+    if (lost.isPresent() && due.activeSessionId() != null) {
+      // room-lifecycle.md §3.3: step 4's closure evaluation carries the same exemption as step
+      // 2's outbox insert above (both keyed on active_session_id IS NOT NULL) — a Lobby room has
+      // no session to detach, and §1.4 step 4 opens a reservation in every room state, so
+      // evaluating closure here unconditionally would close every Lobby room on a rolling
+      // deploy's mass adoption (FR-DC-007). An emptied Lobby room is instead collected by the
+      // idle-Lobby duty (§5.2) under IDLE_TIMEOUT.
+      evaluateClosureIfNoHumanRemains(due.roomId(), "GRACE_EXPIRED_NO_HUMAN");
+    }
   }
 
   private void evaluateClosureIfNoHumanRemains(UUID roomId, String closedReason) {

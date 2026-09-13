@@ -34,6 +34,7 @@ class RoomService {
   private final PodIdentity pod;
   private final RoomProperties properties;
   private final GameSessionStarter gameSessionStarter;
+  private final SessionTerminator terminator;
 
   RoomService(
       RoomRepository repository,
@@ -41,13 +42,15 @@ class RoomService {
       RoomEventExecutor events,
       PodIdentity pod,
       RoomProperties properties,
-      GameSessionStarter gameSessionStarter) {
+      GameSessionStarter gameSessionStarter,
+      SessionTerminator terminator) {
     this.repository = repository;
     this.ownership = ownership;
     this.events = events;
     this.pod = pod;
     this.properties = properties;
     this.gameSessionStarter = gameSessionStarter;
+    this.terminator = terminator;
   }
 
   /** {@code room-rest-api.md} §2. */
@@ -96,6 +99,13 @@ class RoomService {
    * request — this handler may run on an instance that does not own the room (its own text already
    * accepts that); the departure still commits, just without the lock/version/broadcast, deferring
    * the announcement to the owning instance's next sweep.
+   *
+   * <p>{@code IMP-GATE-53} (FR-XFER-002): on the claimed branch, a departing host who leaves no
+   * other human player behind closes the room immediately with {@code NO_PLAYERS_REMAINING} instead
+   * of an ordinary {@code PLAYER_LEFT} — one event, not two, since the departure and the closure
+   * are the same transaction. The unclaimed branch is unchanged: it has no claim to evaluate
+   * closure with, and the owning instance's own deferred-tail duty (`room-lifecycle.md` §5.1 duty
+   * 2) already covers the host-departure case there.
    */
   void leave(UUID userId, UUID roomId) {
     RoomOwnershipService.ClaimOutcome outcome = ownership.claim(roomId);
@@ -106,16 +116,33 @@ class RoomService {
       repository.leaveRoom(userId, roomId, false);
       return;
     }
-    events.execute(
-        roomId,
-        () -> {
-          Optional<RoomRepository.PlayerLeftPayload> left =
-              repository.leaveRoom(userId, roomId, true);
-          RoomEventExecutor.RoomEvent event =
-              left.map(payload -> new RoomEventExecutor.RoomEvent("PLAYER_LEFT", payload))
-                  .orElse(null);
-          return new RoomEventExecutor.MutationOutcome<>(Boolean.TRUE, event);
-        });
+    RoomRepository.LeaveOutcome result =
+        events.execute(
+            roomId,
+            () -> {
+              Optional<RoomRepository.PlayerLeftPayload> left =
+                  repository.leaveRoom(userId, roomId, true);
+              if (left.isPresent()
+                  && userId.equals(repository.hostUserIdOf(roomId))
+                  && !repository.anyHumanRemains(roomId)) {
+                UUID sessionId = repository.activeSessionId(roomId);
+                repository.detachSession(roomId, sessionId, "NO_PLAYERS_REMAINING", "CLOSED");
+                RoomEventExecutor.RoomEvent event =
+                    new RoomEventExecutor.RoomEvent(
+                        "ROOM_CLOSED",
+                        new RoomRepository.RoomClosedPayload("NO_PLAYERS_REMAINING"));
+                return new RoomEventExecutor.MutationOutcome<>(
+                    new RoomRepository.LeaveOutcome(sessionId), event);
+              }
+              RoomEventExecutor.RoomEvent event =
+                  left.map(payload -> new RoomEventExecutor.RoomEvent("PLAYER_LEFT", payload))
+                      .orElse(null);
+              return new RoomEventExecutor.MutationOutcome<>(
+                  new RoomRepository.LeaveOutcome(null), event);
+            });
+    if (result.closedSessionId() != null) {
+      terminator.terminateAndCleanup(result.closedSessionId(), "NO_PLAYERS_REMAINING");
+    }
   }
 
   // ---------------------------------------------------------------------

@@ -137,7 +137,7 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
   }
 
   @Test
-  void theSweepResolvesADueExpiryAndInsertsTheOutboxOnlyWhenASessionIsAttached() {
+  void theSweepResolvesADueExpiryThenClosesTheRoomAndDiscardsItsOwnOutboxRow() {
     context = boot();
     GraceDeadlineSweepJob sweep = context.getBean(GraceDeadlineSweepJob.class);
     RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
@@ -155,8 +155,17 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
     assertThat(row.get("leave_reason")).isEqualTo("GRACE_EXPIRED");
     assertThat(row.get("lost_announced_at")).isNotNull();
     assertThat(row.get("grace_reservation_id")).isNull();
-    assertThat(roomVersion(context, roomId)).isEqualTo(1L);
 
+    // The sole human's reservation expiring leaves no player remaining, so the same tick closes
+    // the room (room-lifecycle.md §3.3 step 4): PLAYER_LOST (v1) then ROOM_CLOSED (v2).
+    Map<String, Object> closedRoom = roomRow(context, roomId);
+    assertThat(closedRoom.get("state")).isEqualTo("CLOSED");
+    assertThat(closedRoom.get("closed_reason")).isEqualTo("GRACE_EXPIRED_NO_HUMAN");
+    assertThat(closedRoom.get("active_session_id")).isNull();
+    assertThat(roomVersion(context, roomId)).isEqualTo(2L);
+
+    // The outbox row the expiry itself inserted is discarded by detachSession step 5 — a
+    // player_left for a session about to be torn down is moot (data-model.md §4.2).
     Long outboxCount =
         context
             .getBean(JdbcClient.class)
@@ -164,11 +173,20 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
             .param("sessionId", sessionId)
             .query(Long.class)
             .single();
-    assertThat(outboxCount).isEqualTo(1L);
+    assertThat(outboxCount).isZero();
+
+    Long teardownCount =
+        context
+            .getBean(JdbcClient.class)
+            .sql("select count(*) from session_teardown where session_id = :sessionId")
+            .param("sessionId", sessionId)
+            .query(Long.class)
+            .single();
+    assertThat(teardownCount).isEqualTo(1L);
   }
 
   @Test
-  void theSweepNeverFiresInALobbyRoom() {
+  void theSweepNeverFiresOrClosesInALobbyRoomWithNoSession() {
     context = boot();
     GraceDeadlineSweepJob sweep = context.getBean(GraceDeadlineSweepJob.class);
     RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
@@ -184,7 +202,9 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
     sweep.run();
 
     // The generic resolve statement itself is state-agnostic (room-lifecycle.md §3.2), so it still
-    // resolves — what §3.3 step 2/4 exempt in Lobby is the outbox insert and closure evaluation.
+    // resolves — what §3.3 step 2/4 exempt in Lobby (active_session_id IS NULL) is the outbox
+    // insert and the closure evaluation: closing here would re-delete every Lobby room a rolling
+    // deploy's mass adoption (§1.4 step 4) opens a reservation in, exactly what FR-DC-007 forbids.
     Long outboxCount =
         context
             .getBean(JdbcClient.class)
@@ -192,6 +212,7 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
             .query(Long.class)
             .single();
     assertThat(outboxCount).isZero();
+    assertThat(roomRow(context, roomId).get("state")).isEqualTo("LOBBY");
   }
 
   @Test
