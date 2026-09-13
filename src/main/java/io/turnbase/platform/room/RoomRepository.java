@@ -32,10 +32,15 @@ class RoomRepository {
 
   private final JdbcClient jdbcClient;
   private final ObjectMapper objectMapper;
+  private final RoomInvitationRepository invitationRepository;
 
-  RoomRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  RoomRepository(
+      JdbcClient jdbcClient,
+      ObjectMapper objectMapper,
+      RoomInvitationRepository invitationRepository) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
+    this.invitationRepository = invitationRepository;
   }
 
   // ---------------------------------------------------------------------
@@ -166,7 +171,8 @@ class RoomRepository {
     }
 
     if (isCurrentParticipant(roomId, userId)) {
-      return new JoinOutcome(roomId, releaseCallersCurrentRoom(userId, roomId), Optional.empty());
+      return new JoinOutcome(
+          roomId, releaseCallersCurrentRoom(userId, roomId), Optional.empty(), Optional.empty());
     }
 
     if ("CLOSED".equals(room.state())) {
@@ -226,7 +232,12 @@ class RoomRepository {
     Optional<ReleasedRoomResponse> released = releaseCallersCurrentRoom(userId, roomId);
     PlayerJoinedPayload joined =
         new PlayerJoinedPayload(userId, usernameOf(userId), role.name(), teamId, nextJoinOrder);
-    return new JoinOutcome(roomId, released, Optional.of(joined));
+    // room-rest-api.md §5 step 7 (room-invitation-rest-api.md §4): a successful join resolves the
+    // caller's pending invitation to this room, if any; a failed join (thrown above) never reaches
+    // here, so a rejected join leaves the invitation pending for a retry.
+    Optional<RoomInvitationRepository.ResolvedInvitation> acceptedInvitation =
+        invitationRepository.resolveOnAcceptedJoin(roomId, userId);
+    return new JoinOutcome(roomId, released, Optional.of(joined), acceptedInvitation);
   }
 
   private String usernameOf(UUID userId) {
@@ -1794,7 +1805,8 @@ class RoomRepository {
   record JoinOutcome(
       UUID roomId,
       Optional<ReleasedRoomResponse> releasedRoom,
-      Optional<PlayerJoinedPayload> playerJoined) {}
+      Optional<PlayerJoinedPayload> playerJoined,
+      Optional<RoomInvitationRepository.ResolvedInvitation> acceptedInvitation) {}
 
   /** {@code room-websocket.md} `PLAYER_JOINED` payload shape, verbatim field-for-field. */
   record PlayerJoinedPayload(

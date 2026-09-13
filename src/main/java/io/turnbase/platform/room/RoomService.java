@@ -6,6 +6,7 @@ import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.PaginationMetadata;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
+import io.turnbase.platform.notification.AlertPublisher;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +36,7 @@ class RoomService {
   private final RoomProperties properties;
   private final GameSessionStarter gameSessionStarter;
   private final SessionTerminator terminator;
+  private final AlertPublisher alertPublisher;
 
   RoomService(
       RoomRepository repository,
@@ -43,7 +45,8 @@ class RoomService {
       PodIdentity pod,
       RoomProperties properties,
       GameSessionStarter gameSessionStarter,
-      SessionTerminator terminator) {
+      SessionTerminator terminator,
+      AlertPublisher alertPublisher) {
     this.repository = repository;
     this.ownership = ownership;
     this.events = events;
@@ -51,6 +54,7 @@ class RoomService {
     this.properties = properties;
     this.gameSessionStarter = gameSessionStarter;
     this.terminator = terminator;
+    this.alertPublisher = alertPublisher;
   }
 
   /** {@code room-rest-api.md} §2. */
@@ -89,6 +93,14 @@ class RoomService {
                       .orElse(null);
               return new RoomEventExecutor.MutationOutcome<>(joinOutcome, event);
             });
+    outcome
+        .acceptedInvitation()
+        .ifPresent(
+            accepted ->
+                alertPublisher.publish(
+                    accepted.inviterUserId(),
+                    "INVITATION_ACCEPTED",
+                    Map.of("user", accepted.inviteeUsername(), "roomId", roomId.toString())));
     RoomResponse room = fetchResponse(roomId, userId);
     ReleasedRoomResponse released = outcome.releasedRoom().orElse(null);
     return new ClaimedResult<>(new JoinRoomResponse(room, released), header);
