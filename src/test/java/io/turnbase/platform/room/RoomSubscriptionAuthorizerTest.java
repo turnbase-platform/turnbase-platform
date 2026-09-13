@@ -69,6 +69,38 @@ class RoomSubscriptionAuthorizerTest {
     assertThat(decision).isInstanceOf(SubscriptionDecision.Allow.class);
   }
 
+  /** {@code IMP-M2-08}, {@code room-lifecycle.md} §3.2: first subscribe resolves any reconnect. */
+  @Test
+  void aMembersSubscribeResolvesTheReconnectExactlyOnce() {
+    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(ownership.claimWithRetry(roomId))
+        .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
+
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+    // A retried SUBSCRIBE on the same STOMP session is not a new tab (FR-GRACE-006) — must not
+    // resolve the reconnect twice.
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+
+    verify(roomService).onConnect(roomId, user.userId());
+  }
+
+  /** {@code IMP-GATE-51}, {@code reconnection-flow.md} FR-REJOIN-007. */
+  @Test
+  void aCallerWhoLostTheRaceToItsOwnGraceExpiryReceivesSlotReleased() {
+    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(false);
+    when(repository.lostRaceToOwnExpiry(roomId, user.userId())).thenReturn(true);
+
+    SubscriptionDecision decision =
+        authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+
+    assertThat(decision).isInstanceOf(SubscriptionDecision.RejectWithError.class);
+    SubscriptionDecision.RejectWithError rejection =
+        (SubscriptionDecision.RejectWithError) decision;
+    assertThat(rejection.code()).isEqualTo("SLOT_RELEASED");
+    assertThat(rejection.retryAfterMs()).isZero();
+    verify(ownership, never()).claimWithRetry(any());
+  }
+
   @Test
   void aMemberOnAPodThatDoesNotOwnTheRoomIsToldToRetry() {
     when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);

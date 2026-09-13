@@ -224,6 +224,123 @@ class RoomControllerIT extends PostgresIntegrationTest {
     assertThat(stillActiveInFirst).isZero();
   }
 
+  /** {@code IMP-GATE-50}: a departed row is reused, never left to collide with a fresh insert. */
+  @Test
+  void rejoiningARoomAfterLeavingReusesTheParticipantRowInsteadOfCollidingOnItsKey()
+      throws Exception {
+    Registered host = registerUser();
+    Registered joiner = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", joiner.cookie(), "{\"role\":\"PLAYER\"}");
+    deleteWithCookie("/api/rooms/" + roomId + "/participants/me", joiner.cookie());
+
+    ResponseEntity<String> rejoin =
+        postWithCookie(
+            "/api/rooms/" + roomId + "/participants", joiner.cookie(), "{\"role\":\"PLAYER\"}");
+
+    assertThat(rejoin.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    Map<String, Object> room = mapOf(parse(rejoin), "room");
+    assertThat(numberOf(room, "playerCount")).isEqualTo(2);
+    Map<String, Object> row =
+        jdbcClient
+            .sql(
+                "select left_at, leave_reason from room_participant"
+                    + " where room_id = :roomId and user_id = :userId")
+            .param("roomId", roomId)
+            .param("userId", joiner.userId())
+            .query()
+            .singleRow();
+    assertThat(row.get("left_at")).isNull();
+    assertThat(row.get("leave_reason")).isNull();
+  }
+
+  /**
+   * {@code IMP-M2-08} Done-when: a rejoin after the grace period has expired is an ordinary join,
+   * subject to every capacity rule — not a restore of the old reservation.
+   */
+  @Test
+  void aRejoinAfterGraceExpiryIsAnOrdinaryJoinSubjectToCapacity() throws Exception {
+    Registered host = registerUser();
+    Registered disconnected = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", disconnected.cookie(), "{\"role\":\"PLAYER\"}");
+    jdbcClient
+        .sql("update room set state = 'IN_PROGRESS' where room_id = :roomId")
+        .param("roomId", roomId)
+        .update();
+    // Simulate the sweep having already resolved this player's grace reservation (room-lifecycle.md
+    // §3.2/§3.3): slot released, no reservation left.
+    jdbcClient
+        .sql(
+            "update room_participant set left_at = now(), leave_reason = 'GRACE_EXPIRED',"
+                + " lost_announced_at = now(), grace_reservation_id = null, grace_expires_at = null"
+                + " where room_id = :roomId and user_id = :userId")
+        .param("roomId", roomId)
+        .param("userId", disconnected.userId())
+        .update();
+
+    ResponseEntity<String> rejoin =
+        postWithCookie(
+            "/api/rooms/" + roomId + "/participants",
+            disconnected.cookie(),
+            "{\"role\":\"PLAYER\"}");
+
+    assertThat(rejoin.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    Map<String, Object> row =
+        jdbcClient
+            .sql(
+                "select left_at, join_order from room_participant"
+                    + " where room_id = :roomId and user_id = :userId")
+            .param("roomId", roomId)
+            .param("userId", disconnected.userId())
+            .query()
+            .singleRow();
+    assertThat(row.get("left_at")).isNull();
+    // A genuinely new join, not a restore: join_order advanced past the original join (host=1,
+    // this player's first join=2, this rejoin=3).
+    assertThat(((Number) Objects.requireNonNull(row.get("join_order"))).longValue()).isEqualTo(3L);
+  }
+
+  /** The capacity-rule half of the same clause: no free, unblocked slot means the rejoin fails. */
+  @Test
+  void aRejoinAfterGraceExpiryStillFailsWhenNoSlotIsFree() throws Exception {
+    Registered host = registerUser();
+    Registered disconnected = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", disconnected.cookie(), "{\"role\":\"PLAYER\"}");
+    jdbcClient
+        .sql("update room set state = 'IN_PROGRESS' where room_id = :roomId")
+        .param("roomId", roomId)
+        .update();
+    jdbcClient
+        .sql(
+            "update room_participant set left_at = now(), leave_reason = 'GRACE_EXPIRED',"
+                + " lost_announced_at = now(), grace_reservation_id = null, grace_expires_at = null"
+                + " where room_id = :roomId and user_id = :userId")
+        .param("roomId", roomId)
+        .param("userId", disconnected.userId())
+        .update();
+    // The vacated slot is immediately taken by an unrelated third player before the disconnected
+    // one returns — capacity applies exactly as it would to any other late join.
+    Registered third = registerUser();
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", third.cookie(), "{\"role\":\"PLAYER\"}");
+
+    ResponseEntity<String> rejoin =
+        postWithCookie(
+            "/api/rooms/" + roomId + "/participants",
+            disconnected.cookie(),
+            "{\"role\":\"PLAYER\"}");
+
+    assertThat(rejoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+  }
+
   @Test
   void aFullRoomRejectsAFurtherPlayerJoinWith422() throws Exception {
     Registered host = registerUser();

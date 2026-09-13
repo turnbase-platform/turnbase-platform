@@ -196,11 +196,25 @@ class RoomRepository {
     }
 
     long nextJoinOrder = nextJoinOrder(roomId);
+    // data-model.md §2 / room-rest-api.md §5 step 6 (IMP-GATE-50): room_participant keeps one row
+    // per (room_id, user_id) for a caller's entire history in this room, so a caller re-joining
+    // after a previous departure (LEFT, KICKED, or GRACE_EXPIRED — this method is only reached at
+    // all once step 2 above has already ruled out a live row) already owns this key. Reusing it
+    // rather than plain-inserting is what makes that ordinary case not a primary-key violation.
     jdbcClient
         .sql(
             """
-            insert into room_participant (room_id, user_id, role, team_id, join_order)
-            values (:roomId, :userId, :role, :teamId, :joinOrder)
+            insert into room_participant (room_id, user_id, role, team_id, join_order, joined_at,
+                                           connection_count, ready, left_at, leave_reason,
+                                           lost_announced_at, grace_reservation_id, grace_expires_at)
+            values (:roomId, :userId, :role, :teamId, :joinOrder, now(),
+                    0, false, null, null, null, null, null)
+            on conflict (room_id, user_id) do update
+               set role = excluded.role, team_id = excluded.team_id,
+                   join_order = excluded.join_order, joined_at = excluded.joined_at,
+                   connection_count = 0, ready = false,
+                   left_at = null, leave_reason = null, lost_announced_at = null,
+                   grace_reservation_id = null, grace_expires_at = null
             """)
         .param("roomId", roomId)
         .param("userId", userId)
@@ -1919,13 +1933,33 @@ class RoomRepository {
   }
 
   /**
-   * The mirror of {@link #registerDisconnect}'s decrement: a session subscribing to the room's
-   * topic for the first time (`room.RoomSubscriptionAuthorizer`) establishes presence. Unfenced —
-   * Postgres already serializes concurrent {@code +1}/{@code -1} updates to the same row, so this
-   * needs no {@code RoomEventExecutor} lock, and no wire event exists for it (only grace
-   * *resolution*, §3.2, is ever broadcast).
+   * {@code room-lifecycle.md} §3.2's reconnect mirror of {@link #registerDisconnect}'s decrement
+   * (`IMP-M2-08`): a session subscribing to the room's topic for the first time
+   * (`room.RoomSubscriptionAuthorizer`) establishes presence, and — guarded on an outstanding grace
+   * reservation, exactly the statement §3.2 gives — resolves it atomically with the same increment.
+   * Rowcount {@code 1} on the guarded update means this caller won the race and owns the {@code
+   * PLAYER_RECONNECTED} broadcast; {@code 0} means there was nothing to resolve (an ordinary first
+   * connection has no reservation at all), so a plain increment applies instead. Fenced — unlike
+   * the old unconditional increment, this can produce a version-bumping event, so it must run
+   * inside {@link RoomEventExecutor}'s lock like every other mutation that might publish one.
    */
-  void incrementConnectionCount(UUID roomId, UUID userId) {
+  ReconnectOutcome resolveConnect(UUID roomId, UUID userId) {
+    int reconnected =
+        jdbcClient
+            .sql(
+                """
+                update room_participant
+                   set connection_count = connection_count + 1,
+                       grace_reservation_id = null, grace_expires_at = null
+                 where room_id = :roomId and user_id = :userId
+                   and left_at is null and grace_reservation_id is not null
+                """)
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .update();
+    if (reconnected > 0) {
+      return new ReconnectOutcome.Reconnected(new PlayerReconnectedPayload(userId));
+    }
     jdbcClient
         .sql(
             "update room_participant set connection_count = connection_count + 1"
@@ -1933,6 +1967,39 @@ class RoomRepository {
         .param("roomId", roomId)
         .param("userId", userId)
         .update();
+    return new ReconnectOutcome.OrdinaryConnect();
+  }
+
+  sealed interface ReconnectOutcome {
+    record Reconnected(PlayerReconnectedPayload payload) implements ReconnectOutcome {}
+
+    record OrdinaryConnect() implements ReconnectOutcome {}
+  }
+
+  /** {@code room-websocket.md} `PLAYER_RECONNECTED` payload shape, verbatim field-for-field. */
+  record PlayerReconnectedPayload(UUID playerId) {}
+
+  /**
+   * {@code room-websocket.md} Authorization Model, {@code IMP-GATE-51}: a {@code SUBSCRIBE} from a
+   * non-member is a stranger to the room in the ordinary case (silent drop), but {@code
+   * data-model.md} §2's row-reuse rule (`IMP-GATE-50`) means this caller's own history in the room
+   * — if any — lives in exactly one row, so its {@code leave_reason} is inspectable. {@code
+   * GRACE_EXPIRED} specifically means the caller lost the race to their own grace expiry, which is
+   * told to the client (FR-REJOIN-007) rather than left to read as "room not found." Every other
+   * terminal reason is an intentional past departure and stays a silent drop.
+   */
+  boolean lostRaceToOwnExpiry(UUID roomId, UUID userId) {
+    Boolean lost =
+        jdbcClient
+            .sql(
+                "select left_at is not null and leave_reason = 'GRACE_EXPIRED'"
+                    + " from room_participant where room_id = :roomId and user_id = :userId")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(Boolean.class)
+            .optional()
+            .orElse(false);
+    return Boolean.TRUE.equals(lost);
   }
 
   boolean isConnected(UUID roomId, UUID userId) {

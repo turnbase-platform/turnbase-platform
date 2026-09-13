@@ -84,6 +84,15 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
       return new SubscriptionDecision.SilentlyDrop();
     }
     if (!repository.isCurrentParticipant(roomId, user.userId())) {
+      // IMP-GATE-51: a caller who lost the race to their own grace expiry is told plainly
+      // (FR-REJOIN-007) rather than left to read silence as "room not found." Every other
+      // non-member — a stranger, or an intentional past departure — stays a silent drop.
+      if (repository.lostRaceToOwnExpiry(roomId, user.userId())) {
+        return new SubscriptionDecision.RejectWithError(
+            "SLOT_RELEASED",
+            "Your reservation expired before you reconnected. Rejoin as a new participant.",
+            0);
+      }
       return new SubscriptionDecision.SilentlyDrop();
     }
 
@@ -94,12 +103,14 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
           .computeIfAbsent(roomId, id -> ConcurrentHashMap.newKeySet())
           .add(stompSessionId);
       // room-lifecycle.md §1.1: connection_count is a refcount over a user's concurrent
-      // connections (FR-GRACE-006), incremented once per session that subscribes to this room's
-      // topic — the mirror of registerDisconnect's decrement. Guarded so a session re-subscribing
-      // to the same topic (a client retry, not a new tab) is not counted twice.
+      // connections (FR-GRACE-006), resolved once per session that subscribes to this room's
+      // topic — the mirror of registerDisconnect's decrement, and (room-lifecycle.md §3.2,
+      // IMP-M2-08) the reconnect resolution when a grace reservation is outstanding. Guarded so a
+      // session re-subscribing to the same topic (a client retry, not a new tab) is not counted
+      // twice.
       if (membershipBySession.put(stompSessionId, new RoomMembership(roomId, user.userId()))
           == null) {
-        repository.incrementConnectionCount(roomId, user.userId());
+        roomService.onConnect(roomId, user.userId());
       }
       return new SubscriptionDecision.Allow();
     }

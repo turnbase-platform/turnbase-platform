@@ -189,6 +189,36 @@ class RoomService {
   }
 
   // ---------------------------------------------------------------------
+  // Reconnect (IMP-M2-08, room-lifecycle.md §3.2, flows/04-disconnect-and-return.md §C1). Called by
+  // room.RoomSubscriptionAuthorizer on a session's first SUBSCRIBE to the room topic — the mirror
+  // call site of onDisconnect's first-decrement.
+  // ---------------------------------------------------------------------
+
+  /**
+   * A lost claim between the authorizer's own re-verification and this call is the same quiet no-op
+   * {@link #onDisconnect} already accepts: the new owner's adoption or its own sweep repairs {@code
+   * connection_count} and any grace state this session's presence should have resolved.
+   */
+  void onConnect(UUID roomId, UUID userId) {
+    try {
+      events.execute(
+          roomId,
+          () -> {
+            RoomRepository.ReconnectOutcome outcome = repository.resolveConnect(roomId, userId);
+            RoomEventExecutor.RoomEvent event =
+                switch (outcome) {
+                  case RoomRepository.ReconnectOutcome.Reconnected reconnected ->
+                      new RoomEventExecutor.RoomEvent("PLAYER_RECONNECTED", reconnected.payload());
+                  case RoomRepository.ReconnectOutcome.OrdinaryConnect ignored -> null;
+                };
+            return new RoomEventExecutor.MutationOutcome<>(outcome, event);
+          });
+    } catch (RoomUnavailableRetryException e) {
+      // Quiet no-op — see method Javadoc.
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // STOMP member commands (room-websocket.md, IMP-M2-05). Every call already runs on the owning
   // pod (subscribe-time re-verification, IMP-M2-02's RoomSubscriptionAuthorizer) — events.execute
   // still resolves the epoch fresh, so a claim lost between subscribe and this command surfaces as
