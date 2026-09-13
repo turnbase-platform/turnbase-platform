@@ -181,6 +181,15 @@ jobs:
         working-directory: turnbase-game-host
         run: ./mvnw --batch-mode --no-transfer-progress package -DskipTests
 
+      - name: Build turnbase-platform
+        # Same "jobs share nothing" reasoning as the turnbase-common install step above:
+        # `needs: build` only orders this job after `build`, it does not carry that job's
+        # target/ over — this is a separate, fresh runner. Without this step,
+        # e2e-smoke.sh's `docker compose up --build` fails at this Dockerfile's own
+        # `COPY target/turnbase-platform-*.jar app.jar` with `lstat /target: no such file or
+        # directory`, since nothing here has ever produced that jar.
+        run: ./mvnw --batch-mode --no-transfer-progress package -DskipTests
+
       - name: Run the e2e smoke test
         env:
           TURNBASE_GAME_HOST_DIR: ${{ github.workspace }}/turnbase-game-host
