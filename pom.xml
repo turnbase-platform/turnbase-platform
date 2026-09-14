@@ -127,6 +127,13 @@
       stays a patch bump, not a Netty major-version jump.
     -->
     <netty.version>4.1.137.Final</netty.version>
+
+    <!--
+      IMP-M4-02: Layer 1 of manifest validation (manifest-schema.md § Validation) is
+      manifest.schema.json itself, run by an engine rather than hand-written per-field checks —
+      the schema is Draft 2020-12, which json-schema-validator has supported since 1.0.87.
+    -->
+    <json-schema-validator.version>1.5.8</json-schema-validator.version>
   </properties>
 
   <dependencyManagement>
@@ -280,6 +287,16 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
       <version>${aws-sdk.version}</version>
+    </dependency>
+
+    <!--
+      IMP-M4-02: Draft 2020-12 JSON Schema evaluation against the committed
+      manifest.schema.json copy (below).
+    -->
+    <dependency>
+      <groupId>com.networknt</groupId>
+      <artifactId>json-schema-validator</artifactId>
+      <version>${json-schema-validator.version}</version>
     </dependency>
 
     <!-- IMP-M1-05: the guest purge job's cross-instance mutual exclusion (FR-JOB-005). -->

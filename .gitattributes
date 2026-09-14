@@ -5,4 +5,10 @@
 .githooks/* text eol=lf
 mvnw text eol=lf
 mvnw.cmd text eol=crlf
+
+# Byte-compared against the authoritative spec file by scripts/sync-manifest-schema.sh
+# --check in the parent repo (conventions.md §5, IMP-GATE-60) — same reason as *.proto's
+# pin in turnbase-common.
+src/main/resources/manifest/manifest.schema.json text eol=lf
+
 *.jar binary

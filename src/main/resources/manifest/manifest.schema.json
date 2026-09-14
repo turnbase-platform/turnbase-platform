@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://turnbase.io/schemas/manifest/1/manifest.schema.json",
+  "title": "TurnBase Game Manifest",
+  "description": "Normative schema for the manifest.json at the root of a TurnBase game bundle. Single source of truth for game metadata, capabilities, entry points, team templates, and host-configurable parameters. Realizes FR-MANIFEST-001 through FR-MANIFEST-009. Cross-field rules that JSON Schema cannot express (range ordering, default-in-range, default-in-options, parameter-key uniqueness, conditional team name) are enforced as supplementary programmatic checks documented in manifest-schema.md. Unknown keys are permitted (lenient) and surfaced as non-fatal warnings by the validator.",
+  "type": "object",
+  "required": [
+    "manifestVersion",
+    "title",
+    "shortDescription",
+    "version",
+    "gdkApiVersion",
+    "runtime",
+    "backend",
+    "frontend",
+    "tags",
+    "capabilities",
+    "teamTemplates"
+  ],
+  "properties": {
+    "manifestVersion": {
+      "description": "Schema revision of this manifest document. Currently only \"1\" is supported; unknown versions are rejected.",
+      "const": "1"
+    },
+    "title": {
+      "description": "Game display name.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "shortDescription": {
+      "description": "One-line summary shown in the catalog and as the info-section fallback.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "version": {
+      "description": "Game version, x.y.z with numeric segments only (game-catalog.md FR-GAME-009).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "gdkApiVersion": {
+      "description": "Version of the GDK API the game was built against, x.y.z (FR-GDK-016). Compatibility against platform-supported ranges is checked by the upload pipeline, not by this schema.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "runtime": {
+      "description": "Backend runtime that determines how the backend component is interpreted (FR-BUNDLE-007). Only \"jvm\" is supported initially.",
+      "type": "string",
+      "enum": ["jvm"]
+    },
+    "backend": {
+      "description": "Backend component descriptor. Runtime-agnostic shape: path locates the artifact in the archive; entryPoint is interpreted per runtime (for jvm, the fully qualified class implementing TurnBaseGame — FR-MANIFEST-008).",
+      "type": "object",
+      "required": ["path", "entryPoint"],
+      "properties": {
+        "path": {
+          "description": "Relative path within the bundle to the backend artifact (for jvm, the fat JAR).",
+          "type": "string",
+          "minLength": 1
+        },
+        "entryPoint": {
+          "description": "Runtime-interpreted entry identifier. For jvm: fully qualified class name, e.g. com.example.ChessGame.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "frontend": {
+      "description": "Frontend component descriptor.",
+      "type": "object",
+      "required": ["entryPoint"],
+      "properties": {
+        "entryPoint": {
+          "description": "Relative path within the bundle to the JavaScript entry file, e.g. frontend/main.js (FR-MANIFEST-009).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "infoDoc": {
+      "description": "Optional relative path within the bundle to a Markdown info/rules document (FR-MANIFEST-007, FR-BUNDLE-005).",
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "description": "1–10 free-form tags, each 1–24 characters (FR-MANIFEST-006, game-catalog.md FR-GAME-003).",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 24
+      }
+    },
+    "capabilities": {
+      "description": "Boolean capability flags (FR-MANIFEST-003).",
+      "type": "object",
+      "required": ["ai", "spectators", "midGameJoin"],
+      "properties": {
+        "ai": {
+          "description": "Whether the game supports AI (bot) players.",
+          "type": "boolean"
+        },
+        "spectators": {
+          "description": "Whether the game supports the spectator role.",
+          "type": "boolean"
+        },
+        "midGameJoin": {
+          "description": "Whether players may join a session already in progress.",
+          "type": "boolean"
+        }
+      }
+    },
+    "teamTemplates": {
+      "description": "Team templates defining the game's team structure (FR-MANIFEST-002, game-rooms.md FR-TEAM). At least one entry. When more than one entry is declared, each must declare a name (supplementary check).",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/teamTemplate" }
+    },
+    "parameters": {
+      "description": "Optional host-configurable parameters (FR-MANIFEST-004, FR-MANIFEST-005). Keys must be unique across the array (supplementary check).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameter" }
+    }
+  },
+  "$defs": {
+    "range": {
+      "description": "Inclusive integer range. max >= min is enforced as a supplementary check.",
+      "type": "object",
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 1 },
+        "max": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "teamTemplate": {
+      "type": "object",
+      "required": ["size", "count"],
+      "properties": {
+        "name": {
+          "description": "Display name for teams of this type. Required when multiple templates are declared (supplementary check); defaults to \"Team\" for a single template.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "size": {
+          "description": "Players-per-team range.",
+          "$ref": "#/$defs/range"
+        },
+        "count": {
+          "description": "Number-of-teams range for this template.",
+          "$ref": "#/$defs/range"
+        }
+      }
+    },
+    "parameter": {
+      "description": "A host-configurable parameter. Type-specific fields and cross-field rules (default within range / among options) are detailed in manifest-schema.md.",
+      "type": "object",
+      "required": ["key", "displayName", "type", "default"],
+      "properties": {
+        "key": {
+          "description": "Unique identifier used by the backend GameParameters accessors.",
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$",
+          "maxLength": 40
+        },
+        "displayName": {
+          "description": "Human-readable label shown in the lobby parameter UI.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "type": {
+          "type": "string",
+          "enum": ["integer", "decimal", "boolean", "string", "enum"]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "integer" } } },
+          "then": {
+            "required": ["min", "max", "default"],
+            "properties": {
+              "min": { "type": "integer" },
+              "max": { "type": "integer" },
+              "default": { "type": "integer" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "decimal" } } },
+          "then": {
+            "required": ["min", "max", "default"],
+            "properties": {
+              "min": { "type": "number" },
+              "max": { "type": "number" },
+              "default": { "type": "number" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "boolean" } } },
+          "then": {
+            "properties": {
+              "default": { "type": "boolean" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "string" } } },
+          "then": {
+            "properties": {
+              "maxLength": { "type": "integer", "minimum": 1 },
+              "default": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "enum" } } },
+          "then": {
+            "required": ["options", "default"],
+            "properties": {
+              "options": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "default": { "type": "string" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
