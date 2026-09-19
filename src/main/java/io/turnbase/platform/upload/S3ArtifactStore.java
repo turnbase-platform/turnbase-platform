@@ -69,10 +69,14 @@ class S3ArtifactStore implements ArtifactStore {
   @Override
   public Path downloadToTempFile(String key) {
     try {
-      Path temp = Files.createTempFile("turnbase-bundle-", ".zip");
+      // getObject(request, Path) refuses to write to a path that already exists (it opens with
+      // CREATE_NEW), so the destination must be a path inside a fresh temp directory rather than
+      // Files.createTempFile itself, which pre-creates the (empty) file.
+      Path tempDir = Files.createTempDirectory("turnbase-bundle-");
+      Path destination = tempDir.resolve("bundle.zip");
       s3Client.getObject(
-          GetObjectRequest.builder().bucket(properties.bucket()).key(key).build(), temp);
-      return temp;
+          GetObjectRequest.builder().bucket(properties.bucket()).key(key).build(), destination);
+      return destination;
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }

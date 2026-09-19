@@ -7,6 +7,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /**
@@ -42,6 +43,11 @@ public class ArtifactStoreConfig {
         .credentialsProvider(
             StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(properties.accessKey(), properties.secretKey())))
+        // Must match S3Client's forcePathStyle(true) above: a presigned URL computed for
+        // virtual-hosted-style addressing (bucket.endpoint/key) signs a different canonical
+        // request than the path-style URL (endpoint/bucket/key) the client actually PUTs to,
+        // which MinIO — and this presigner, without this line — otherwise produces by default.
+        .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
         .build();
   }
 }
