@@ -67,6 +67,12 @@ class BackendJarAnalyzer {
           continue;
         }
       }
+      if (entry.data().length < 8) {
+        f2Errors.add(
+            new CheckError(
+                "backend.classVersion", "'" + name + "' is not a valid class file (too short)."));
+        continue;
+      }
       int major = ClassFileUtil.classFileMajorVersion(entry.data());
       if (major > MAX_CLASS_FILE_MAJOR) {
         f2Errors.add(
