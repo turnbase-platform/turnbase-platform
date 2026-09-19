@@ -28,6 +28,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * controller lives only on the test classpath (never shipped, {@code IMP-M1-01}) and exercises
  * {@code GlobalExceptionHandler} directly — NFR-SEC-006 governs platform endpoints, and this isn't
  * one.
+ *
+ * <p>{@code /g/} and {@code /play/} ({@code IMP-M4-04}) are a third: {@code game-asset-serving.md}
+ * §4.2 requires the games origin to receive no cookies at all, so these two routes cannot require a
+ * session by construction, not merely by choice — {@code GameOriginRoutingInterceptor} (common) has
+ * already confirmed the request actually arrived on a game origin before this interceptor ever
+ * runs.
  */
 class SessionAuthenticationInterceptor implements HandlerInterceptor {
 
@@ -43,6 +49,8 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
           "/api/auth/oauth/link-challenge");
   private static final String TEST_HARNESS_PREFIX = "/test/";
   private static final String USERS_PATH_PREFIX = "/api/users/";
+  private static final String GAME_ASSET_PREFIX = "/g/";
+  private static final String GAME_BOOTSTRAP_PREFIX = "/play/";
 
   @Override
   public boolean preHandle(
@@ -53,6 +61,8 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
     String path = pathOf(request);
     if (PUBLIC_PATHS.contains(path)
         || path.startsWith(TEST_HARNESS_PREFIX)
+        || path.startsWith(GAME_ASSET_PREFIX)
+        || path.startsWith(GAME_BOOTSTRAP_PREFIX)
         || isPublicProfileRead(request, path)) {
       return true;
     }

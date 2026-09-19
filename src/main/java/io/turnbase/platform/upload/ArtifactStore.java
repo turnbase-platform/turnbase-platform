@@ -30,6 +30,16 @@ interface ArtifactStore {
   Optional<Long> sizeOf(String key);
 
   /**
+   * {@code contentType} is whatever {@link #put}/{@link #putFile} recorded for this key — the
+   * single source of truth for the fixed extension-to-content-type map is publication time ({@code
+   * PublicationService}), not re-derived at serve time.
+   */
+  record StoredObject(byte[] data, String contentType) {}
+
+  /** Empty when the object does not exist. */
+  Optional<StoredObject> get(String key);
+
+  /**
    * Downloads the object to a temp file for random-access reading (the ZIP central directory cannot
    * be read from a forward-only stream). Caller deletes the file when done.
    */

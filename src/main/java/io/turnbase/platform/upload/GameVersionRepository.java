@@ -50,6 +50,23 @@ class GameVersionRepository {
   }
 
   /**
+   * {@code bundle-format.md} §5.3 — a version's unpacked tree is servable exactly when its status
+   * is {@code ACTIVE} or {@code SUPERSEDED} (the latter for FR-ASSET-007's version pinning: a room
+   * mid-game must keep serving the version it started with) and its bundle has not been purged.
+   */
+  boolean isServable(UUID gameId, String version) {
+    return jdbcClient
+        .sql(
+            "select 1 from game_version where game_id = :gameId and version = :version"
+                + " and status in ('ACTIVE', 'SUPERSEDED') and bundle_purged_at is null")
+        .param("gameId", gameId)
+        .param("version", version)
+        .query(Integer.class)
+        .optional()
+        .isPresent();
+  }
+
+  /**
    * For A2's advisory ordering check — the three integers of the current {@code ACTIVE} row, if one
    * exists.
    */

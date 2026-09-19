@@ -12,7 +12,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * Wires the cross-cutting mechanisms this item and {@code IMP-M1-02} build into every controller in
- * the app: {@link OriginCheckInterceptor} (CSRF's second layer, ordered first so it runs "before
+ * the app: {@link GameOriginRoutingInterceptor} ({@code game-asset-serving.md} §4/§9 invariant 1,
+ * ordered before everything else so a misrouted request never reaches authentication or the
+ * handler), {@link OriginCheckInterceptor} (CSRF's second layer, ordered next so it runs "before
  * authentication" per {@code rest-conventions.md} regardless of {@code
  * session.SessionWebMvcConfig}'s own registration order), {@link RequestSizeInterceptor} (the
  * request-size gate), {@link RateLimitInterceptor} (Tiers 1-5) and the {@code Pageable} resolver
@@ -26,21 +28,28 @@ public class PlatformWebMvcConfig implements WebMvcConfigurer {
   private final PaginationProperties paginationProperties;
   private final RateLimitInterceptor rateLimitInterceptor;
   private final OriginCheckInterceptor originCheckInterceptor;
+  private final GameOriginRoutingInterceptor gameOriginRoutingInterceptor;
 
   public PlatformWebMvcConfig(
       HttpProperties httpProperties,
       PaginationProperties paginationProperties,
       RateLimitInterceptor rateLimitInterceptor,
-      OriginCheckInterceptor originCheckInterceptor) {
+      OriginCheckInterceptor originCheckInterceptor,
+      GameOriginRoutingInterceptor gameOriginRoutingInterceptor) {
     this.httpProperties = httpProperties;
     this.paginationProperties = paginationProperties;
     this.rateLimitInterceptor = rateLimitInterceptor;
     this.originCheckInterceptor = originCheckInterceptor;
+    this.gameOriginRoutingInterceptor = gameOriginRoutingInterceptor;
   }
 
   @Override
   public void addInterceptors(InterceptorRegistry registry) {
-    registry.addInterceptor(originCheckInterceptor).order(Ordered.HIGHEST_PRECEDENCE);
+    // HIGHEST_PRECEDENCE is Integer.MIN_VALUE — subtracting from it would overflow to
+    // Integer.MAX_VALUE (lowest precedence), so gameOriginRoutingInterceptor takes the highest
+    // slot itself and originCheckInterceptor moves one step down instead.
+    registry.addInterceptor(gameOriginRoutingInterceptor).order(Ordered.HIGHEST_PRECEDENCE);
+    registry.addInterceptor(originCheckInterceptor).order(Ordered.HIGHEST_PRECEDENCE + 1);
     registry.addInterceptor(new RequestSizeInterceptor(httpProperties));
     registry.addInterceptor(rateLimitInterceptor);
   }

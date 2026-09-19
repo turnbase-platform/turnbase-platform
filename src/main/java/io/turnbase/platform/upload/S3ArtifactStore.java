@@ -11,12 +11,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
@@ -79,6 +82,23 @@ class S3ArtifactStore implements ArtifactStore {
       return destination;
     } catch (IOException e) {
       throw new UncheckedIOException(e);
+    }
+  }
+
+  @Override
+  public Optional<StoredObject> get(String key) {
+    try {
+      ResponseBytes<GetObjectResponse> response =
+          s3Client.getObject(
+              GetObjectRequest.builder().bucket(properties.bucket()).key(key).build(),
+              ResponseTransformer.toBytes());
+      String contentType = response.response().contentType();
+      return Optional.of(
+          new StoredObject(
+              response.asByteArray(),
+              contentType != null ? contentType : "application/octet-stream"));
+    } catch (NoSuchKeyException e) {
+      return Optional.empty();
     }
   }
 

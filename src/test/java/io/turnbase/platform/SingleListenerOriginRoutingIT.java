@@ -15,9 +15,17 @@ import org.springframework.context.ConfigurableApplicationContext;
 /**
  * local-environment.md §1 "Both origins are one listener": {@code turnbase.localhost} and {@code
  * {gameId}.games.localhost} are different registrable domains served by the same process on the
- * same port, routed by Host header — no second port, no second deployment. Proven at the socket
- * level because {@code java.net.http.HttpClient} (and {@code HttpURLConnection}) both refuse to let
- * a caller set the Host header themselves, since it names a "restricted" header.
+ * same port — no second port, no second deployment. Proven at the socket level because {@code
+ * java.net.http.HttpClient} (and {@code HttpURLConnection}) both refuse to let a caller set the
+ * Host header themselves, since it names a "restricted" header.
+ *
+ * <p>Both requests connecting to the identical port and each getting back a real HTTP response is
+ * what proves "one listener" — it does not mean the two Host values are routed identically. {@code
+ * game-asset-serving.md} §4/§9 invariant 1 ({@code IMP-M4-04}) requires the opposite: the {@code
+ * Host} header alone must decide which set of routes a request may reach, so a path neither
+ * origin's route table covers (a plain {@code GET /}) is expected to fail two different ways — a
+ * game origin 404s on anything outside {@code /play/}/{@code /g/} before authentication is even
+ * considered, while the platform origin falls through to its ordinary "session required" 401.
  */
 class SingleListenerOriginRoutingIT extends PostgresIntegrationTest {
 
@@ -44,9 +52,10 @@ class SingleListenerOriginRoutingIT extends PostgresIntegrationTest {
       String platformStatus = statusLineFor(port, "turnbase.localhost:8080");
       String gameStatus = statusLineFor(port, "some-game.games.localhost:8080");
 
-      // Same listener, same routing: neither Host header changes what answers.
-      assertThat(platformStatus).isEqualTo(gameStatus);
+      // Same listener: both Host values reach a real HTTP server on the identical port (a
+      // different listener would refuse the connection outright for at least one of them).
       assertThat(platformStatus).contains("HTTP/1.1");
+      assertThat(gameStatus).contains("HTTP/1.1");
     } finally {
       context.close();
     }
