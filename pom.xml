@@ -134,6 +134,14 @@
       the schema is Draft 2020-12, which json-schema-validator has supported since 1.0.87.
     -->
     <json-schema-validator.version>1.5.8</json-schema-validator.version>
+
+    <!--
+      IMP-M4-03: Phase F's static bytecode inspection (class file major version, TurnBaseGame
+      entry-point resolution, generic-signature parsing for the state type S, MethodParameters
+      attribute presence for F6/F7). Read-only structural analysis, not classloading — ASM's
+      Core API (ClassReader/ClassVisitor) plus the Tree API for signature/generic inspection.
+    -->
+    <asm.version>9.7.1</asm.version>
   </properties>
 
   <dependencyManagement>
@@ -297,6 +305,18 @@
       <groupId>com.networknt</groupId>
       <artifactId>json-schema-validator</artifactId>
       <version>${json-schema-validator.version}</version>
+    </dependency>
+
+    <!-- IMP-M4-03: Phase F bytecode inspection (see the asm.version property above). -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm</artifactId>
+      <version>${asm.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-tree</artifactId>
+      <version>${asm.version}</version>
     </dependency>
 
     <!-- IMP-M1-05: the guest purge job's cross-instance mutual exclusion (FR-JOB-005). -->

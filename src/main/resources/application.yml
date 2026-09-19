@@ -130,6 +130,18 @@ turnbase:
     max-bundle-size: ${TURNBASE_UPLOADS_MAX_BUNDLE_SIZE:256MB}
     slot-ttl: ${TURNBASE_UPLOADS_SLOT_TTL:1h}
     validation-lease: ${TURNBASE_UPLOADS_VALIDATION_LEASE:10m}
+    max-uncompressed-size: ${TURNBASE_UPLOADS_MAX_UNCOMPRESSED_SIZE:1GB}
+    max-entry-uncompressed-size: ${TURNBASE_UPLOADS_MAX_ENTRY_UNCOMPRESSED_SIZE:256MB}
+    max-compression-ratio: ${TURNBASE_UPLOADS_MAX_COMPRESSION_RATIO:100}
+    max-entry-count: ${TURNBASE_UPLOADS_MAX_ENTRY_COUNT:20000}
+    max-info-doc-size: ${TURNBASE_UPLOADS_MAX_INFO_DOC_SIZE:1MB}
+  gdk:
+    # bundle-format.md §6.1/§8: the MVP's supported range is an assertion against the deployed
+    # guest bridge JAR's own declared GDK version. No guest bridge or Game Host client exists in
+    # this repo yet (IMP-M4-03's read-list excludes game-host-internals.md), so this is a
+    # configured value rather than a startup assertion against a real artifact — see IMP-M4-03's
+    # session report for the scope note.
+    supported-range: ${TURNBASE_GDK_SUPPORTED_RANGE:0.3.0-0.3.0}
   http:
     max-body-size: ${TURNBASE_HTTP_MAX_BODY_SIZE:64KB}
   rate-limit:
