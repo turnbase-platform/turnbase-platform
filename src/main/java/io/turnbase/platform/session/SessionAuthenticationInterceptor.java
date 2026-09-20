@@ -34,6 +34,11 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * session by construction, not merely by choice — {@code GameOriginRoutingInterceptor} (common) has
  * already confirmed the request actually arrived on a game origin before this interceptor ever
  * runs.
+ *
+ * <p>{@code GET /api/games} and {@code GET /api/games/{gameId}} ({@code IMP-M4-01}) are the fourth
+ * — the game catalog and game detail pages NFR-SEC-006 already named as exempt, now that they have
+ * a route ({@code catalog-rest-api.md} §1). A session is still read when present, to resolve the
+ * owner-visibility carve-out ({@code catalog-rest-api.md} §2); it is merely not required.
  */
 class SessionAuthenticationInterceptor implements HandlerInterceptor {
 
@@ -46,11 +51,13 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
           "/auth/callback",
           "/api/auth/oauth/pending",
           "/api/auth/oauth/complete-registration",
-          "/api/auth/oauth/link-challenge");
+          "/api/auth/oauth/link-challenge",
+          "/api/games");
   private static final String TEST_HARNESS_PREFIX = "/test/";
   private static final String USERS_PATH_PREFIX = "/api/users/";
   private static final String GAME_ASSET_PREFIX = "/g/";
   private static final String GAME_BOOTSTRAP_PREFIX = "/play/";
+  private static final String GAMES_PATH_PREFIX = "/api/games/";
 
   @Override
   public boolean preHandle(
@@ -63,10 +70,24 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
         || path.startsWith(TEST_HARNESS_PREFIX)
         || path.startsWith(GAME_ASSET_PREFIX)
         || path.startsWith(GAME_BOOTSTRAP_PREFIX)
-        || isPublicProfileRead(request, path)) {
+        || isPublicProfileRead(request, path)
+        || isPublicGameDetailRead(request, path)) {
       return true;
     }
     throw new UnauthenticatedException(detailFor(failureReasonOf(request)));
+  }
+
+  /**
+   * {@code catalog-rest-api.md} §1's {@code GET /api/games/{gameId}} — a single path segment after
+   * the prefix, {@code GET} only. {@code /api/games} itself (no trailing segment, the listing) is
+   * matched by {@link #PUBLIC_PATHS} instead.
+   */
+  private static boolean isPublicGameDetailRead(HttpServletRequest request, String path) {
+    if (!"GET".equalsIgnoreCase(request.getMethod()) || !path.startsWith(GAMES_PATH_PREFIX)) {
+      return false;
+    }
+    String rest = path.substring(GAMES_PATH_PREFIX.length());
+    return !rest.isEmpty() && !rest.contains("/");
   }
 
   /**
