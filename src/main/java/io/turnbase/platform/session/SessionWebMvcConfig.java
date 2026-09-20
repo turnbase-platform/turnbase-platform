@@ -15,6 +15,13 @@ class SessionWebMvcConfig implements WebMvcConfigurer {
 
   @Override
   public void addInterceptors(InterceptorRegistry registry) {
-    registry.addInterceptor(new SessionAuthenticationInterceptor());
+    // The admin management child context inherits this bean via the hierarchical bean factory
+    // (WebMvcConfigurer collection autowiring searches parent contexts too), so without this
+    // exclusion /admin/** would additionally be rejected for lacking a session cookie — on top of,
+    // and ahead of, admin.AdminBasicAuthInterceptor's own check. /admin/** authenticates by HTTP
+    // Basic only (admin-tooling.md FR-ADM-002); it is never session-authenticated.
+    registry
+        .addInterceptor(new SessionAuthenticationInterceptor())
+        .excludePathPatterns("/admin/**");
   }
 }

@@ -48,10 +48,24 @@ public class PlatformWebMvcConfig implements WebMvcConfigurer {
     // HIGHEST_PRECEDENCE is Integer.MIN_VALUE — subtracting from it would overflow to
     // Integer.MAX_VALUE (lowest precedence), so gameOriginRoutingInterceptor takes the highest
     // slot itself and originCheckInterceptor moves one step down instead.
-    registry.addInterceptor(gameOriginRoutingInterceptor).order(Ordered.HIGHEST_PRECEDENCE);
-    registry.addInterceptor(originCheckInterceptor).order(Ordered.HIGHEST_PRECEDENCE + 1);
-    registry.addInterceptor(new RequestSizeInterceptor(httpProperties));
-    registry.addInterceptor(rateLimitInterceptor);
+    //
+    // /admin/** is excluded from all four: this bean is also visible to the admin management child
+    // context (WebMvcConfigurer collection autowiring searches parent contexts too), and none of
+    // game-origin routing, browser-CSRF origin checks, the public request-size gate or the public
+    // rate limiter apply to the operator surface — it is a separate listener, authenticated only by
+    // admin.AdminBasicAuthInterceptor.
+    registry
+        .addInterceptor(gameOriginRoutingInterceptor)
+        .order(Ordered.HIGHEST_PRECEDENCE)
+        .excludePathPatterns("/admin/**");
+    registry
+        .addInterceptor(originCheckInterceptor)
+        .order(Ordered.HIGHEST_PRECEDENCE + 1)
+        .excludePathPatterns("/admin/**");
+    registry
+        .addInterceptor(new RequestSizeInterceptor(httpProperties))
+        .excludePathPatterns("/admin/**");
+    registry.addInterceptor(rateLimitInterceptor).excludePathPatterns("/admin/**");
   }
 
   @Override

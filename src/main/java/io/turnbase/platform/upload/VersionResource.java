@@ -10,7 +10,7 @@ import java.util.UUID;
  * bundle-format.md} §3.4: the version's state is the state of a resource, never a Problem Detail,
  * whatever the {@code status} value.
  */
-record VersionResource(
+public record VersionResource(
     UUID uploadId,
     String version,
     GameVersionStatus status,

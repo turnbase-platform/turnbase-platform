@@ -5,4 +5,4 @@ import java.time.Instant;
 import java.util.UUID;
 
 /** {@code file-uploads.md} step 1's {@code 201} body. */
-record CreateVersionResponse(UUID uploadId, URI uploadUrl, Instant expiresAt) {}
+public record CreateVersionResponse(UUID uploadId, URI uploadUrl, Instant expiresAt) {}

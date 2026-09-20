@@ -1,14 +1,10 @@
 package io.turnbase.platform.upload;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -16,8 +12,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -176,11 +170,20 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   // ---------------------------------------------------------------- Phases B-G: async, never an
   // HTTP error
 
+  /**
+   * {@code admin-rest-api.md} §4 / IMP-M4-05: E4's second condition — {@code runtime: "jvm"} is
+   * legal only for a confirm that arrived through the admin listener's own mirror route. Before
+   * IMP-M4-05 built that route, this test (then named {@code aFullyValidBundleActivates}) proved
+   * the pipeline could activate a valid Official/{@code jvm} bundle through this, the public,
+   * session-authenticated route — the only route that existed at the time. That is no longer legal:
+   * the full end-to-end activation proof now lives in {@code AdminUploadControllerIT}, which
+   * confirms through the admin listener instead.
+   */
   @Test
-  void aFullyValidBundleActivates() throws Exception {
+  void officialJvmBundleViaThePublicRouteFailsRuntimeTrust() throws Exception {
     Registered dev = registerUser();
     UUID gameId = seedOfficialGame();
-    byte[] bundle = validBundle("1.0.0");
+    byte[] bundle = TestBundles.validChessBundle("1.0.0");
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", bundle.length));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
     putBundle(requiredString(slot, "uploadUrl"), bundle);
@@ -190,22 +193,15 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
 
     VersionResourceView finalView = pollUntilTerminal(gameId, uploadId, dev.cookie());
 
-    assertThat(finalView.status()).as("errors=%s", finalView.errors()).isEqualTo("ACTIVE");
-    assertThat(finalView.errors()).isEmpty();
-    String activeVersionTitle =
-        jdbcClient
-            .sql("select title from game where game_id = :id")
-            .param("id", gameId)
-            .query(String.class)
-            .single();
-    assertThat(activeVersionTitle).isEqualTo("Chess");
+    assertThat(finalView.status()).as("errors=%s", finalView.errors()).isEqualTo("FAILED");
+    assertThat(finalView.errors()).contains("bundle.runtime.trust");
   }
 
   @Test
   void asyncFailuresSurfaceOnlyAsTheVersionResourceNeverAsAnHttpError() throws Exception {
     Registered dev = registerUser();
     UUID gameId = seedOfficialGame();
-    byte[] bundle = bundleMissingFrontendEntry("1.0.0");
+    byte[] bundle = TestBundles.chessBundleMissingFrontendEntry("1.0.0");
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", bundle.length));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
     putBundle(requiredString(slot, "uploadUrl"), bundle);
@@ -227,7 +223,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   void aFailedVersionNumberIsReclaimable() throws Exception {
     Registered dev = registerUser();
     UUID gameId = seedOfficialGame();
-    byte[] bad = bundleMissingFrontendEntry("1.0.0");
+    byte[] bad = TestBundles.chessBundleMissingFrontendEntry("1.0.0");
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", bad.length));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
     putBundle(requiredString(slot, "uploadUrl"), bad);
@@ -369,84 +365,6 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
         .param("vid", versionId)
         .param("id", gameId)
         .update();
-  }
-
-  private byte[] validBundle(String version) {
-    Map<String, byte[]> classes = compileChessClasses();
-    byte[] backendJar =
-        zipOf(
-            Map.of(
-                "com/example/ChessGame.class",
-                classes.get("com/example/ChessGame"),
-                "com/example/ChessState.class",
-                classes.get("com/example/ChessState")));
-    String manifest = chessManifest(version, "frontend/main.js");
-    return zipOf(
-        Map.of(
-            "manifest.json", manifest.getBytes(UTF_8),
-            "backend/game.jar", backendJar,
-            "frontend/main.js", "console.log('hi');".getBytes(UTF_8)));
-  }
-
-  private byte[] bundleMissingFrontendEntry(String version) {
-    Map<String, byte[]> classes = compileChessClasses();
-    byte[] backendJar =
-        zipOf(
-            Map.of(
-                "com/example/ChessGame.class",
-                classes.get("com/example/ChessGame"),
-                "com/example/ChessState.class",
-                classes.get("com/example/ChessState")));
-    String manifest = chessManifest(version, "frontend/does-not-exist.js");
-    return zipOf(Map.of("manifest.json", manifest.getBytes(UTF_8), "backend/game.jar", backendJar));
-  }
-
-  private static Map<String, byte[]> compileChessClasses() {
-    return TestJavaCompiler.compile(
-        true,
-        Map.of(
-            "io.turnbase.gdk.TurnBaseGame",
-                "package io.turnbase.gdk; public interface TurnBaseGame<S> {}",
-            "com.example.ChessState",
-                "package com.example; public record ChessState(String board) {}",
-            "com.example.ChessGame",
-                "package com.example; public final class ChessGame implements io.turnbase.gdk.TurnBaseGame<ChessState> {"
-                    + " public ChessGame() {} }"));
-  }
-
-  private static String chessManifest(String version, String frontendEntryPoint) {
-    return """
-        {
-          "manifestVersion":"1",
-          "title":"Chess",
-          "shortDescription":"The classic game",
-          "version":"%s",
-          "gdkApiVersion":"0.3.0",
-          "runtime":"jvm",
-          "backend":{"path":"backend/game.jar","entryPoint":"com.example.ChessGame"},
-          "frontend":{"entryPoint":"%s"},
-          "tags":["strategy"],
-          "capabilities":{"ai":false,"spectators":false,"midGameJoin":false},
-          "teamTemplates":[{"size":{"min":1,"max":1},"count":{"min":2,"max":2}}]
-        }
-        """
-        .formatted(version, frontendEntryPoint);
-  }
-
-  private static byte[] zipOf(Map<String, byte[]> entries) {
-    try {
-      ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-      try (ZipOutputStream zos = new ZipOutputStream(buffer, UTF_8)) {
-        for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
-          zos.putNextEntry(new ZipEntry(entry.getKey()));
-          zos.write(entry.getValue());
-          zos.closeEntry();
-        }
-      }
-      return buffer.toByteArray();
-    } catch (IOException e) {
-      throw new UncheckedIOException(e);
-    }
   }
 
   private static String requiredString(Map<String, Object> body, String key) {

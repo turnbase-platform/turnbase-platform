@@ -37,7 +37,7 @@ class VersionUploadController {
    */
   @PostMapping("/api/games/{gameId}/versions/{uploadId}/confirm")
   ResponseEntity<Void> confirm(@PathVariable UUID gameId, @PathVariable UUID uploadId) {
-    service.confirm(gameId, uploadId);
+    service.confirm(gameId, uploadId, false);
     return ResponseEntity.accepted().build();
   }
 

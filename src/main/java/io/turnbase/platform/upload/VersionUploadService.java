@@ -26,7 +26,7 @@ import org.springframework.stereotype.Service;
  * error-handling.md}'s overstated "the only one" claim.
  */
 @Service
-class VersionUploadService {
+public class VersionUploadService {
 
   private static final Logger log = LoggerFactory.getLogger(VersionUploadService.class);
 
@@ -50,7 +50,7 @@ class VersionUploadService {
   }
 
   /** Phase A: stages A1-A4, {@code bundle-format.md} §3.2. */
-  CreateVersionResponse createSlot(UUID gameId, CreateVersionRequest request) {
+  public CreateVersionResponse createSlot(UUID gameId, CreateVersionRequest request) {
     var unused =
         repository.findGame(gameId).orElseThrow(() -> new NotFoundException("No such game."));
 
@@ -139,8 +139,12 @@ class VersionUploadService {
    * Phase B: {@code POST .../confirm}. Stage B1 is checked synchronously; on success the row moves
    * {@code PENDING} → {@code PROCESSING} and Phases C-G are handed to {@link
    * BundleValidationService} asynchronously.
+   *
+   * @param arrivedViaAdminListener {@code true} only when the caller is the admin listener's own
+   *     mirror route ({@code admin-rest-api.md} §4) — E4's second condition for {@code runtime:
+   *     "jvm"} to ever be legal.
    */
-  void confirm(UUID gameId, UUID uploadId) {
+  public void confirm(UUID gameId, UUID uploadId, boolean arrivedViaAdminListener) {
     GameVersionRow row = findOwnedRow(gameId, uploadId);
 
     if (row.status() == GameVersionStatus.EXPIRED
@@ -188,10 +192,10 @@ class VersionUploadService {
       throw new ConflictException("This upload has already been confirmed.");
     }
 
-    bundleValidationService.validateAsync(row.gameId(), row.versionId());
+    bundleValidationService.validateAsync(row.gameId(), row.versionId(), arrivedViaAdminListener);
   }
 
-  VersionResource get(UUID gameId, UUID uploadId) {
+  public VersionResource get(UUID gameId, UUID uploadId) {
     return VersionResource.of(findOwnedRow(gameId, uploadId));
   }
 

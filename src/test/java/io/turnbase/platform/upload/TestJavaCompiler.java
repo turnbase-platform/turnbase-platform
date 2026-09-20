@@ -17,7 +17,7 @@ import javax.tools.ToolProvider;
  * a test control {@code -parameters} (the exact GRMP-F4 defect: a lost {@code -parameters} flag)
  * per compilation.
  */
-final class TestJavaCompiler {
+public final class TestJavaCompiler {
 
   private TestJavaCompiler() {}
 
@@ -26,7 +26,8 @@ final class TestJavaCompiler {
    * every resulting {@code .class} file's bytes, keyed by internal name (slashes). {@code
    * withParameters} controls {@code javac -parameters}.
    */
-  static Map<String, byte[]> compile(boolean withParameters, Map<String, String> sourcesByFqcn) {
+  public static Map<String, byte[]> compile(
+      boolean withParameters, Map<String, String> sourcesByFqcn) {
     JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
     if (compiler == null) {
       throw new IllegalStateException(

@@ -67,10 +67,19 @@ class BundleValidationService {
     this.objectMapper = objectMapper;
   }
 
+  /**
+   * {@code arrivedViaAdminListener} is E4's second condition ({@code admin-rest-api.md} §4,
+   * inherited from IMP-M4-03's own session note): {@code runtime: "jvm"} is legal only for a
+   * confirm that reached this pipeline through the admin listener's routes, never the public {@code
+   * /api/games/{gameId}/versions/{uploadId}/confirm} ones — there is no shared session, token, or
+   * header the two listeners both see, so which controller called {@link
+   * VersionUploadService#confirm} is the only signal available, and it must be threaded through
+   * rather than re-derived here.
+   */
   @Async(UploadAsyncConfig.EXECUTOR_BEAN_NAME)
-  void validateAsync(UUID gameId, UUID versionId) {
+  void validateAsync(UUID gameId, UUID versionId, boolean arrivedViaAdminListener) {
     try {
-      run(gameId, versionId);
+      run(gameId, versionId, arrivedViaAdminListener);
     } catch (RuntimeException e) {
       log.error("Bundle validation pipeline crashed for game {} version {}", gameId, versionId, e);
       repository.markFailed(
@@ -82,7 +91,7 @@ class BundleValidationService {
     }
   }
 
-  private void run(UUID gameId, UUID versionId) {
+  private void run(UUID gameId, UUID versionId, boolean arrivedViaAdminListener) {
     GameVersionRow row = repository.findByVersionId(versionId).orElseThrow();
     GameRow game = repository.findGame(gameId).orElseThrow();
     String bundleKey = row.bundleObjectKey();
@@ -226,12 +235,14 @@ class BundleValidationService {
       }
     }
     if ("jvm".equals(runtime)) {
-      boolean allowed = "OFFICIAL".equals(game.badge()) && game.ownerUserId() == null;
+      boolean allowed =
+          "OFFICIAL".equals(game.badge()) && game.ownerUserId() == null && arrivedViaAdminListener;
       if (!allowed) {
         errors.add(
             new CheckError(
                 "bundle.runtime.trust",
-                "runtime 'jvm' is accepted only for an Official, ownerless game (ADR-0006)."));
+                "runtime 'jvm' is accepted only for an Official, ownerless game uploaded through"
+                    + " the admin API (ADR-0006)."));
       }
     }
     GdkCompatibilityProperties.Range range = gdkProperties.range();

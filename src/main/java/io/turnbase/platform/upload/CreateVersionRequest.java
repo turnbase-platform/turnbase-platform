@@ -10,4 +10,4 @@ import jakarta.validation.constraints.Positive;
  * validation-failed} taxonomy entry. {@code @NotBlank}/{@code @Positive} here only guard against a
  * missing field, which is a different failure class (a malformed request body).
  */
-record CreateVersionRequest(@NotBlank String version, @Positive long bundleSize) {}
+public record CreateVersionRequest(@NotBlank String version, @Positive long bundleSize) {}
