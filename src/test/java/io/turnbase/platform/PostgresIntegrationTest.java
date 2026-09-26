@@ -38,13 +38,14 @@ public abstract class PostgresIntegrationTest {
   protected static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>("postgres:16-alpine");
 
-  // IMP-GATE-52: MinIO no longer publishes to Docker Hub, so the image is pulled from its current
-  // registry — Testcontainers' MinIOContainer validates the image name against the bare
-  // "minio/minio" repository regardless of host, hence the explicit substitute declaration.
+  // IMP-GATE-73: MinIO publishes no public image any more (Docker Hub, IMP-GATE-52, then quay.io),
+  // so the image is the pgsty community fork local-environment.md §1 names — Testcontainers'
+  // MinIOContainer validates the image name against "minio/minio", hence the substitute
+  // declaration.
   @Container
   protected static final MinIOContainer MINIO =
       new MinIOContainer(
-          DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
+          DockerImageName.parse("pgsty/minio:RELEASE.2026-08-04T00-00-00Z")
               .asCompatibleSubstituteFor("minio/minio"));
 
   // No official Testcontainers Redis module exists; a plain GenericContainer with an explicit

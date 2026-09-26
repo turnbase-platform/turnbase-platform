@@ -23,11 +23,11 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 @Testcontainers
 class ArtifactBucketReadinessCheckIT {
 
-  // IMP-GATE-52: see PostgresIntegrationTest's identical container declaration.
+  // IMP-GATE-73: see PostgresIntegrationTest's identical container declaration.
   @Container
   private static final MinIOContainer MINIO =
       new MinIOContainer(
-          DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
+          DockerImageName.parse("pgsty/minio:RELEASE.2026-08-04T00-00-00Z")
               .asCompatibleSubstituteFor("minio/minio"));
 
   private S3Client client() {
