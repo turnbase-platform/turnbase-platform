@@ -7,9 +7,11 @@ spring:
     timeout-per-shutdown-phase: 30s
   data:
     # local-environment.md §7.9. Tiers 1-5's buckets (rate-limiting.md, IMP-M1-02) — the only
-    # Redis consumer in this repo today.
+    # Redis consumer in this repo today. Host + port, never `url`: Spring Boot's `url` overrides
+    # `password`, so SPRING_DATA_REDIS_PASSWORD would be silently ignored (IMP-GATE-77).
     redis:
-      url: ${SPRING_DATA_REDIS_URL:redis://localhost:6379}
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
 
 server:
   port: 8080

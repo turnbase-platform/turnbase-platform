@@ -34,7 +34,7 @@ class RedisRateLimiterConfig {
     if (standalone == null) {
       throw new IllegalStateException(
           "IMP-M1-02's rate limiter requires a standalone Redis connection"
-              + " (spring.data.redis.url); no other topology is documented"
+              + " (spring.data.redis.host/port); no other topology is documented"
               + " (local-environment.md §7.9)");
     }
     RedisURI.Builder uri = RedisURI.Builder.redis(standalone.getHost(), standalone.getPort());

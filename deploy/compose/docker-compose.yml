@@ -113,7 +113,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/turnbase
       SPRING_DATASOURCE_USERNAME: turnbase_app
       SPRING_DATASOURCE_PASSWORD: ${TURNBASE_DB_APP_PASSWORD:?TURNBASE_DB_APP_PASSWORD is required}
-      SPRING_DATA_REDIS_URL: redis://redis:6379
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
       SPRING_DATA_REDIS_PASSWORD: ${TURNBASE_REDIS_PASSWORD:?TURNBASE_REDIS_PASSWORD is required}
       MANAGEMENT_SERVER_PORT: 8081
       # No MANAGEMENT_SERVER_ADDRESS override: the app listens on all interfaces in every
