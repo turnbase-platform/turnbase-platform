@@ -56,7 +56,7 @@ class AuthController {
     return ResponseEntity.status(HttpStatus.CREATED)
         .location(URI.create("/api/users/" + result.username()))
         .header(HttpHeaders.SET_COOKIE, sessionCookie(result.session()).toString())
-        .body(new PrincipalResponse(result.userId(), result.username()));
+        .body(PrincipalResponse.registered(result.userId(), result.username()));
   }
 
   @PostMapping("/login")
@@ -64,7 +64,7 @@ class AuthController {
     LoginService.LoginResult result = loginService.login(request, null);
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, sessionCookie(result.session()).toString())
-        .body(new PrincipalResponse(result.userId(), result.username()));
+        .body(PrincipalResponse.registered(result.userId(), result.username()));
   }
 
   /** FR-GUEST-001/003: "Play as Guest" — unauthenticated (NFR-SEC-006), always succeeds. */
@@ -74,18 +74,17 @@ class AuthController {
     return ResponseEntity.status(HttpStatus.CREATED)
         .location(URI.create("/api/users/" + result.username()))
         .header(HttpHeaders.SET_COOKIE, sessionCookie(result.session()).toString())
-        .body(new PrincipalResponse(result.userId(), result.username()));
+        .body(PrincipalResponse.guest(result.userId(), result.username()));
   }
 
   /** {@code rest-conventions.md}: "the frontend's tier check on load." */
   @GetMapping("/session")
   ResponseEntity<PrincipalResponse> session(HttpServletRequest request) {
     AuthenticatedUser principal = principalOf(request);
-    String username =
+    return ResponseEntity.ok(
         accountRepository
-            .findUsernameById(principal.userId())
-            .orElseThrow(() -> new UnauthenticatedException("This account no longer exists."));
-    return ResponseEntity.ok(new PrincipalResponse(principal.userId(), username));
+            .findPrincipalById(principal.userId())
+            .orElseThrow(() -> new UnauthenticatedException("This account no longer exists.")));
   }
 
   /** FR-SESS-011: revokes the current session and closes its live connections (FR-SESS-010). */

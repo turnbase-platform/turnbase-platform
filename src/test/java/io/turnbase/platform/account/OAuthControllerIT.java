@@ -111,6 +111,14 @@ class OAuthControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void providersReportsGoogleAvailableWithoutASession() throws Exception {
+    HttpResponse<String> response = get("/api/auth/providers", null);
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(parse(response)).containsExactly(Map.entry("google", true));
+  }
+
+  @Test
   void initiateRedirectsToTheAuthorizationEndpointCarryingASignedState() throws Exception {
     HttpResponse<Void> response = getNoRedirect("/auth/google?redirect=/rooms/abcd");
 
@@ -158,6 +166,7 @@ class OAuthControllerIT extends PostgresIntegrationTest {
             pendingCookie);
 
     assertThat(complete.statusCode()).isEqualTo(201);
+    assertThat(parse(complete).get("kind")).isEqualTo("REGISTERED");
     assertThat(complete.headers().firstValue("Location")).contains("/api/users/" + username);
     assertThat(complete.headers().allValues(HttpHeaders.SET_COOKIE))
         .anyMatch(c -> c.startsWith("turnbase_session="))

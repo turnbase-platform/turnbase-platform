@@ -47,7 +47,8 @@ class RateLimitInterceptor implements HandlerInterceptor {
       "/api/auth/oauth/complete-registration";
   private static final Set<String> TIER1_PATHS =
       Set.of(LOGIN_PATH, REGISTER_PATH, PASSWORD_CHANGE_PATH, OAUTH_LINK_CHALLENGE_PATH);
-  private static final Set<String> OAUTH_REDIRECT_PATHS = Set.of("/auth/google", "/auth/callback");
+  private static final Set<String> OAUTH_REDIRECT_PATHS =
+      Set.of("/auth/google", "/auth/callback", "/api/auth/providers");
   private static final Pattern UPLOAD_VERSION_CREATE_PATH =
       Pattern.compile("^/api/games/[^/]+/versions$");
 
@@ -281,8 +282,9 @@ class RateLimitInterceptor implements HandlerInterceptor {
   }
 
   /**
-   * {@code oauth-rest-api.md} §3/§4 — Tier 4 (unauthenticated, lenient): neither route mutates an
-   * account, so the general-abuse budget is the right shape, not a dedicated bucket.
+   * {@code oauth-rest-api.md} §1/§3/§4 — Tier 4 (unauthenticated, lenient): none of these routes
+   * ({@code /api/auth/providers} included, IMP-GATE-76) mutates an account, so the general-abuse
+   * budget is the right shape, not a dedicated bucket.
    */
   private static boolean isOAuthRedirect(String method, String path) {
     return "GET".equalsIgnoreCase(method) && OAUTH_REDIRECT_PATHS.contains(path);

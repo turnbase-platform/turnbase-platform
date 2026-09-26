@@ -13,6 +13,8 @@ data:
   # No MANAGEMENT_SERVER_ADDRESS: unset in every profile (local-environment.md §1, IMP-GATE-14).
   # A kubelet probes the pod IP directly, so binding this to 127.0.0.1 would fail every
   # readiness probe.
+  TURNBASE_PLATFORM_ORIGIN: {{ .Values.origins.platform | quote }}
+  TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE: {{ .Values.origins.gameFrontendTemplate | quote }}
   TURNBASE_ARTIFACT_STORE_ENDPOINT: "http://{{ .Release.Name }}-minio:9000"
   TURNBASE_ARTIFACT_STORE_BUCKET: {{ .Values.minio.bucket | quote }}
   # IMP-GATE-16: this chart runs the identical `local` Spring profile compose does, so profile

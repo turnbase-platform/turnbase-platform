@@ -6,6 +6,8 @@
 # component repo to stay independently usable without the root, so this repo never reads a path
 # outside itself. Build it separately first:
 #   docker build -t turnbase/game-host:dev ../../../turnbase-game-host
+# `frontend` is the same shape — turnbase-frontend is a sibling submodule:
+#   docker build -t turnbase/frontend:dev ../../../turnbase-frontend
 #
 #   docker compose up -d                 # this file alone — core profile
 #   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d   # full
@@ -123,14 +125,19 @@ services:
       TURNBASE_ARTIFACT_STORE_BUCKET: turnbase-bundles
       TURNBASE_ARTIFACT_STORE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
       TURNBASE_ARTIFACT_STORE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      # One source with the frontend service below (local-environment.md §7.7) — the two must
+      # agree, and the platform's own defaults are these same values.
+      TURNBASE_PLATFORM_ORIGIN: ${TURNBASE_PLATFORM_ORIGIN:-http://turnbase.localhost:8080}
+      TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE: ${TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE:-http://{gameId}.games.localhost:8080}
       TURNBASE_ADMIN_USERNAME: ${TURNBASE_ADMIN_USERNAME:?TURNBASE_ADMIN_USERNAME is required}
       TURNBASE_ADMIN_PASSWORD: ${TURNBASE_ADMIN_PASSWORD:?TURNBASE_ADMIN_PASSWORD is required}
       # secrets-and-configuration.md §5: absent by default, and the platform starts anyway — no
       # `:?required` guard, unlike every secret above.
       TURNBASE_OAUTH_GOOGLE_CLIENT_ID: ${TURNBASE_OAUTH_GOOGLE_CLIENT_ID:-}
       TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET: ${TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET:-}
+    # 8080 is not published: the frontend service owns host port 8080 and proxies to this
+    # container over the compose network (local-environment.md §1, IMP-GATE-74).
     ports:
-      - "8080:8080"
       - "127.0.0.1:8081:8081"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/actuator/health"]
@@ -138,6 +145,22 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
+
+  # No `build:` block — see the header note. Build turnbase/frontend:dev separately first.
+  # The listener on the platform origin AND the games origin (local-environment.md §1): the shell
+  # for the platform host, everything else proxied to the monolith. Compose has one published port
+  # and no Ingress, hence the fall-through.
+  frontend:
+    image: turnbase/frontend:dev
+    depends_on:
+      platform:
+        condition: service_healthy
+    environment:
+      TURNBASE_PLATFORM_ORIGIN: ${TURNBASE_PLATFORM_ORIGIN:-http://turnbase.localhost:8080}
+      TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE: ${TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE:-http://{gameId}.games.localhost:8080}
+      TURNBASE_FRONTEND_UPSTREAM: platform:8080
+    ports:
+      - "8080:8080"
 
   # No `build:` block — see the header note. Build turnbase/game-host:dev separately first.
   gamehost:

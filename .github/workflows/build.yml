@@ -151,6 +151,17 @@ jobs:
           token: ${{ secrets.TURNBASE_GAME_HOST_PAT }}
           path: turnbase-game-host
 
+      - name: Check out turnbase-frontend
+        # Same reasoning and pattern as turnbase-game-host above (IMP-GATE-74: the Frontend
+        # container is the platform origin's listener, and its image is built from a sibling
+        # checkout). Needs its own fine-grained PAT, read-only on Contents, scoped to
+        # turnbase-frontend only — TURNBASE_FRONTEND_PAT must exist as a repository secret.
+        uses: actions/checkout@v7
+        with:
+          repository: turnbase-platform/turnbase-frontend
+          token: ${{ secrets.TURNBASE_FRONTEND_PAT }}
+          path: turnbase-frontend
+
       - name: Set up GraalVM CE 21
         # turnbase-game-host's own Dockerfile expects target/turnbase-game-host-*.jar to
         # already exist (it packages, it does not build) — this job builds it from the
@@ -193,4 +204,5 @@ jobs:
       - name: Run the e2e smoke test
         env:
           TURNBASE_GAME_HOST_DIR: ${{ github.workspace }}/turnbase-game-host
+          TURNBASE_FRONTEND_DIR: ${{ github.workspace }}/turnbase-frontend
         run: make e2e

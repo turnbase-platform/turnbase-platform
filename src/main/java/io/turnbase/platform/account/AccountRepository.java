@@ -128,12 +128,20 @@ class AccountRepository {
     return username;
   }
 
-  /** {@code GET /api/auth/session} — the principal's display name, not stored on the JWT. */
-  Optional<String> findUsernameById(UUID userId) {
+  /**
+   * {@code GET /api/auth/session} — the principal's display name and tier, neither stored on the
+   * JWT.
+   */
+  Optional<PrincipalResponse> findPrincipalById(UUID userId) {
     return jdbcClient
-        .sql("select username from app_user where user_id = :userId")
+        .sql("select user_id, username, kind from app_user where user_id = :userId")
         .param("userId", userId)
-        .query(String.class)
+        .query(
+            (rs, rowNum) ->
+                new PrincipalResponse(
+                    rs.getObject("user_id", UUID.class),
+                    rs.getString("username"),
+                    PrincipalResponse.Kind.valueOf(rs.getString("kind"))))
         .optional();
   }
 

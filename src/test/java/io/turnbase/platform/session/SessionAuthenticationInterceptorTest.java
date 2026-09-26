@@ -40,6 +40,15 @@ class SessionAuthenticationInterceptorTest {
   }
 
   @Test
+  void theProviderAvailabilityReadIsExemptWithNoPrincipal() {
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/providers");
+
+    boolean result = interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+
+    assertThat(result).isTrue();
+  }
+
+  @Test
   void anUnauthenticatedRequestToAProtectedPathWithNoCookieIsRejected() {
     MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/session");
 

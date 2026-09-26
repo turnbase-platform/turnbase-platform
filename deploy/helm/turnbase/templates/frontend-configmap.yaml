@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  # local-environment.md §7.7 — read by the container's nginx at start, never at build time.
+  TURNBASE_PLATFORM_ORIGIN: {{ .Values.origins.platform | quote }}
+  TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE: {{ .Values.origins.gameFrontendTemplate | quote }}
+  # <service-name>:<port> — this chart's own Platform Monolith Service (IMP-GATE-74).
+  TURNBASE_FRONTEND_UPSTREAM: "{{ .Release.Name }}-platform:{{ .Values.platform.containerPort }}"

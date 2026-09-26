@@ -15,6 +15,22 @@ ingress:
   # default 60s closes an idle WebSocket the protocol considers healthy.
   proxyReadTimeoutSeconds: 3600
 
+# local-environment.md §7.7. One source for both the monolith's `turnbase.platform.origin` /
+# `turnbase.game-frontend.origin-template` and the Frontend container's copy of them — the two
+# must agree, so neither configmap carries its own literal. Different registrable domains (ADR-0007).
+origins:
+  platform: http://turnbase.localhost:8080
+  gameFrontendTemplate: "http://{gameId}.games.localhost:8080"
+
+frontend:
+  image:
+    repository: turnbase/frontend
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  containerPort: 8080
+  resources: {}
+
 platform:
   image:
     repository: turnbase/platform

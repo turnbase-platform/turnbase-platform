@@ -102,6 +102,7 @@ class AuthControllerIT extends PostgresIntegrationTest {
         .isEqualTo(java.net.URI.create("/api/users/" + username));
     Map<String, Object> body = parse(response);
     assertThat(body.get("username")).isEqualTo(username);
+    assertThat(body.get("kind")).isEqualTo("REGISTERED");
     UUID userId = UUID.fromString((String) body.get("userId"));
 
     assertSessionCookie(response);
@@ -192,6 +193,7 @@ class AuthControllerIT extends PostgresIntegrationTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(parse(response).get("username")).isEqualTo(username);
+    assertThat(parse(response).get("kind")).isEqualTo("REGISTERED");
     assertSessionCookie(response);
   }
 
@@ -296,6 +298,26 @@ class AuthControllerIT extends PostgresIntegrationTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(parse(response).get("username")).isEqualTo(username);
+    assertThat(parse(response).get("kind")).isEqualTo("REGISTERED");
+  }
+
+  @Test
+  void getSessionReportsAGuestAsKindGuest() throws Exception {
+    ResponseEntity<String> guestResponse = post("/guest", null);
+
+    ResponseEntity<String> response = getWithCookie("/session", sessionCookieHeader(guestResponse));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(parse(response).get("kind")).isEqualTo("GUEST");
+  }
+
+  @Test
+  void providersReportsGoogleUnavailableWhenNoClientSecretIsConfigured() throws Exception {
+    ResponseEntity<String> response =
+        restTemplate.getForEntity(baseUrl + "/providers", String.class);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(parse(response)).containsExactly(Map.entry("google", false));
   }
 
   @Test
@@ -353,6 +375,7 @@ class AuthControllerIT extends PostgresIntegrationTest {
     Map<String, Object> body = parse(response);
     String username = (String) body.get("username");
     assertThat(username).startsWith("guest-");
+    assertThat(body.get("kind")).isEqualTo("GUEST");
     UUID userId = UUID.fromString((String) body.get("userId"));
     assertThat(response.getHeaders().getLocation())
         .isEqualTo(java.net.URI.create("/api/users/" + username));

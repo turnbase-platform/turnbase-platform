@@ -7,13 +7,15 @@
 # what "the deployed stack answers over real HTTP" actually checks right now. Reports
 # pass/fail for information only — it gates nothing (FR-CICD-003, OQ-002).
 #
-# gamehost has no `build:` block in docker-compose.yml (this repo stays independently usable
-# without the root, ADR-0012) — its image is built here from a sibling checkout of
-# turnbase-game-host, the same repo layout local-environment.md §4 assumes.
+# gamehost and frontend have no `build:` block in docker-compose.yml (this repo stays
+# independently usable without the root, ADR-0012) — their images are built here from sibling
+# checkouts of turnbase-game-host and turnbase-frontend, the same repo layout
+# local-environment.md §4 assumes.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 GAME_HOST_DIR="${TURNBASE_GAME_HOST_DIR:-../../../turnbase-game-host}"
+FRONTEND_DIR="${TURNBASE_FRONTEND_DIR:-../../../turnbase-frontend}"
 
 cleanup() {
   docker compose down -v
@@ -33,6 +35,8 @@ ENV
 
 echo "Building turnbase/game-host:dev from ${GAME_HOST_DIR}..."
 docker build -t turnbase/game-host:dev "${GAME_HOST_DIR}"
+echo "Building turnbase/frontend:dev from ${FRONTEND_DIR}..."
+docker build -t turnbase/frontend:dev "${FRONTEND_DIR}"
 
 echo "Bringing up the core compose profile..."
 # On failure, the cleanup trap's `docker compose down -v` discards every container before
@@ -53,6 +57,14 @@ curl -sf http://127.0.0.1:8081/actuator/health
 echo
 echo "Game Host health:"
 curl -sf http://127.0.0.1:8082/actuator/health
+
+echo
+echo "Frontend shell and proxy (the platform origin is the Frontend container, IMP-GATE-74):"
+# The shell document, served for the platform host with its CSP...
+curl -sf -H "Host: turnbase.localhost:8080" http://127.0.0.1:8080/ | grep -q '<div id="root"'
+curl -sfI -H "Host: turnbase.localhost:8080" http://127.0.0.1:8080/ | grep -qi '^content-security-policy:'
+# ...and /api proxied through to the monolith (unauthenticated read, so no session needed).
+curl -sf -H "Host: turnbase.localhost:8080" http://127.0.0.1:8080/api/auth/providers
 
 echo
 echo "E2E smoke test passed."

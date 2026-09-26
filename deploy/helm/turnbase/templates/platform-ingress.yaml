@@ -12,9 +12,10 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
-    # Both origins are one listener (local-environment.md §1 "Both origins are one listener"):
-    # turnbase.localhost and *.games.localhost route to the same Service/port, distinguished by
-    # Host header inside the monolith, not by a second port or Service. Neither rule names 8081.
+    # The platform origin is the Frontend Service (IMP-GATE-74): it serves the shell and proxies
+    # /api, /ws and the two OAuth redirects to the monolith. The games origin goes straight to
+    # the monolith, which routes it by Host header (local-environment.md §1). Neither rule
+    # names 8081.
     - host: {{ .Values.ingress.platformHost | quote }}
       http:
         paths:
@@ -22,7 +23,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-platform
+                name: {{ .Release.Name }}-frontend
                 port:
                   name: http
     - host: {{ .Values.ingress.gamesHost | quote }}

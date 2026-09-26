@@ -54,7 +54,7 @@ class OAuthRegistrationController {
                   HttpHeaders.SET_COOKIE,
                   OAuthController.sessionCookie(created.session()).toString())
               .header(HttpHeaders.SET_COOKIE, OAuthController.clearedPendingCookie().toString())
-              .body(new PrincipalResponse(created.userId(), created.username()));
+              .body(PrincipalResponse.registered(created.userId(), created.username()));
       case OAuthService.CompleteRegistrationResult.ChallengeRequired ignored ->
           ResponseEntity.ok(new OAuthOutcomeResponse(OAuthOutcomeResponse.CHALLENGE_REQUIRED));
     };

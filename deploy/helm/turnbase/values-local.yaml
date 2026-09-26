@@ -1,6 +1,6 @@
 # Non-secret overrides for the inner-loop Docker Desktop Kubernetes path (local-environment.md
 # §5's "canonical path"): images built locally with `docker build -t turnbase/platform:dev .`
-# (and the equivalent in turnbase-game-host), never pulled from a registry.
+# (and the equivalent in turnbase-game-host and turnbase-frontend), never pulled from a registry.
 #
 # Secrets are deliberately absent here — see values-local.secrets.example.yaml. Run:
 #   helm upgrade --install turnbase deploy/helm/turnbase \
@@ -11,5 +11,8 @@ platform:
   image:
     pullPolicy: Never
 gamehost:
+  image:
+    pullPolicy: Never
+frontend:
   image:
     pullPolicy: Never

@@ -25,10 +25,25 @@ import org.springframework.web.bind.annotation.RestController;
 class OAuthController {
 
   private final OAuthService oauthService;
+  private final OAuthProperties oauthProperties;
 
-  OAuthController(OAuthService oauthService) {
+  OAuthController(OAuthService oauthService, OAuthProperties oauthProperties) {
     this.oauthService = oauthService;
+    this.oauthProperties = oauthProperties;
   }
+
+  /**
+   * §1 ({@code IMP-GATE-76}) — whether the login and register pages should render "Continue with
+   * Google". Unauthenticated (NFR-SEC-006) and Tier 4; the answer never discloses the client id or
+   * secret.
+   */
+  @GetMapping("/api/auth/providers")
+  ProvidersResponse providers() {
+    return new ProvidersResponse(oauthProperties.configured());
+  }
+
+  /** The body of {@code GET /api/auth/providers}. */
+  record ProvidersResponse(boolean google) {}
 
   /** §3. */
   @GetMapping("/auth/google")

@@ -16,13 +16,15 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <p>{@link #PUBLIC_PATHS} is NFR-SEC-006's exempt list, as far as it has server-side routes today
  * — registration, login and guest creation (IMP-GATE-29 added the last of these to NFR-SEC-006
  * itself; a caller minting a guest account has no session yet, so the endpoint cannot require one),
- * and the five Google OAuth routes ({@code oauth-rest-api.md}, IMP-GATE-38): the entry point and
- * callback never have a session either, and the three pending-registration JSON endpoints are gated
- * by {@code oauth-rest-api.md} §2's pending token instead — a different mechanism this class does
- * not enforce. {@code GET /api/users/{username}} (user profile pages, IMP-M1-07) is exempt too, but
- * is matched by {@link #isPublicProfileRead}, not this set — the path carries a variable segment.
- * The requirement also exempts the landing page, the game catalog and game detail pages, none of
- * which have a backend route yet; the item that adds one adds its own exemption here.
+ * the provider-availability read ({@code GET /api/auth/providers}, IMP-GATE-76 — the login page
+ * asks it before any session exists), and the five Google OAuth routes ({@code oauth-rest-api.md},
+ * IMP-GATE-38): the entry point and callback never have a session either, and the three
+ * pending-registration JSON endpoints are gated by {@code oauth-rest-api.md} §2's pending token
+ * instead — a different mechanism this class does not enforce. {@code GET /api/users/{username}}
+ * (user profile pages, IMP-M1-07) is exempt too, but is matched by {@link #isPublicProfileRead},
+ * not this set — the path carries a variable segment. The requirement also exempts the landing
+ * page, the game catalog and game detail pages, none of which have a backend route yet; the item
+ * that adds one adds its own exemption here.
  *
  * <p>{@code /test/} is a second, unrelated exemption: {@code GlobalExceptionHandlerIT}'s harness
  * controller lives only on the test classpath (never shipped, {@code IMP-M1-01}) and exercises
@@ -47,6 +49,7 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
           "/api/auth/register",
           "/api/auth/login",
           "/api/auth/guest",
+          "/api/auth/providers",
           "/auth/google",
           "/auth/callback",
           "/api/auth/oauth/pending",
