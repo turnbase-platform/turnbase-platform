@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 public class OAuthService {
 
   private static final String DEFAULT_DESTINATION = "/rooms";
+  private static final String LINK_RETURN_PATH = "/settings";
 
   private final OAuthProperties oauthProperties;
   private final AuthProperties authProperties;
@@ -35,6 +36,7 @@ public class OAuthService {
   private final UsernamePolicy usernamePolicy;
   private final PasswordEncoder passwordEncoder;
   private final SessionService sessionService;
+  private final PendingGoogleLink pendingLink;
 
   OAuthService(
       OAuthProperties oauthProperties,
@@ -45,7 +47,8 @@ public class OAuthService {
       AccountRepository accountRepository,
       UsernamePolicy usernamePolicy,
       PasswordEncoder passwordEncoder,
-      SessionService sessionService) {
+      SessionService sessionService,
+      PendingGoogleLink pendingLink) {
     this.oauthProperties = oauthProperties;
     this.authProperties = authProperties;
     this.googleClient = googleClient;
@@ -55,6 +58,7 @@ public class OAuthService {
     this.usernamePolicy = usernamePolicy;
     this.passwordEncoder = passwordEncoder;
     this.sessionService = sessionService;
+    this.pendingLink = pendingLink;
   }
 
   /**
@@ -78,23 +82,47 @@ public class OAuthService {
     return googleClient.authorizationUrl(state);
   }
 
+  /**
+   * §3's {@code intent=link} variant (§7a step 1). {@code callerUserId} is the session's principal,
+   * or {@code null} when there is none; no session, or a guest's, sends the caller to log in and
+   * back to settings rather than failing — a navigation, not an API call.
+   */
+  public URI initiateLink(@Nullable UUID callerUserId) {
+    if (!oauthProperties.configured()) {
+      throw new NotFoundException("Google OAuth is not configured.");
+    }
+    if (callerUserId == null || !isRegistered(callerUserId)) {
+      return URI.create("/login?redirect=" + LINK_RETURN_PATH);
+    }
+    Instant now = Instant.now();
+    String state =
+        stateService.issueLink(callerUserId, now, now.plus(authProperties.oauth().stateTtl()));
+    return googleClient.authorizationUrl(state);
+  }
+
   /** §4. Never throws for attacker-influenceable input — {@link CallbackResult#error()} instead. */
   public CallbackResult callback(@Nullable String code, @Nullable String state) {
     if (code == null || state == null) {
       return CallbackResult.error();
     }
-    String destination;
+    OAuthStateService.VerifiedState verified;
     try {
-      destination = stateService.verify(state);
+      verified = stateService.verify(state);
     } catch (JwtVerificationException e) {
       return CallbackResult.error();
     }
+    UUID linkUserId = verified.linkUserId();
+    String destination = verified.destination();
 
     GoogleOAuthClient.GoogleIdentity identity;
     try {
       identity = googleClient.exchangeCode(code);
     } catch (GoogleOAuthClient.GoogleOAuthException e) {
-      return CallbackResult.error();
+      return linkUserId == null ? CallbackResult.error() : CallbackResult.linkError();
+    }
+
+    if (linkUserId != null) {
+      return linkCallback(linkUserId, identity);
     }
 
     Optional<AccountRepository.Identity> existing =
@@ -107,6 +135,27 @@ public class OAuthService {
 
     String token = pending.create(identity.sub(), identity.email());
     return CallbackResult.pendingRegistration(token, Instant.now().plus(pending.ttl()));
+  }
+
+  private boolean isRegistered(UUID userId) {
+    return accountRepository
+        .findPrincipalById(userId)
+        .filter(principal -> principal.kind() == PrincipalResponse.Kind.REGISTERED)
+        .isPresent();
+  }
+
+  /**
+   * §7a step 2. Issues no session and reads none — {@code turnbase_session} is {@code
+   * SameSite=Strict} and is not sent on Google's cross-site return, so the caller is unknown here
+   * and {@code linkUserId} is only a claim by whoever started the flow. The account's email is
+   * never read either (§4 step 3's "never by email").
+   */
+  private CallbackResult linkCallback(UUID linkUserId, GoogleOAuthClient.GoogleIdentity identity) {
+    if (accountRepository.googleSubjectHeld(identity.sub())) {
+      return CallbackResult.linkError();
+    }
+    String token = pendingLink.create(linkUserId, identity.sub());
+    return CallbackResult.linkPending(token, Instant.now().plus(pendingLink.ttl()));
   }
 
   /** §5. */
@@ -203,12 +252,26 @@ public class OAuthService {
       return new PendingRegistration(token, expiresAt);
     }
 
+    static CallbackResult linkError() {
+      return new LinkError();
+    }
+
+    static CallbackResult linkPending(String token, Instant expiresAt) {
+      return new LinkPending(token, expiresAt);
+    }
+
     record Error() implements CallbackResult {}
 
     record LoggedIn(SessionService.IssuedSession session, String destination)
         implements CallbackResult {}
 
     record PendingRegistration(String token, Instant expiresAt) implements CallbackResult {}
+
+    /** §7a step 2 — one outcome for "already held" and "exchange failed". */
+    record LinkError() implements CallbackResult {}
+
+    /** §7a step 2 — the {@code oauth:link:{token}} record is stored; no session issued. */
+    record LinkPending(String token, Instant expiresAt) implements CallbackResult {}
   }
 
   public sealed interface CompleteRegistrationResult {

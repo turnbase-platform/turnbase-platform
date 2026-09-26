@@ -40,6 +40,7 @@ public class ProfileService {
   private final PasswordEncoder passwordEncoder;
   private final AccountProperties accountProperties;
   private final RelationshipQueries relationshipQueries;
+  private final AuthMethodRepository authMethodRepository;
 
   ProfileService(
       ProfileRepository profileRepository,
@@ -47,13 +48,15 @@ public class ProfileService {
       CredentialPolicy credentialPolicy,
       PasswordEncoder passwordEncoder,
       AccountProperties accountProperties,
-      RelationshipQueries relationshipQueries) {
+      RelationshipQueries relationshipQueries,
+      AuthMethodRepository authMethodRepository) {
     this.profileRepository = profileRepository;
     this.usernamePolicy = usernamePolicy;
     this.credentialPolicy = credentialPolicy;
     this.passwordEncoder = passwordEncoder;
     this.accountProperties = accountProperties;
     this.relationshipQueries = relationshipQueries;
+    this.authMethodRepository = authMethodRepository;
   }
 
   /**
@@ -97,6 +100,36 @@ public class ProfileService {
         false,
         visibleSectionsFor(row, relationship == RelationshipQueries.RelationshipState.FRIENDS),
         relationship.name());
+  }
+
+  /**
+   * {@code GET /api/users/me} — the caller's own truth, which {@link #view}'s public representation
+   * must never carry. Each {@code *ChangeableAt} is computed here from the stored timestamp so no
+   * client hard-codes the window (FR-ACCT-002/003).
+   */
+  public AccountResponse account(UUID userId) {
+    ProfileRepository.AccountRow row = profileRepository.findAccount(userId);
+    if (!KIND_REGISTERED.equals(row.kind())) {
+      throw new ForbiddenException("Guest accounts cannot manage profile settings.");
+    }
+    return new AccountResponse(
+        row.userId(),
+        row.username(),
+        row.email(),
+        row.emailSource(),
+        changeableAt(row.usernameChangedAt()),
+        changeableAt(row.emailChangedAt()),
+        authMethodRepository.findMethods(userId),
+        PrivacyResponse.from(profileRepository.findPrivacySettings(userId)));
+  }
+
+  /** {@code null} when the field may be changed now, else the instant its window elapses. */
+  private @Nullable Instant changeableAt(@Nullable Instant lastChangedAt) {
+    if (lastChangedAt == null) {
+      return null;
+    }
+    Instant eligibleAt = lastChangedAt.plus(accountProperties.renameWindow());
+    return Instant.now().isBefore(eligibleAt) ? eligibleAt : null;
   }
 
   /**

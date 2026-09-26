@@ -45,8 +45,15 @@ class RateLimitInterceptor implements HandlerInterceptor {
   private static final String OAUTH_LINK_CHALLENGE_PATH = "/api/auth/oauth/link-challenge";
   private static final String OAUTH_COMPLETE_REGISTRATION_PATH =
       "/api/auth/oauth/complete-registration";
+  private static final String AUTH_METHODS_PATH_PREFIX = "/api/users/me/auth-methods/";
   private static final Set<String> TIER1_PATHS =
-      Set.of(LOGIN_PATH, REGISTER_PATH, PASSWORD_CHANGE_PATH, OAUTH_LINK_CHALLENGE_PATH);
+      Set.of(
+          LOGIN_PATH,
+          REGISTER_PATH,
+          PASSWORD_CHANGE_PATH,
+          OAUTH_LINK_CHALLENGE_PATH,
+          AUTH_METHODS_PATH_PREFIX + "password",
+          AUTH_METHODS_PATH_PREFIX + "google");
   private static final Set<String> OAUTH_REDIRECT_PATHS =
       Set.of("/auth/google", "/auth/callback", "/api/auth/providers");
   private static final Pattern UPLOAD_VERSION_CREATE_PATH =
@@ -267,7 +274,11 @@ class RateLimitInterceptor implements HandlerInterceptor {
   }
 
   private static boolean isTier1(String method, String path) {
-    return "POST".equalsIgnoreCase(method) && TIER1_PATHS.contains(path);
+    if ("POST".equalsIgnoreCase(method)) {
+      return TIER1_PATHS.contains(path);
+    }
+    // IMP-GATE-78: auth-method removal is a DELETE on a variable segment, so it is not in the set.
+    return "DELETE".equalsIgnoreCase(method) && path.startsWith(AUTH_METHODS_PATH_PREFIX);
   }
 
   private static boolean isTier5(String method, String path) {

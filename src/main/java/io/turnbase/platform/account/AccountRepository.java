@@ -184,6 +184,23 @@ class AccountRepository {
         .optional();
   }
 
+  /**
+   * {@code oauth-rest-api.md} §7a step 2 — whether <em>any</em> account holds this Google identity,
+   * the caller's own included, so {@code intent=link}'s one {@code linkError} flag does not
+   * disclose which. Unlike {@link #findByGoogleSubject} it does not filter on {@code deleted_at}:
+   * {@code user_auth_method_subject_key} spans every row, and a row that would trip it is a
+   * conflict whoever owns it.
+   */
+  boolean googleSubjectHeld(String providerSubject) {
+    return jdbcClient
+        .sql(
+            "select exists(select 1 from user_auth_method"
+                + " where method = 'GOOGLE' and provider_subject = :providerSubject)")
+        .param("providerSubject", providerSubject)
+        .query(Boolean.class)
+        .single();
+  }
+
   /** {@code oauth-rest-api.md} §7 — the password hash to challenge against. */
   Optional<String> findPasswordHashById(UUID userId) {
     return jdbcClient

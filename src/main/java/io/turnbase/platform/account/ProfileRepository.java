@@ -44,6 +44,30 @@ class ProfileRepository {
         .optional();
   }
 
+  /** {@code GET /api/users/me}: the identity columns the account representation carries. */
+  AccountRow findAccount(UUID userId) {
+    return jdbcClient
+        .sql(
+            """
+            select user_id, kind, username, email, email_source, username_changed_at,
+                   email_changed_at
+            from app_user
+            where user_id = :userId
+            """)
+        .param("userId", userId)
+        .query(
+            (rs, rowNum) ->
+                new AccountRow(
+                    rs.getObject("user_id", UUID.class),
+                    rs.getString("kind"),
+                    rs.getString("username"),
+                    rs.getString("email"),
+                    rs.getString("email_source"),
+                    toInstant(rs.getObject("username_changed_at", Timestamp.class)),
+                    toInstant(rs.getObject("email_changed_at", Timestamp.class))))
+        .single();
+  }
+
   /** {@code PATCH /api/users/me}'s window check and OAuth-email-immutability guard. */
   AccountState findAccountState(UUID userId) {
     return jdbcClient
@@ -223,6 +247,15 @@ class ProfileRepository {
 
   record AccountState(
       String kind,
+      @Nullable String emailSource,
+      @Nullable Instant usernameChangedAt,
+      @Nullable Instant emailChangedAt) {}
+
+  record AccountRow(
+      UUID userId,
+      String kind,
+      String username,
+      @Nullable String email,
       @Nullable String emailSource,
       @Nullable Instant usernameChangedAt,
       @Nullable Instant emailChangedAt) {}

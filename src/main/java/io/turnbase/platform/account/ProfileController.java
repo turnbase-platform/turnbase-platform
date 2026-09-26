@@ -45,6 +45,13 @@ class ProfileController {
     return ResponseEntity.ok(response);
   }
 
+  /** {@code rest-conventions.md} § Authentication (`IMP-GATE-78`): the caller's own account. */
+  @GetMapping("/me")
+  ResponseEntity<AccountResponse> getAccount(HttpServletRequest servletRequest) {
+    AuthenticatedUser principal = principalOf(servletRequest);
+    return ResponseEntity.ok(profileService.account(principal.userId()));
+  }
+
   @PatchMapping("/me")
   ResponseEntity<IdentityResponse> updateIdentity(
       @Valid @RequestBody UpdateProfileRequest request, HttpServletRequest servletRequest) {

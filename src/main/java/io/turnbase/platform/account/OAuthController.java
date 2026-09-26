@@ -1,11 +1,16 @@
 package io.turnbase.platform.account;
 
+import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.OAuthLinkCookie;
 import io.turnbase.platform.common.OAuthPendingCookie;
 import io.turnbase.platform.common.SessionCookie;
 import io.turnbase.platform.session.SessionService;
+import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -23,6 +28,8 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 class OAuthController {
+
+  private static final String LINK_INTENT = "link";
 
   private final OAuthService oauthService;
   private final OAuthProperties oauthProperties;
@@ -45,11 +52,20 @@ class OAuthController {
   /** The body of {@code GET /api/auth/providers}. */
   record ProvidersResponse(boolean google) {}
 
-  /** §3. */
+  /**
+   * §3. {@code intent=link} is §7a's settings-page variant and reads the session; a plain login
+   * initiation does not.
+   */
   @GetMapping("/auth/google")
-  ResponseEntity<Void> initiate(@RequestParam(required = false) String redirect) {
-    URI authorizationUrl = oauthService.initiate(redirect);
-    return ResponseEntity.status(HttpStatus.FOUND).location(authorizationUrl).build();
+  ResponseEntity<Void> initiate(
+      @RequestParam(required = false) @Nullable String redirect,
+      @RequestParam(required = false) @Nullable String intent,
+      HttpServletRequest request) {
+    URI location =
+        LINK_INTENT.equals(intent)
+            ? oauthService.initiateLink(callerOf(request))
+            : oauthService.initiate(redirect);
+    return ResponseEntity.status(HttpStatus.FOUND).location(location).build();
   }
 
   /** §4. */
@@ -66,6 +82,17 @@ class OAuthController {
           ResponseEntity.status(HttpStatus.FOUND)
               .location(URI.create(loggedIn.destination()))
               .header(HttpHeaders.SET_COOKIE, sessionCookie(loggedIn.session()).toString())
+              .build();
+      case OAuthService.CallbackResult.LinkError ignored ->
+          ResponseEntity.status(HttpStatus.FOUND)
+              .location(URI.create("/settings?linkError=1"))
+              .build();
+      case OAuthService.CallbackResult.LinkPending linkPending ->
+          ResponseEntity.status(HttpStatus.FOUND)
+              .location(URI.create("/settings?linkGoogle=1"))
+              .header(
+                  HttpHeaders.SET_COOKIE,
+                  linkCookie(linkPending.token(), linkPending.expiresAt()).toString())
               .build();
       case OAuthService.CallbackResult.PendingRegistration pendingRegistration ->
           ResponseEntity.status(HttpStatus.FOUND)
@@ -98,6 +125,31 @@ class OAuthController {
         .path("/")
         .maxAge(Duration.between(Instant.now(), expiresAt))
         .build();
+  }
+
+  /** {@code oauth-rest-api.md} §7a — same flag set and reasoning as §2's pending cookie. */
+  static ResponseCookie linkCookie(String token, Instant expiresAt) {
+    return ResponseCookie.from(OAuthLinkCookie.NAME, token)
+        .httpOnly(true)
+        .secure(true)
+        .sameSite("Strict")
+        .path("/")
+        .maxAge(Duration.between(Instant.now(), expiresAt))
+        .build();
+  }
+
+  static ResponseCookie clearedLinkCookie() {
+    return ResponseCookie.from(OAuthLinkCookie.NAME, "")
+        .httpOnly(true)
+        .secure(true)
+        .sameSite("Strict")
+        .path("/")
+        .maxAge(0)
+        .build();
+  }
+
+  private static @Nullable UUID callerOf(HttpServletRequest request) {
+    return request.getUserPrincipal() instanceof AuthenticatedUser user ? user.userId() : null;
   }
 
   static ResponseCookie clearedPendingCookie() {

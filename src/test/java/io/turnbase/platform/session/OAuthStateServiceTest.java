@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.env.MockEnvironment;
@@ -40,7 +41,22 @@ class OAuthStateServiceTest {
 
     String state = stateService.issue("/rooms/abcd", now, now.plus(Duration.ofMinutes(5)));
 
-    assertThat(stateService.verify(state)).isEqualTo("/rooms/abcd");
+    assertThat(stateService.verify(state))
+        .isEqualTo(new OAuthStateService.VerifiedState("/rooms/abcd", null));
+  }
+
+  @Test
+  void aLinkStateVerifiesBackToItsUserAndTheFixedSettingsDestination(@TempDir Path tmp) {
+    JwtKeySet keySet =
+        new JwtKeySet(new JwtKeySet.ActiveKey("k1", randomSecret(), Instant.now()), List.of());
+    OAuthStateService stateService = new OAuthStateService(newManager(keySet, tmp));
+    UUID userId = UUID.randomUUID();
+    Instant now = Instant.now();
+
+    String state = stateService.issueLink(userId, now, now.plus(Duration.ofMinutes(5)));
+
+    assertThat(stateService.verify(state))
+        .isEqualTo(new OAuthStateService.VerifiedState("/settings", userId));
   }
 
   @Test

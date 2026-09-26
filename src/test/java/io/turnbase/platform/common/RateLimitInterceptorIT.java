@@ -128,6 +128,37 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void tier1CountsFailuresOnEachOfTheThreeAuthMethodRoutes() {
+    bootApplication(
+        "--turnbase.rate-limit.auth.failures-before-lockout=3",
+        "--turnbase.rate-limit.auth.initial-lockout=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1000",
+        "--turnbase.rate-limit.minting.guest.capacity=1000");
+    String cookie =
+        sessionCookieHeader(
+            register(
+                uniqueUsername(), uniqueEmail(), "correct horse battery", "correct horse battery"));
+    String passwordBody =
+        """
+        {"password":"another password 1","confirmPassword":"another password 1"}
+        """;
+
+    // A registered account already holds PASSWORD (409), it is its only method (422), and no
+    // Google link is in progress (404): three failures, one per route.
+    assertThat(
+            postWithCookie("/api/users/me/auth-methods/password", cookie, passwordBody)
+                .getStatusCode())
+        .isEqualTo(HttpStatus.CONFLICT);
+    assertThat(deleteWithCookie("/api/users/me/auth-methods/PASSWORD", cookie).getStatusCode())
+        .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(postWithCookie("/api/users/me/auth-methods/google", cookie, null).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+
+    assertThat(deleteWithCookie("/api/users/me/auth-methods/PASSWORD", cookie).getStatusCode())
+        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+  }
+
+  @Test
   void tier2EnforcesThePerUserCapAndEmitsHeaders() {
     bootApplication(
         "--turnbase.rate-limit.api.capacity=2",
@@ -238,6 +269,21 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
     headers.setContentType(MediaType.APPLICATION_JSON);
     HttpEntity<String> request = new HttpEntity<>(body, headers);
     return restTemplate.exchange(baseUrl + path, HttpMethod.POST, request, String.class);
+  }
+
+  private ResponseEntity<String> postWithCookie(String path, String cookie, @Nullable String body) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.add(HttpHeaders.COOKIE, cookie);
+    return restTemplate.exchange(
+        baseUrl + path, HttpMethod.POST, new HttpEntity<>(body, headers), String.class);
+  }
+
+  private ResponseEntity<String> deleteWithCookie(String path, String cookie) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.add(HttpHeaders.COOKIE, cookie);
+    return restTemplate.exchange(
+        baseUrl + path, HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
   }
 
   private ResponseEntity<String> get(String path) {

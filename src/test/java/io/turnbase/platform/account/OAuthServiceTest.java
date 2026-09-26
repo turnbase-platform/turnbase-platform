@@ -51,6 +51,7 @@ class OAuthServiceTest {
   private final UsernamePolicy usernamePolicy = new UsernamePolicy();
   private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
   private final SessionService sessionService = mock(SessionService.class);
+  private final PendingGoogleLink pendingLink = mock(PendingGoogleLink.class);
 
   private OAuthService serviceWith(OAuthProperties oauthProperties) {
     return new OAuthService(
@@ -62,7 +63,8 @@ class OAuthServiceTest {
         accountRepository,
         usernamePolicy,
         passwordEncoder,
-        sessionService);
+        sessionService,
+        pendingLink);
   }
 
   private final OAuthService service = serviceWith(CONFIGURED);
@@ -125,7 +127,8 @@ class OAuthServiceTest {
 
   @Test
   void callbackReturnsErrorWhenGoogleExchangeFails() {
-    when(stateService.verify("state")).thenReturn("/rooms");
+    when(stateService.verify("state"))
+        .thenReturn(new OAuthStateService.VerifiedState("/rooms", null));
     when(googleClient.exchangeCode("code"))
         .thenThrow(new GoogleOAuthClient.GoogleOAuthException("failed", null));
 
@@ -136,7 +139,8 @@ class OAuthServiceTest {
   @Test
   void callbackLogsInAReturningGoogleUser() {
     UUID userId = UUID.randomUUID();
-    when(stateService.verify("state")).thenReturn("/rooms/abcd");
+    when(stateService.verify("state"))
+        .thenReturn(new OAuthStateService.VerifiedState("/rooms/abcd", null));
     when(googleClient.exchangeCode("code"))
         .thenReturn(new GoogleOAuthClient.GoogleIdentity("sub-1", "alice@example.com"));
     when(accountRepository.findByGoogleSubject("sub-1"))
@@ -155,7 +159,8 @@ class OAuthServiceTest {
 
   @Test
   void callbackStartsPendingRegistrationForAFirstTimeGoogleLogin() {
-    when(stateService.verify("state")).thenReturn("/rooms");
+    when(stateService.verify("state"))
+        .thenReturn(new OAuthStateService.VerifiedState("/rooms", null));
     when(googleClient.exchangeCode("code"))
         .thenReturn(new GoogleOAuthClient.GoogleIdentity("sub-1", "alice@example.com"));
     when(accountRepository.findByGoogleSubject("sub-1")).thenReturn(Optional.empty());
@@ -167,6 +172,40 @@ class OAuthServiceTest {
     assertThat(result).isInstanceOf(OAuthService.CallbackResult.PendingRegistration.class);
     assertThat(((OAuthService.CallbackResult.PendingRegistration) result).token())
         .isEqualTo("pending-token");
+  }
+
+  @Test
+  void linkCallbackStoresTheLinkRecordAndNeverIssuesOrReadsASession() {
+    UUID userId = UUID.randomUUID();
+    when(stateService.verify("state"))
+        .thenReturn(new OAuthStateService.VerifiedState("/settings", userId));
+    when(googleClient.exchangeCode("code"))
+        .thenReturn(new GoogleOAuthClient.GoogleIdentity("sub-1", "alice@example.com"));
+    when(accountRepository.googleSubjectHeld("sub-1")).thenReturn(false);
+    when(pendingLink.create(userId, "sub-1")).thenReturn("link-token");
+    when(pendingLink.ttl()).thenReturn(Duration.ofMinutes(10));
+
+    OAuthService.CallbackResult result = service.callback("code", "state");
+
+    assertThat(result).isInstanceOf(OAuthService.CallbackResult.LinkPending.class);
+    assertThat(((OAuthService.CallbackResult.LinkPending) result).token()).isEqualTo("link-token");
+    verify(sessionService, never()).issueSession(any(), any());
+    verify(accountRepository, never()).findByGoogleSubject(anyString());
+  }
+
+  @Test
+  void linkCallbackForASubAlreadyHeldStoresNothing() {
+    UUID userId = UUID.randomUUID();
+    when(stateService.verify("state"))
+        .thenReturn(new OAuthStateService.VerifiedState("/settings", userId));
+    when(googleClient.exchangeCode("code"))
+        .thenReturn(new GoogleOAuthClient.GoogleIdentity("sub-1", "alice@example.com"));
+    when(accountRepository.googleSubjectHeld("sub-1")).thenReturn(true);
+
+    OAuthService.CallbackResult result = service.callback("code", "state");
+
+    assertThat(result).isInstanceOf(OAuthService.CallbackResult.LinkError.class);
+    verify(pendingLink, never()).create(any(), anyString());
   }
 
   // ---- readPendingEmail ----
