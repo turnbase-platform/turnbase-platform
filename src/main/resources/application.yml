@@ -15,6 +15,10 @@ spring:
 
 server:
   port: 8080
+  # h2c on the plaintext connector: GameHostRegistryService (gRPC) shares this listener
+  # (local-environment.md §7.8, IMP-M3-05).
+  http2:
+    enabled: true
   # local-environment.md §3 shutdown table: Spring stops accepting and drains in-flight
   # requests on SIGTERM, bounded by spring.lifecycle.timeout-per-shutdown-phase above — the
   # Helm chart's preStop/terminationGracePeriodSeconds (IMP-M0-08) only give a graceful drain
@@ -86,6 +90,12 @@ turnbase:
       ttl: ${TURNBASE_ROOM_LEASE_TTL:10s}
       renew-interval: ${TURNBASE_ROOM_LEASE_RENEW_INTERVAL:3s}
       self-evict-after: ${TURNBASE_ROOM_LEASE_SELF_EVICT_AFTER:6s}
+  # local-environment.md §7.8 (IMP-GATE-87). Heartbeat interval and lease TTL are handed to the Game
+  # Host in RegisterResponse; the TTL is three intervals, under NFR-REL-002's 30s.
+  orchestration:
+    heartbeat-interval: ${TURNBASE_ORCHESTRATION_HEARTBEAT_INTERVAL:5s}
+    lease-ttl: ${TURNBASE_ORCHESTRATION_LEASE_TTL:15s}
+    dispatch-deadline: ${TURNBASE_ORCHESTRATION_DISPATCH_DEADLINE:35s}
   jobs:
     deadline-sweep:
       interval: ${TURNBASE_JOBS_DEADLINE_SWEEP_INTERVAL:5s}

@@ -394,6 +394,15 @@
       <groupId>io.grpc</groupId>
       <artifactId>grpc-netty-shaded</artifactId>
     </dependency>
+    <!--
+      local-environment.md §7.8: GameHostRegistryService shares the monolith's HTTP listener, so it
+      is served through the servlet container (h2c on Tomcat) rather than a second Netty port.
+    -->
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-servlet-jakarta</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
 
     <!-- JSpecify @NullMarked is read by NullAway (ADR-0015). -->
     <dependency>
