@@ -165,6 +165,14 @@ jobs:
           token: ${{ secrets.TURNBASE_FRONTEND_PAT }}
           path: turnbase-frontend
 
+      - name: Free disk space
+        # Two bootstrap installs, three Maven builds and three images (platform, game-host,
+        # frontend) plus the compose stack on top of a runner that ships several multi-GB
+        # toolchains this job never uses. Same step turnbase-game-host's own build.yml carries
+        # for the same reason. `|| true`: not every path exists on every runner image.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+
       - name: Set up GraalVM CE 21
         # turnbase-game-host's own Dockerfile expects target/turnbase-game-host-*.jar to
         # already exist (it packages, it does not build) — this job builds it from the
@@ -188,6 +196,23 @@ jobs:
           git clone --depth 1 "https://x-access-token:${TURNBASE_COMMON_PAT}@github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
           cd /tmp/turnbase-common
           ./mvnw --batch-mode --no-transfer-progress install -DskipTests
+
+      - name: Install turnbase-sdk (bootstrap — conventions.md §5, IMP-GATE-70)
+        # turnbase-game-host depends on turnbase-sdk and turnbase-serialization, both built by
+        # turnbase-sdk and neither published (no tagged release), so the build below needs
+        # them in this runner's local repository. One install at turnbase-sdk's root produces
+        # both. turnbase-sdk is private (ADR-0012): TURNBASE_SDK_PAT is a fine-grained PAT,
+        # read-only on Contents, scoped to turnbase-sdk only, stored on this repository as it
+        # is on turnbase-game-host. Delete this step, not adapt it, the same change that bumps
+        # turnbase-game-host's version properties to a real release.
+        env:
+          TURNBASE_SDK_PAT: ${{ secrets.TURNBASE_SDK_PAT }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TURNBASE_SDK_PAT}@github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
+          cd /tmp/turnbase-sdk
+          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
+          cd -
+          rm -rf /tmp/turnbase-sdk
 
       - name: Build turnbase-game-host
         # -DskipTests: turnbase-game-host's own CI (its own repo) already runs its full
