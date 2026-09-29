@@ -7,13 +7,11 @@ import org.springframework.stereotype.Component;
 
 /**
  * {@code room-lifecycle.md} §4's {@code terminateAndCleanup} pseudocode, step (a): {@code
- * TerminateSession(sessionId, reason)} against the Game Host, deadline 2s. No gRPC client to the
- * Game Host exists anywhere in this repository yet (same gap {@code PendingGameInputDispatcher}
- * stands in for on the dispatch side), so step (a) always fails honestly rather than pretending
- * success — every call takes step (c): log WARN and record the attempt on the durable {@code
- * session_teardown} row, left for {@link ReconciliationJob} duty (a) to re-drive. Step (b), the
- * on-success cleanup, has no code here for the same reason {@code PendingGameInputDispatcher} has
- * none for its own success branch: it is never reached.
+ * TerminateSession(sessionId, reason)} against the Game Host, deadline 2s. The {@code
+ * TerminateSession} client is {@code IMP-M3-08}'s, so step (a) always fails honestly rather than
+ * pretending success — every call takes step (c): log WARN and record the attempt on the durable
+ * {@code session_teardown} row, left for {@link ReconciliationJob} duty (a) to re-drive. Step (b),
+ * the on-success cleanup, has no code here because it is never reached.
  */
 @Component
 class SessionTerminatorImpl implements SessionTerminator {

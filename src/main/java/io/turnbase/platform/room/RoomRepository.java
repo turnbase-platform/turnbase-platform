@@ -2525,6 +2525,16 @@ class RoomRepository {
         .single();
   }
 
+  /** {@code data-model.md} §4.2: is a room still claiming this session as active? */
+  boolean sessionAttached(UUID sessionId) {
+    return jdbcClient
+        .sql("select 1 from room where active_session_id = :sessionId")
+        .param("sessionId", sessionId)
+        .query(Integer.class)
+        .optional()
+        .isPresent();
+  }
+
   void markOutboxDispatched(long outboxRowId) {
     jdbcClient
         .sql("update game_input_outbox set dispatched_at = now() where id = :id")

@@ -229,17 +229,16 @@ class GraceDeadlineSweepJob {
   }
 
   private void drainOne(RoomRepository.OutboxRow row) {
-    // data-model.md §4.2: allocated once, persisted, reused on every retry — the value itself is
-    // Orchestration's real per-session `seq:{sessionId}` Redis counter (IMP-M3-05), which does not
-    // exist yet; the row's own stable, monotonic identity stands in until it does. What this item's
-    // own tests hold it to is "allocated once, never re-rolled," which holds regardless of source.
+    // data-model.md §4.2: allocated once from the session's `seq:` counter, persisted, reused on
+    // every retry.
     long sequence =
         row.sequence() != null
             ? row.sequence()
-            : repository.allocateOutboxSequence(row.id(), row.id());
+            : repository.allocateOutboxSequence(
+                row.id(), dispatcher.allocateSequence(row.sessionId()));
     boolean delivered;
     try {
-      delivered = dispatcher.dispatch(row.id(), sequence, row.payloadJson());
+      delivered = dispatcher.dispatch(row.id(), row.sessionId(), sequence, row.payloadJson());
     } catch (RuntimeException e) {
       log.warn("outbox row {} dispatch threw", row.id(), e);
       repository.recordOutboxAttemptFailure(

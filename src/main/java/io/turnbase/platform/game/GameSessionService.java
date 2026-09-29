@@ -8,6 +8,7 @@ import io.turnbase.grpc.gamehost.v1.CreateSessionRequest;
 import io.turnbase.grpc.gamehost.v1.CreateSessionResponse;
 import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
 import io.turnbase.grpc.gamehost.v1.PlayerRef;
+import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.grpc.gamehost.v1.Team;
 import java.nio.charset.StandardCharsets;
@@ -37,12 +38,15 @@ public class GameSessionService {
   private final GameHostChannels channels;
   private final StringRedisTemplate redis;
   private final OrchestrationProperties properties;
+  private final EffectDelivery effects;
 
   GameSessionService(
       HostRegistry registry,
       GameHostChannels channels,
       StringRedisTemplate redis,
-      OrchestrationProperties properties) {
+      OrchestrationProperties properties,
+      EffectDelivery effects) {
+    this.effects = effects;
     this.registry = registry;
     this.channels = channels;
     this.redis = redis;
@@ -70,8 +74,10 @@ public class GameSessionService {
     }
 
     writeKeys(sessionId, instanceId);
+    ProcessResult initialEffects;
     try {
       CreateSessionResponse response = callCreateSession(address.get(), command);
+      initialEffects = response.getResult();
       if (response.getResult().getStatus() != ProcessStatus.PROCESS_STATUS_OK) {
         throw new GameSessionCreationException(
             GameSessionCreationException.Reason.SESSION_CREATION_FAILED,
@@ -86,6 +92,12 @@ public class GameSessionService {
           GameSessionCreationException.Reason.SESSION_CREATION_FAILED, e.toString());
     }
     log.info("Session created sessionId={} instanceId={}", sessionId, instanceId);
+    try {
+      effects.deliver(command.sessionId(), 0, initialEffects.getEffectsList());
+    } catch (RuntimeException e) {
+      // The session exists; a fan-out fault must not roll the room back to Lobby.
+      log.error("Initial effects of sessionId={} not delivered", sessionId, e);
+    }
   }
 
   private CreateSessionResponse callCreateSession(String address, CreateSessionCommand command) {
