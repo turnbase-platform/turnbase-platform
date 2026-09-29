@@ -692,6 +692,15 @@
               <includes>
                 <include>**/*IT.java</include>
               </includes>
+              <systemPropertyVariables>
+                <!--
+                  Every IT boots and closes an application per test method. With the default
+                  http://tempo:4317 endpoint unresolvable, OpenTelemetrySdk.close() blocks about
+                  8 s flushing spans to it on each close — roughly 13 of the ~22 minutes the
+                  suite took in CI. Nothing in an IT asserts on exported spans.
+                -->
+                <management.otlp.tracing.export.enabled>false</management.otlp.tracing.export.enabled>
+              </systemPropertyVariables>
             </configuration>
             <executions>
               <execution>

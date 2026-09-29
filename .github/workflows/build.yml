@@ -23,6 +23,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A healthy run is ~10-25 min; 2026-09-26 sat 2h14m before being cancelled by hand.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -136,6 +138,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     continue-on-error: true
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
