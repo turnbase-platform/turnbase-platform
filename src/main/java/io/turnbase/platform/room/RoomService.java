@@ -2,10 +2,12 @@ package io.turnbase.platform.room;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.turnbase.platform.common.BusinessRuleException;
+import io.turnbase.platform.common.GameFrontendProperties;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.PaginationMetadata;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
+import io.turnbase.platform.game.GameSessionService;
 import io.turnbase.platform.notification.AlertPublisher;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +36,8 @@ class RoomService {
   private final RoomEventExecutor events;
   private final PodIdentity pod;
   private final RoomProperties properties;
-  private final GameSessionStarter gameSessionStarter;
+  private final GameSessionService gameSessions;
+  private final GameFrontendProperties frontend;
   private final SessionTerminator terminator;
   private final AlertPublisher alertPublisher;
 
@@ -44,7 +47,8 @@ class RoomService {
       RoomEventExecutor events,
       PodIdentity pod,
       RoomProperties properties,
-      GameSessionStarter gameSessionStarter,
+      GameSessionService gameSessions,
+      GameFrontendProperties frontend,
       SessionTerminator terminator,
       AlertPublisher alertPublisher) {
     this.repository = repository;
@@ -52,7 +56,8 @@ class RoomService {
     this.events = events;
     this.pod = pod;
     this.properties = properties;
-    this.gameSessionStarter = gameSessionStarter;
+    this.gameSessions = gameSessions;
+    this.frontend = frontend;
     this.terminator = terminator;
     this.alertPublisher = alertPublisher;
   }
@@ -396,16 +401,40 @@ class RoomService {
   }
 
   /**
-   * {@code START_GAME} — preconditions only; no event, since nothing about the room changes until
-   * {@code IMP-M3-05}'s real {@link GameSessionStarter} exists (`IMP-GATE-46`).
+   * {@code START_GAME} ({@code flows/02-room-to-game-start.md} §E). The Game Host call runs under
+   * the room lock but outside any database transaction; only the durable record and the {@code
+   * GAME_STARTED} broadcast (step 9) are committed and published, and only after the session
+   * exists.
    */
   void startGame(UUID roomId, UUID hostUserId) {
-    events.execute(
+    UUID sessionId = UUID.randomUUID();
+    events.withLock(
         roomId,
         () -> {
           repository.checkStartConditions(roomId, hostUserId);
-          gameSessionStarter.start(roomId, hostUserId);
-          return new RoomEventExecutor.MutationOutcome<>(Boolean.TRUE, null);
+          try {
+            gameSessions.create(repository.sessionCommand(roomId, sessionId));
+          } catch (GameSessionService.GameSessionCreationException e) {
+            throw new RoomCommandException(
+                "GAME_START_FAILED",
+                "The game could not be started. Try again.",
+                Map.of("reason", e.reason().name()));
+          }
+          String gameFrontendUrl =
+              frontend.originTemplate().replace("{gameId}", repository.gameIdOf(roomId).toString())
+                  + "/play/"
+                  + sessionId;
+          events.execute(
+              roomId,
+              () -> {
+                repository.markGameStarted(roomId, sessionId);
+                return new RoomEventExecutor.MutationOutcome<>(
+                    Boolean.TRUE,
+                    new RoomEventExecutor.RoomEvent(
+                        "GAME_STARTED",
+                        Map.of("sessionId", sessionId, "gameFrontendUrl", gameFrontendUrl)));
+              });
+          return Boolean.TRUE;
         });
   }
 

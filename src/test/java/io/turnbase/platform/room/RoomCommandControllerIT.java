@@ -3,6 +3,18 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.grpc.ManagedChannel;
+import io.grpc.Server;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.stub.StreamObserver;
+import io.turnbase.grpc.gamehost.v1.CreateSessionRequest;
+import io.turnbase.grpc.gamehost.v1.CreateSessionResponse;
+import io.turnbase.grpc.gamehost.v1.GameHostRegistryServiceGrpc;
+import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
+import io.turnbase.grpc.gamehost.v1.ProcessResult;
+import io.turnbase.grpc.gamehost.v1.ProcessStatus;
+import io.turnbase.grpc.gamehost.v1.RegisterRequest;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.lang.reflect.Type;
@@ -11,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.jspecify.annotations.Nullable;
@@ -19,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -70,7 +84,8 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
             "--turnbase.admin.username=admin",
             "--turnbase.admin.password=admin",
             "--spring.data.redis.url=" + redisUrl(),
-            "--turnbase.rate-limit.minting.guest.capacity=1000000");
+            "--turnbase.rate-limit.minting.guest.capacity=1000000",
+            "--turnbase.rate-limit.ws.command.capacity=1000");
     context = booted;
     int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
@@ -200,6 +215,129 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void startGameCreatesTheSessionPersistsItAndServesTheBootstrap() throws Exception {
+    List<CreateSessionRequest> received = new CopyOnWriteArrayList<>();
+    Server fakeHost =
+        NettyServerBuilder.forPort(0)
+            .addService(
+                new GameHostServiceGrpc.GameHostServiceImplBase() {
+                  @Override
+                  public void createSession(
+                      CreateSessionRequest request, StreamObserver<CreateSessionResponse> out) {
+                    received.add(request);
+                    out.onNext(
+                        CreateSessionResponse.newBuilder()
+                            .setResult(
+                                ProcessResult.newBuilder()
+                                    .setSessionId(request.getSessionId())
+                                    .setStatus(ProcessStatus.PROCESS_STATUS_OK))
+                            .build());
+                    out.onCompleted();
+                  }
+                })
+            .build()
+            .start();
+    ManagedChannel registry =
+        NettyChannelBuilder.forAddress("127.0.0.1", Integer.parseInt(baseUrl.split(":")[2]))
+            .usePlaintext()
+            .build();
+    try {
+      GameHostRegistryServiceGrpc.newBlockingStub(registry)
+          .register(
+              RegisterRequest.newBuilder()
+                  .setInstanceId("fake-host")
+                  .setAddress("127.0.0.1:" + fakeHost.getPort())
+                  .addRuntimeTypes("jvm")
+                  .build());
+
+      String hostCookie = mintGuestCookie();
+      UUID gameId = seedGame();
+      UUID roomId = createPublicRoom(hostCookie, gameId);
+      String aliceCookie = mintGuestCookie();
+      UUID aliceId = join(aliceCookie, roomId);
+      Session host = connect(hostCookie, roomId);
+      Session alice = connect(aliceCookie, roomId);
+      alice.send("TOGGLE_READY", "r1", Map.of("ready", true));
+      poll(host.roomTopic);
+
+      host.send("START_GAME", "s1", null);
+      Map<String, Object> started = poll(host.roomTopic);
+      assertThat(started.get("type")).isEqualTo("GAME_STARTED");
+      Map<?, ?> payload = (Map<?, ?>) Objects.requireNonNull(started.get("payload"));
+      String sessionId = (String) Objects.requireNonNull(payload.get("sessionId"));
+      assertThat((String) payload.get("gameFrontendUrl"))
+          .isEqualTo("http://" + gameId + ".games.localhost:8080/play/" + sessionId);
+
+      JdbcClient jdbc = context().getBean(JdbcClient.class);
+      assertThat(
+              jdbc.sql("select state from room where room_id = :r")
+                  .param("r", roomId)
+                  .query(String.class)
+                  .single())
+          .isEqualTo("IN_PROGRESS");
+      assertThat(
+              jdbc.sql("select active_session_id from room where room_id = :r")
+                  .param("r", roomId)
+                  .query(UUID.class)
+                  .single())
+          .isEqualTo(UUID.fromString(sessionId));
+
+      assertThat(received).hasSize(1);
+      CreateSessionRequest request = received.get(0);
+      assertThat(request.getSessionId()).isEqualTo(sessionId);
+      assertThat(request.getContext().getGameId()).isEqualTo(gameId.toString());
+      assertThat(request.getContext().getGameVersion()).isEqualTo("1.0.0");
+      assertThat(request.getEntryPointFqcn()).isEqualTo("com.acme.Game");
+      assertThat(request.getParameters().toStringUtf8()).contains("\"moveTimer\":60");
+      assertThat(request.getTeamsList().stream().map(t -> t.getName()).toList())
+          .contains("Red 1", "Blue 1");
+      assertThat(
+              request.getTeamsList().stream()
+                  .flatMap(t -> t.getPlayersList().stream())
+                  .map(p -> p.getPlayerId())
+                  .toList())
+          .contains(aliceId.toString());
+
+      StringRedisTemplate redis = context().getBean(StringRedisTemplate.class);
+      assertThat(redis.opsForValue().get("routing:" + sessionId)).isEqualTo("fake-host");
+      assertThat(redis.hasKey("seq:" + sessionId)).isTrue();
+      assertThat(redis.hasKey("delivered:" + sessionId)).isTrue();
+      assertThat(redis.hasKey("session:" + sessionId)).isFalse();
+
+      // /play/{sessionId}: the pinned bundle on the matching game origin, 404 anywhere else.
+      String gameHost = gameId + ".games.localhost:8080";
+      String bootstrap = rawGet("/play/" + sessionId, gameHost);
+      assertThat(bootstrap).startsWith("HTTP/1.1 200");
+      assertThat(bootstrap)
+          .contains("<base href=\"/g/" + gameId + "/1.0.0/\">")
+          .contains("sessionId: \"" + sessionId + "\"")
+          .contains("src=\"main.js\"")
+          .contains("no-store");
+      assertThat(rawGet("/play/" + sessionId, UUID.randomUUID() + ".games.localhost:8080"))
+          .startsWith("HTTP/1.1 404");
+      assertThat(rawGet("/play/" + UUID.randomUUID(), gameHost)).startsWith("HTTP/1.1 404");
+      assertThat(rawGet("/play/" + sessionId, "turnbase.localhost:8080"))
+          .startsWith("HTTP/1.1 404");
+    } finally {
+      registry.shutdownNow();
+      fakeHost.shutdownNow();
+    }
+  }
+
+  private String rawGet(String path, String hostHeader) throws java.io.IOException {
+    int port = Integer.parseInt(baseUrl.split(":")[2]);
+    try (java.net.Socket socket = new java.net.Socket("127.0.0.1", port)) {
+      socket
+          .getOutputStream()
+          .write(
+              ("GET " + path + " HTTP/1.1\r\nHost: " + hostHeader + "\r\nConnection: close\r\n\r\n")
+                  .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      return new String(
+          socket.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+  }
+
+  @Test
   void requestRoomStateDeliversAUnicastVersionedSnapshot() throws Exception {
     String hostCookie = mintGuestCookie();
     UUID gameId = seedGame();
@@ -296,10 +434,15 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
     alice.send("TOGGLE_READY", "r1", Map.of("ready", true));
     poll(host.roomTopic); // drain READINESS_CHANGED
 
-    // Preconditions now hold. IMP-GATE-46: this item stops at calling GameSessionStarter — no
-    // broadcast, no state change, until IMP-M3-05 gives it something real to announce.
+    // Preconditions now hold, but no Game Host is registered (IMP-GATE-88): unicast failure, the
+    // room stays in the Lobby and nothing is broadcast.
     host.send("START_GAME", "s2", null);
-    assertThat(pollOrNull(host.errors)).isNull();
+    Map<String, Object> startFailed = poll(host.errors);
+    assertThat(errorCode(startFailed)).isEqualTo("GAME_START_FAILED");
+    Map<?, ?> startFailedPayload = (Map<?, ?>) Objects.requireNonNull(startFailed.get("payload"));
+    assertThat(
+            ((Map<?, ?>) Objects.requireNonNull(startFailedPayload.get("details"))).get("reason"))
+        .isEqualTo("NO_HOST_AVAILABLE");
     assertThat(pollOrNull(host.roomTopic)).isNull();
 
     host.send("REQUEST_ROOM_STATE", "s3", null);
@@ -496,7 +639,8 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
         .param(
             "manifest",
             """
-            {"teamTemplates":[
+            {"backend":{"entryPoint":"com.acme.Game"},"frontend":{"entryPoint":"main.js"},
+            "teamTemplates":[
               {"name":"Red","size":{"min":1,"max":2},"count":{"min":1,"max":2}},
               {"name":"Blue","size":{"min":1,"max":1},"count":{"min":1,"max":1}}
             ],

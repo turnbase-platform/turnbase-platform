@@ -2,6 +2,8 @@ package io.turnbase.platform.game;
 
 import io.grpc.servlet.jakarta.GrpcServlet;
 import java.util.List;
+import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,5 +32,19 @@ class GrpcServletConfig {
     bean.setAsyncSupported(true);
     bean.setName("gameHostRegistryGrpc");
     return bean;
+  }
+
+  /**
+   * With h2c enabled, Tomcat buffers the body of any request that asks for an {@code Upgrade: h2c}
+   * (the JDK HTTP client does, for every POST) and answers its own HTML 413 once the body passes
+   * {@code maxSavePostSize} — 4 KiB by default — before the request reaches {@code
+   * RequestSizeInterceptor}, so the problem-details 413 of {@code error-handling.md} is lost. 1 MiB
+   * is far above the 64 KiB body cap and still a bound on what an upgrading client can make the
+   * container hold.
+   */
+  @Bean
+  WebServerFactoryCustomizer<TomcatServletWebServerFactory> upgradeBodyBuffer() {
+    return factory ->
+        factory.addConnectorCustomizers(connector -> connector.setMaxSavePostSize(1024 * 1024));
   }
 }

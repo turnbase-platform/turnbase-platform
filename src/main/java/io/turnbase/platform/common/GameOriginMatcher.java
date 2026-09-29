@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  * port actually bound at runtime (e.g. an ephemeral test port).
  */
 @Component
-class GameOriginMatcher {
+public class GameOriginMatcher {
 
   private static final String PLACEHOLDER = "{gameId}";
 
@@ -30,6 +30,27 @@ class GameOriginMatcher {
     // The placeholder search must run before case-folding: PLACEHOLDER is mixed-case and
     // hostOnly() lower-cases its result, which would otherwise hide "{gameId}" from indexOf.
     this.gameHostTemplate = hostOnly(gameFrontend.originTemplate());
+  }
+
+  /**
+   * Whether a request on game origin {@code hostHeader} may see {@code gameId}'s content: under a
+   * {@code {gameId}}-templated origin the subdomain must name that game (the cross-check that keeps
+   * one game's origin from rendering another's session); a literal origin carries no game identity.
+   */
+  public boolean hostServesGame(@Nullable String hostHeader, String gameId) {
+    int placeholder = gameHostTemplate.indexOf(PLACEHOLDER.toLowerCase(Locale.ROOT));
+    if (placeholder < 0) {
+      return isGameHost(hostHeader);
+    }
+    if (hostHeader == null || !isGameHost(hostHeader)) {
+      return false;
+    }
+    String host = hostOnly(hostHeader);
+    String captured =
+        host.substring(
+            placeholder,
+            host.length() - (gameHostTemplate.length() - placeholder - PLACEHOLDER.length()));
+    return captured.equalsIgnoreCase(gameId);
   }
 
   boolean isGameHost(@Nullable String hostHeader) {
