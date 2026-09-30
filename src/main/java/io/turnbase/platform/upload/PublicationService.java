@@ -1,6 +1,8 @@
 package io.turnbase.platform.upload;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.turnbase.bundle.ArchiveEntry;
+import io.turnbase.bundle.ArchiveReadResult;
 import io.turnbase.platform.common.CheckError;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

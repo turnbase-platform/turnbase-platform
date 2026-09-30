@@ -2,6 +2,7 @@ package io.turnbase.platform.upload;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.turnbase.bundle.VersionOrdering;
 import io.turnbase.platform.common.CheckError;
 import java.sql.Timestamp;
 import java.time.Instant;

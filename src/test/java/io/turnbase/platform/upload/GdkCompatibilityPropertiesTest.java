@@ -2,6 +2,7 @@ package io.turnbase.platform.upload;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.turnbase.bundle.VersionOrdering;
 import org.junit.jupiter.api.Test;
 
 /** {@code bundle-format.md} §6.1/§8: the MVP default range is {@code 0.3.0-0.3.0}. */

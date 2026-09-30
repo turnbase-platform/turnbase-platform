@@ -129,19 +129,13 @@
     <netty.version>4.1.137.Final</netty.version>
 
     <!--
-      IMP-M4-02: Layer 1 of manifest validation (manifest-schema.md § Validation) is
-      manifest.schema.json itself, run by an engine rather than hand-written per-field checks —
-      the schema is Draft 2020-12, which json-schema-validator has supported since 1.0.87.
+      IMP-M3-13: turnbase-bundle-validator (the upload pipeline's archive reader, manifest
+      validation and Phase F analysis, shared with the SDK test harness) is built by
+      turnbase-sdk. Same bootstrap exception as turnbase-common above: no tagged release exists,
+      so this pins the current development version and resolves it from the local install. It
+      brings json-schema-validator and ASM in transitively.
     -->
-    <json-schema-validator.version>1.5.8</json-schema-validator.version>
-
-    <!--
-      IMP-M4-03: Phase F's static bytecode inspection (class file major version, TurnBaseGame
-      entry-point resolution, generic-signature parsing for the state type S, MethodParameters
-      attribute presence for F6/F7). Read-only structural analysis, not classloading — ASM's
-      Core API (ClassReader/ClassVisitor) plus the Tree API for signature/generic inspection.
-    -->
-    <asm.version>9.7.1</asm.version>
+    <turnbase-sdk.version>0.1.0-SNAPSHOT</turnbase-sdk.version>
   </properties>
 
   <dependencyManagement>
@@ -297,26 +291,11 @@
       <version>${aws-sdk.version}</version>
     </dependency>
 
-    <!--
-      IMP-M4-02: Draft 2020-12 JSON Schema evaluation against the committed
-      manifest.schema.json copy (below).
-    -->
+    <!-- IMP-M3-13: bundle validation (bundle-format.md §3 Phases C-F), extracted to turnbase-sdk. -->
     <dependency>
-      <groupId>com.networknt</groupId>
-      <artifactId>json-schema-validator</artifactId>
-      <version>${json-schema-validator.version}</version>
-    </dependency>
-
-    <!-- IMP-M4-03: Phase F bytecode inspection (see the asm.version property above). -->
-    <dependency>
-      <groupId>org.ow2.asm</groupId>
-      <artifactId>asm</artifactId>
-      <version>${asm.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.ow2.asm</groupId>
-      <artifactId>asm-tree</artifactId>
-      <version>${asm.version}</version>
+      <groupId>io.turnbase</groupId>
+      <artifactId>turnbase-bundle-validator</artifactId>
+      <version>${turnbase-sdk.version}</version>
     </dependency>
 
     <!-- IMP-M1-05: the guest purge job's cross-instance mutual exclusion (FR-JOB-005). -->

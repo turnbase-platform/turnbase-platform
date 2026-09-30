@@ -1,5 +1,6 @@
 package io.turnbase.platform.upload;
 
+import io.turnbase.bundle.VersionOrdering;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
