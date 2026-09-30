@@ -134,12 +134,19 @@ services:
       TURNBASE_ADMIN_PASSWORD: ${TURNBASE_ADMIN_PASSWORD:?TURNBASE_ADMIN_PASSWORD is required}
       # secrets-and-configuration.md §5: absent by default, and the platform starts anyway — no
       # `:?required` guard, unlike every secret above.
+      TURNBASE_SEED_BUNDLES_DIR: /seed/bundles
       TURNBASE_OAUTH_GOOGLE_CLIENT_ID: ${TURNBASE_OAUTH_GOOGLE_CLIENT_ID:-}
       TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET: ${TURNBASE_OAUTH_GOOGLE_CLIENT_SECRET:-}
     # 8080 is not published: the frontend service owns host port 8080 and proxies to this
     # container over the compose network (local-environment.md §1, IMP-GATE-74).
     ports:
       - "127.0.0.1:8081:8081"
+    # The official games the seeder uploads (local-environment.md §6, IMP-GATE-71): every
+    # `<gameId>.zip` in turnbase.seed.bundles-dir. `./scripts/package.sh` in
+    # turnbase-game-tictactoe writes its bundle here. Absent directory: compose creates it empty,
+    # and the seeder logs one INFO line and seeds no games.
+    volumes:
+      - ${TURNBASE_SEED_BUNDLES_HOST_DIR:-../../../turnbase-game-tictactoe/target/seed}:/seed/bundles:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/actuator/health"]
       interval: 5s

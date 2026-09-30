@@ -23,3 +23,6 @@ data:
   # makes it required — the HPA below can run more than one replica, and a self-generated key is
   # only correct for exactly one.
   TURNBASE_JWT_KEY_SET_REQUIRED: "true"
+  {{- if .Values.platform.seed.bundlesHostPath }}
+  TURNBASE_SEED_BUNDLES_DIR: /seed/bundles
+  {{- end }}

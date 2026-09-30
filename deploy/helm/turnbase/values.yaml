@@ -40,6 +40,12 @@ platform:
   containerPort: 8080
   managementPort: 8081
   resources: {}
+  # local-environment.md §6 (IMP-GATE-71, IMP-M3-10): directory of `<gameId>.zip` official-game
+  # bundles the seeder uploads under the `local` profile. Empty = none mounted, no games seeded.
+  # A hostPath, so it only means something on the single-node Docker Desktop cluster; set it in
+  # values-local.yaml to the absolute path of turnbase-game-tictactoe/target/seed.
+  seed:
+    bundlesHostPath: ""
   autoscaling:
     # NFR-SCALE-001 defers multi-instance deployment post-MVP; the template exists so turning
     # this on later is a values change, not a new template. Do not enable it against the

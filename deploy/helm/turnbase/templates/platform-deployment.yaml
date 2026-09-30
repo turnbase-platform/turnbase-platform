@@ -64,3 +64,16 @@ spec:
             failureThreshold: 6
           resources:
             {{- toYaml .Values.platform.resources | nindent 12 }}
+          {{- if .Values.platform.seed.bundlesHostPath }}
+          volumeMounts:
+            - name: seed-bundles
+              mountPath: /seed/bundles
+              readOnly: true
+          {{- end }}
+      {{- if .Values.platform.seed.bundlesHostPath }}
+      volumes:
+        - name: seed-bundles
+          hostPath:
+            path: {{ .Values.platform.seed.bundlesHostPath | quote }}
+            type: Directory
+      {{- end }}
