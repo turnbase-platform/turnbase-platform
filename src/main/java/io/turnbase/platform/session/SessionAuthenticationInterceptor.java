@@ -111,7 +111,7 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
     if (rest.isEmpty() || "me".equals(rest) || rest.startsWith("me/")) {
       return false;
     }
-    return !rest.contains("/") || rest.endsWith("/friends");
+    return !rest.contains("/") || rest.endsWith("/friends") || rest.endsWith("/history");
   }
 
   private static String pathOf(HttpServletRequest request) {

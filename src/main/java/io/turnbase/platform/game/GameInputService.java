@@ -6,9 +6,11 @@ import io.turnbase.grpc.gamehost.v1.ActionInput;
 import io.turnbase.grpc.gamehost.v1.Effect;
 import io.turnbase.grpc.gamehost.v1.GameFailureKind;
 import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
+import io.turnbase.grpc.gamehost.v1.GameOutcome;
 import io.turnbase.grpc.gamehost.v1.ProcessInputRequest;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -65,6 +67,8 @@ public class GameInputService {
   private final OrchestrationProperties properties;
   private final EffectDelivery effects;
   private final GameEndListener gameEnd;
+  private final GameOutcomeRecorder outcomeRecorder;
+  private final SessionRosterSource rosters;
   private final SessionFailureListener sessionFailure;
   private final int retryLimit;
   private final Map<UUID, ReentrantLock> submitLocks = new ConcurrentHashMap<>();
@@ -76,6 +80,8 @@ public class GameInputService {
       OrchestrationProperties properties,
       EffectDelivery effects,
       GameEndListener gameEnd,
+      GameOutcomeRecorder outcomeRecorder,
+      SessionRosterSource rosters,
       SessionFailureListener sessionFailure,
       @Value("${turnbase.gamehost.retry-limit:3}") int retryLimit) {
     this.registry = registry;
@@ -84,6 +90,8 @@ public class GameInputService {
     this.properties = properties;
     this.effects = effects;
     this.gameEnd = gameEnd;
+    this.outcomeRecorder = outcomeRecorder;
+    this.rosters = rosters;
     this.sessionFailure = sessionFailure;
     this.retryLimit = retryLimit;
   }
@@ -149,9 +157,10 @@ public class GameInputService {
     if (result.getStatus() == ProcessStatus.PROCESS_STATUS_OK) {
       redis.opsForValue().set("failcount:" + sessionId, "0", HostRegistry.KEY_TTL);
       deliverOnce(sessionId, request.getSequence(), result);
-      if (result.getEffectsList().stream().anyMatch(Effect::hasGameOver)) {
-        announceGameOver(sessionId);
-      }
+      result.getEffectsList().stream()
+          .filter(Effect::hasGameOver)
+          .findFirst()
+          .ifPresent(effect -> announceGameOver(sessionId, effect.getGameOver().getOutcome()));
       return new Result(Outcome.DELIVERED, null);
     }
     // Detail goes to the log only: it is game-supplied text and never reaches a client.
@@ -198,11 +207,47 @@ public class GameInputService {
    * a delivered result into a failed input: the replay of this sequence re-announces the end, and
    * detach is idempotent.
    */
-  private void announceGameOver(UUID sessionId) {
+  private void announceGameOver(UUID sessionId, GameOutcome outcome) {
+    recordOutcome(sessionId, outcome);
     try {
       gameEnd.onGameOver(sessionId);
     } catch (RuntimeException e) {
       log.error("Game end of sessionId={} could not be detached", sessionId, e);
+    }
+  }
+
+  /**
+   * History and statistics ({@code flows/06} §C). Read before detach, which clears the roster. A
+   * failure is logged, not thrown: the room must still return to Lobby, and a replay of the same
+   * sequence finds the completion row already written or the roster already gone.
+   */
+  private void recordOutcome(UUID sessionId, GameOutcome outcome) {
+    try {
+      String gameKey = redis.opsForValue().get("gamekey:" + sessionId);
+      if (gameKey == null) {
+        log.warn("No game key for sessionId={}; outcome not recorded", sessionId);
+        return;
+      }
+      int split = gameKey.indexOf(':');
+      outcomeRecorder.record(
+          new GameOutcomeReport(
+              sessionId,
+              UUID.fromString(gameKey.substring(0, split)),
+              gameKey.substring(split + 1),
+              Instant.now(),
+              outcome.getDraw(),
+              outcome.getTeamResultsList().stream()
+                  .map(
+                      t ->
+                          new GameOutcomeReport.TeamOutcome(
+                              t.getTeamId(), t.getPlacement(), t.getStatsMap()))
+                  .toList(),
+              outcome.getPlayerResultsList().stream()
+                  .map(p -> new GameOutcomeReport.PlayerOutcome(p.getPlayerId(), p.getStatsMap()))
+                  .toList(),
+              rosters.rosterOf(sessionId).orElse(null)));
+    } catch (RuntimeException e) {
+      log.error("Outcome of sessionId={} could not be recorded", sessionId, e);
     }
   }
 

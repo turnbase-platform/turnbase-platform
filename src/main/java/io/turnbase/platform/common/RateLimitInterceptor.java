@@ -303,7 +303,8 @@ class RateLimitInterceptor implements HandlerInterceptor {
 
   /**
    * The same public-read shape {@code session.SessionAuthenticationInterceptor} exempts from
-   * authentication — {@code GET /api/users/{username}} and its {@code /friends} suffix.
+   * authentication — {@code GET /api/users/{username}} and its {@code /friends} and {@code
+   * /history} suffixes.
    */
   private static boolean isPublicRead(String method, String path) {
     if (!"GET".equalsIgnoreCase(method) || !path.startsWith(USERS_PATH_PREFIX)) {
@@ -313,7 +314,7 @@ class RateLimitInterceptor implements HandlerInterceptor {
     if (rest.isEmpty() || "me".equals(rest) || rest.startsWith("me/")) {
       return false;
     }
-    return !rest.contains("/") || rest.endsWith("/friends");
+    return !rest.contains("/") || rest.endsWith("/friends") || rest.endsWith("/history");
   }
 
   private static @Nullable AuthenticatedUser principalOf(HttpServletRequest request) {
