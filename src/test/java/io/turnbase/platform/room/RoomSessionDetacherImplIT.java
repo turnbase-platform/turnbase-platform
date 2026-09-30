@@ -72,6 +72,28 @@ class RoomSessionDetacherImplIT extends PostgresIntegrationTest {
     assertThat(roomVersion(context, roomId)).isEqualTo(1L);
   }
 
+  @Test
+  void theRetryLimitFailsTheRoomBackToLobbyWithNoClosedReason() {
+    context = boot();
+    UUID roomId = insertRoom(context);
+    UUID sessionId = UUID.randomUUID();
+    context
+        .getBean(JdbcClient.class)
+        .sql("update room set state = 'IN_PROGRESS' where room_id = :roomId")
+        .param("roomId", roomId)
+        .update();
+    setActiveSession(context, roomId, sessionId);
+    context.getBean(RoomOwnershipService.class).claim(roomId);
+
+    // By class: GameInputServiceIT's @Primary recorder is component-scanned into every IT context.
+    context.getBean(RoomSessionFailureListener.class).onRetryLimitReached(sessionId);
+
+    Map<String, Object> room = roomRow(context, roomId);
+    assertThat(room.get("state")).isEqualTo("LOBBY");
+    assertThat(room.get("closed_reason")).isNull();
+    assertThat(room.get("active_session_id")).isNull();
+  }
+
   private static ConfigurableApplicationContext boot() {
     return SpringApplication.run(
         TurnBaseApplication.class,

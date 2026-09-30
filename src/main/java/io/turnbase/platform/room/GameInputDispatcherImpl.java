@@ -51,7 +51,7 @@ class GameInputDispatcherImpl implements GameInputDispatcher {
     return switch (outcome) {
       case DELIVERED, REJECTED -> true;
       case RETRY_LIMIT_REACHED -> {
-        // Termination is IMP-M3-08's durable to-do; the input itself is spent.
+        // Already detached to Lobby by GameInputService; the input itself is spent.
         log.error("sessionId={} reached the retry limit on outbox row {}", sessionId, outboxRowId);
         yield true;
       }

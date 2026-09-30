@@ -4,6 +4,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.turnbase.grpc.gamehost.v1.ActionInput;
 import io.turnbase.grpc.gamehost.v1.Effect;
+import io.turnbase.grpc.gamehost.v1.GameFailureKind;
 import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
 import io.turnbase.grpc.gamehost.v1.ProcessInputRequest;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
@@ -14,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,12 +53,19 @@ public class GameInputService {
     SESSION_FAILED
   }
 
+  /**
+   * An {@link Outcome} with, for the two game-failure outcomes, the {@link GameFailureKind} name
+   * the acting player is told ({@code ACTION_REJECTED}); never the failure message.
+   */
+  public record Result(Outcome outcome, @Nullable String failureKind) {}
+
   private final HostRegistry registry;
   private final GameHostChannels channels;
   private final StringRedisTemplate redis;
   private final OrchestrationProperties properties;
   private final EffectDelivery effects;
   private final GameEndListener gameEnd;
+  private final SessionFailureListener sessionFailure;
   private final int retryLimit;
   private final Map<UUID, ReentrantLock> submitLocks = new ConcurrentHashMap<>();
 
@@ -67,6 +76,7 @@ public class GameInputService {
       OrchestrationProperties properties,
       EffectDelivery effects,
       GameEndListener gameEnd,
+      SessionFailureListener sessionFailure,
       @Value("${turnbase.gamehost.retry-limit:3}") int retryLimit) {
     this.registry = registry;
     this.channels = channels;
@@ -74,6 +84,7 @@ public class GameInputService {
     this.properties = properties;
     this.effects = effects;
     this.gameEnd = gameEnd;
+    this.sessionFailure = sessionFailure;
     this.retryLimit = retryLimit;
   }
 
@@ -93,11 +104,11 @@ public class GameInputService {
    * allocate-and-dispatch pair must not interleave. Room affinity puts every action of a session on
    * this pod, which is why a pod-local lock suffices here.
    */
-  public Outcome submitAction(UUID sessionId, ActionInput action) {
+  public Result submitAction(UUID sessionId, ActionInput action) {
     ReentrantLock lock = submitLocks.computeIfAbsent(sessionId, id -> new ReentrantLock());
     lock.lock();
     try {
-      return process(
+      return processDetailed(
           ProcessInputRequest.newBuilder()
               .setSessionId(sessionId.toString())
               .setSequence(allocateSequence(sessionId))
@@ -110,16 +121,20 @@ public class GameInputService {
 
   /** {@code request.sequence} must have been allocated by {@link #allocateSequence}. */
   public Outcome process(ProcessInputRequest request) {
+    return processDetailed(request).outcome();
+  }
+
+  private Result processDetailed(ProcessInputRequest request) {
     UUID sessionId = UUID.fromString(request.getSessionId());
     String instanceId = redis.opsForValue().get("routing:" + sessionId);
     if (instanceId == null) {
-      return Outcome.SESSION_NOT_FOUND;
+      return new Result(Outcome.SESSION_NOT_FOUND, null);
     }
     Optional<String> address = registry.addressOf(instanceId);
     if (address.isEmpty()) {
       log.warn("Host {} of sessionId={} is gone; input left for retry", instanceId, sessionId);
       reassign(sessionId, instanceId);
-      return failedAttempt(sessionId, Outcome.RETRY);
+      return infrastructure(failedAttempt(sessionId, Outcome.RETRY), sessionId);
     }
     ProcessResult result;
     try {
@@ -129,7 +144,7 @@ public class GameInputService {
               .processInput(request)
               .getResult();
     } catch (StatusRuntimeException e) {
-      return onTransportFailure(sessionId, instanceId, address.get(), e);
+      return infrastructure(onTransportFailure(sessionId, instanceId, address.get(), e), sessionId);
     }
     if (result.getStatus() == ProcessStatus.PROCESS_STATUS_OK) {
       redis.opsForValue().set("failcount:" + sessionId, "0", HostRegistry.KEY_TTL);
@@ -137,7 +152,7 @@ public class GameInputService {
       if (result.getEffectsList().stream().anyMatch(Effect::hasGameOver)) {
         announceGameOver(sessionId);
       }
-      return Outcome.DELIVERED;
+      return new Result(Outcome.DELIVERED, null);
     }
     // Detail goes to the log only: it is game-supplied text and never reaches a client.
     log.warn(
@@ -146,7 +161,36 @@ public class GameInputService {
         request.getSequence(),
         result.getFailure().getKind(),
         result.getFailure().getMessage());
-    return failedAttempt(sessionId, Outcome.REJECTED);
+    Outcome outcome = failedAttempt(sessionId, Outcome.REJECTED);
+    if (outcome == Outcome.RETRY_LIMIT_REACHED) {
+      announceSessionFailure(sessionId);
+    }
+    return new Result(outcome, kindName(result.getFailure().getKind()));
+  }
+
+  /** FR-FAIL-003: only the game's own failures name a kind; infrastructure ones do not. */
+  private static String kindName(GameFailureKind kind) {
+    return kind.name().replaceFirst("^GAME_FAILURE_KIND_", "");
+  }
+
+  private Result infrastructure(Outcome outcome, UUID sessionId) {
+    if (outcome == Outcome.RETRY_LIMIT_REACHED) {
+      announceSessionFailure(sessionId);
+    }
+    return new Result(outcome, null);
+  }
+
+  /**
+   * FR-FAIL-005: the retry limit was reached, so the session fails back to Lobby. A failure here
+   * must not turn the input's own outcome into an error: {@code failcount:} stays at the limit, so
+   * the next failed attempt announces again, and detach is idempotent.
+   */
+  private void announceSessionFailure(UUID sessionId) {
+    try {
+      sessionFailure.onRetryLimitReached(sessionId);
+    } catch (RuntimeException e) {
+      log.error("Session failure of sessionId={} could not be detached", sessionId, e);
+    }
   }
 
   /**

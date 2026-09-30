@@ -53,7 +53,8 @@ class GameActionControllerTest {
     when(principal.userId()).thenReturn(userId);
     when(repository.actingParticipant(sessionId, userId))
         .thenReturn(Optional.of(new RoomRepository.ActingParticipant("PLAYER", teamId, "bob")));
-    when(inputs.submitAction(eq(sessionId), any())).thenReturn(GameInputService.Outcome.DELIVERED);
+    when(inputs.submitAction(eq(sessionId), any()))
+        .thenReturn(new GameInputService.Result(GameInputService.Outcome.DELIVERED, null));
 
     controller.handle(sessionId, action("{\"move\":\"e4\",\"playerId\":\"mallory\"}"), principal);
 
@@ -86,5 +87,45 @@ class GameActionControllerTest {
 
     assertThat(errorCode()).isEqualTo("ROLE_NOT_ELIGIBLE");
     verify(inputs, never()).submitAction(any(), any());
+  }
+
+  @Test
+  void aGameFailureIsToldToTheActingPlayerAsItsKindOnly() throws Exception {
+    when(principal.userId()).thenReturn(userId);
+    when(principal.getName()).thenReturn(userId.toString());
+    when(repository.actingParticipant(sessionId, userId))
+        .thenReturn(Optional.of(new RoomRepository.ActingParticipant("PLAYER", teamId, "bob")));
+    when(inputs.submitAction(eq(sessionId), any()))
+        .thenReturn(
+            new GameInputService.Result(GameInputService.Outcome.REJECTED, "HANDLER_EXCEPTION"));
+
+    controller.handle(sessionId, action("{}"), principal);
+
+    ArgumentCaptor<Object> sent = ArgumentCaptor.forClass(Object.class);
+    verify(messaging)
+        .convertAndSendToUser(eq(userId.toString()), eq("/queue/errors"), sent.capture());
+    @SuppressWarnings("unchecked")
+    Map<String, Object> payload =
+        (Map<String, Object>) ((Map<String, Object>) sent.getValue()).get("payload");
+    assertThat(payload)
+        .containsEntry("code", "ACTION_REJECTED")
+        .containsEntry("kind", "HANDLER_EXCEPTION")
+        .containsEntry("correlationId", "c-1")
+        .doesNotContainKey("message");
+  }
+
+  @Test
+  void anInfrastructureFailureDropsTheActionAsUnavailable() throws Exception {
+    when(principal.userId()).thenReturn(userId);
+    when(repository.actingParticipant(sessionId, userId))
+        .thenReturn(Optional.of(new RoomRepository.ActingParticipant("PLAYER", teamId, "bob")));
+    when(inputs.submitAction(eq(sessionId), any()))
+        .thenReturn(new GameInputService.Result(GameInputService.Outcome.RETRY, null));
+
+    controller.handle(sessionId, action("{}"), principal);
+
+    ArgumentCaptor<Object> sent = ArgumentCaptor.forClass(Object.class);
+    verify(messaging).convertAndSendToUser(any(), eq("/queue/errors"), sent.capture());
+    assertThat(sent.getValue().toString()).contains("ACTION_REJECTED", "kind=UNAVAILABLE");
   }
 }

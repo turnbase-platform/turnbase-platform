@@ -42,6 +42,7 @@ class GameInputServiceIT extends PostgresIntegrationTest {
 
   static final List<Delivered> DELIVERED = new CopyOnWriteArrayList<>();
   static final List<UUID> GAME_OVERS = new CopyOnWriteArrayList<>();
+  static final List<UUID> SESSION_FAILURES = new CopyOnWriteArrayList<>();
 
   @Configuration
   static class Recorder {
@@ -56,6 +57,12 @@ class GameInputServiceIT extends PostgresIntegrationTest {
     @Primary
     GameEndListener recordingGameEnd() {
       return GAME_OVERS::add;
+    }
+
+    @Bean
+    @Primary
+    SessionFailureListener recordingSessionFailure() {
+      return SESSION_FAILURES::add;
     }
   }
 
@@ -172,7 +179,7 @@ class GameInputServiceIT extends PostgresIntegrationTest {
     java.util.concurrent.ExecutorService pool =
         java.util.concurrent.Executors.newFixedThreadPool(8);
     try {
-      List<java.util.concurrent.Future<GameInputService.Outcome>> results =
+      List<java.util.concurrent.Future<GameInputService.Result>> results =
           new java.util.ArrayList<>();
       for (int i = 0; i < 40; i++) {
         results.add(
@@ -182,7 +189,7 @@ class GameInputServiceIT extends PostgresIntegrationTest {
                         session, io.turnbase.grpc.gamehost.v1.ActionInput.getDefaultInstance())));
       }
       for (var result : results) {
-        assertThat(result.get()).isEqualTo(GameInputService.Outcome.DELIVERED);
+        assertThat(result.get().outcome()).isEqualTo(GameInputService.Outcome.DELIVERED);
       }
     } finally {
       pool.shutdownNow();
@@ -220,9 +227,23 @@ class GameInputServiceIT extends PostgresIntegrationTest {
 
     assertThat(inputs.process(input(session, 1))).isEqualTo(GameInputService.Outcome.REJECTED);
     assertThat(inputs.process(input(session, 2))).isEqualTo(GameInputService.Outcome.REJECTED);
+    assertThat(SESSION_FAILURES).doesNotContain(session);
     assertThat(inputs.process(input(session, 3)))
         .isEqualTo(GameInputService.Outcome.RETRY_LIMIT_REACHED);
     assertThat(DELIVERED).noneMatch(d -> d.sessionId().equals(session));
+    assertThat(SESSION_FAILURES).containsExactly(session);
+  }
+
+  @Test
+  void aRejectedActionNamesTheFailureKindAndNeverTheMessage() {
+    behaviour = GameInputServiceIT::failed;
+    UUID session = newSession();
+
+    GameInputService.Result result =
+        inputs.submitAction(session, io.turnbase.grpc.gamehost.v1.ActionInput.getDefaultInstance());
+
+    assertThat(result.outcome()).isEqualTo(GameInputService.Outcome.REJECTED);
+    assertThat(result.failureKind()).isEqualTo("HANDLER_EXCEPTION");
   }
 
   @Test
