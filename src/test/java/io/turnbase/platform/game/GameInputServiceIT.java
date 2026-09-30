@@ -154,6 +154,36 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void submittedActionsReachTheHostInSequenceOrderEvenWhenSubmittedConcurrently() throws Exception {
+    List<Long> arrived = new CopyOnWriteArrayList<>();
+    behaviour =
+        request -> {
+          arrived.add(request.getSequence());
+          return ok(request, 0);
+        };
+    UUID session = newSession();
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newFixedThreadPool(8);
+    try {
+      List<java.util.concurrent.Future<GameInputService.Outcome>> results =
+          new java.util.ArrayList<>();
+      for (int i = 0; i < 40; i++) {
+        results.add(
+            pool.submit(
+                () ->
+                    inputs.submitAction(
+                        session, io.turnbase.grpc.gamehost.v1.ActionInput.getDefaultInstance())));
+      }
+      for (var result : results) {
+        assertThat(result.get()).isEqualTo(GameInputService.Outcome.DELIVERED);
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(arrived).hasSize(40).isSorted();
+  }
+
+  @Test
   void sequencesAreMonotonicPerSession() {
     UUID a = newSession();
     UUID b = newSession();

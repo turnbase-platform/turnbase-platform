@@ -2,13 +2,17 @@ package io.turnbase.platform.game;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.turnbase.grpc.gamehost.v1.ActionInput;
 import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
 import io.turnbase.grpc.gamehost.v1.ProcessInputRequest;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,6 +56,7 @@ public class GameInputService {
   private final OrchestrationProperties properties;
   private final EffectDelivery effects;
   private final int retryLimit;
+  private final Map<UUID, ReentrantLock> submitLocks = new ConcurrentHashMap<>();
 
   GameInputService(
       HostRegistry registry,
@@ -75,6 +80,28 @@ public class GameInputService {
       throw new IllegalStateException("INCR returned null for session " + sessionId);
     }
     return next;
+  }
+
+  /**
+   * The acting-player path ({@code 03-game-turn.md} §C): allocate a sequence and dispatch, serially
+   * per session. The Game Host treats {@code sequence <= lastAppliedSequence} as a replay, so two
+   * actions that allocated 43 and 44 and arrived as 44, 43 would silently drop the first — the
+   * allocate-and-dispatch pair must not interleave. Room affinity puts every action of a session on
+   * this pod, which is why a pod-local lock suffices here.
+   */
+  public Outcome submitAction(UUID sessionId, ActionInput action) {
+    ReentrantLock lock = submitLocks.computeIfAbsent(sessionId, id -> new ReentrantLock());
+    lock.lock();
+    try {
+      return process(
+          ProcessInputRequest.newBuilder()
+              .setSessionId(sessionId.toString())
+              .setSequence(allocateSequence(sessionId))
+              .setAction(action)
+              .build());
+    } finally {
+      lock.unlock();
+    }
   }
 
   /** {@code request.sequence} must have been allocated by {@link #allocateSequence}. */

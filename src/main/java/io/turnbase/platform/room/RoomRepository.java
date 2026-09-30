@@ -2525,6 +2525,35 @@ class RoomRepository {
         .single();
   }
 
+  /**
+   * The acting player of {@code SUBMIT_ACTION}, read from the durable room state (never from the
+   * client): a current, non-spectator participant of the room whose active session this is.
+   * Grace-expired, kicked and departed players have {@code left_at} set and so are absent.
+   */
+  Optional<ActingParticipant> actingParticipant(UUID sessionId, UUID userId) {
+    return jdbcClient
+        .sql(
+            """
+            select rp.role, rp.team_id, au.username
+            from room r
+              join room_participant rp on rp.room_id = r.room_id
+              join app_user au on au.user_id = rp.user_id
+            where r.active_session_id = :sessionId and r.state = 'IN_PROGRESS'
+              and rp.user_id = :userId and rp.left_at is null
+            """)
+        .param("sessionId", sessionId)
+        .param("userId", userId)
+        .query(
+            (rs, rowNum) ->
+                new ActingParticipant(
+                    rs.getString("role"),
+                    rs.getObject("team_id", UUID.class),
+                    rs.getString("username")))
+        .optional();
+  }
+
+  record ActingParticipant(String role, @Nullable UUID teamId, String username) {}
+
   /** {@code data-model.md} §4.2: is a room still claiming this session as active? */
   boolean sessionAttached(UUID sessionId) {
     return jdbcClient
