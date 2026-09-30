@@ -39,6 +39,7 @@ echo "Building turnbase/frontend:dev from ${FRONTEND_DIR}..."
 docker build -t turnbase/frontend:dev "${FRONTEND_DIR}"
 
 echo "Bringing up the core compose profile..."
+UP_STARTED=$(date +%s)
 # On failure, the cleanup trap's `docker compose down -v` discards every container before
 # anyone can see why one of them exited — print each service's log here first, so a startup
 # crash is diagnosable from the CI log alone rather than requiring a local reproduction.
@@ -57,6 +58,27 @@ curl -sf http://127.0.0.1:8081/actuator/health
 echo
 echo "Game Host health:"
 curl -sf http://127.0.0.1:8082/actuator/health
+
+echo
+echo "Game Host registration (IMP-GATE-08, local-environment.md §3: <= 60 s):"
+# The whole stack coming up and the Game Host's Register being acknowledged inside one 60 s
+# budget is stricter than §3's "monolith readiness -> Register acknowledged" (it also counts
+# the monolith's own boot), so passing it satisfies the narrower budget. The registry's
+# `hosts` set is what the Orchestration client selects from, so a member there is the
+# acknowledged Register, not merely a log line.
+registered=0
+while [ $(( $(date +%s) - UP_STARTED )) -le 60 ]; do
+  members=$(docker compose exec -T redis sh -c \
+    'REDISCLI_AUTH="$TURNBASE_REDIS_PASSWORD" redis-cli scard hosts' 2>/dev/null | tr -d '\r' || true)
+  if [ "${members:-0}" -ge 1 ] 2>/dev/null; then registered=1; break; fi
+  sleep 1
+done
+if [ "$registered" != 1 ]; then
+  echo "No Game Host registered in Redis within 60 s of compose up." >&2
+  docker compose logs --no-color gamehost platform >&2
+  exit 1
+fi
+echo "registered after $(( $(date +%s) - UP_STARTED )) s"
 
 echo
 echo "Frontend shell and proxy (the platform origin is the Frontend container, IMP-GATE-74):"
