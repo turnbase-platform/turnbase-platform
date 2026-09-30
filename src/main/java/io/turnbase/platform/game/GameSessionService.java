@@ -88,6 +88,7 @@ public class GameSessionService {
       }
     } catch (RuntimeException e) {
       deleteKeys(sessionId);
+      log.warn("Session creation failed sessionId={} instanceId={}", sessionId, instanceId, e);
       if (e instanceof GameSessionCreationException) {
         throw e;
       }
