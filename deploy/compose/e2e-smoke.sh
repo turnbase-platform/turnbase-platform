@@ -39,7 +39,6 @@ echo "Building turnbase/frontend:dev from ${FRONTEND_DIR}..."
 docker build -t turnbase/frontend:dev "${FRONTEND_DIR}"
 
 echo "Bringing up the core compose profile..."
-UP_STARTED=$(date +%s)
 # On failure, the cleanup trap's `docker compose down -v` discards every container before
 # anyone can see why one of them exited — print each service's log here first, so a startup
 # crash is diagnosable from the CI log alone rather than requiring a local reproduction.
@@ -61,11 +60,12 @@ curl -sf http://127.0.0.1:8082/actuator/health
 
 echo
 echo "Game Host registration (IMP-GATE-08, local-environment.md §3: <= 60 s):"
-# The whole stack coming up and the Game Host's Register being acknowledged inside one 60 s
-# budget is stricter than §3's "monolith readiness -> Register acknowledged" (it also counts
-# the monolith's own boot), so passing it satisfies the narrower budget. The registry's
-# `hosts` set is what the Orchestration client selects from, so a member there is the
-# acknowledged Register, not merely a log line.
+# §3's budget runs from monolith readiness, so it starts here: `up --wait` returned, which
+# means the monolith's readiness probe passed (the Game Host waits on it). Starting earlier
+# would count image builds and the monolith's own boot, which a cold CI runner spends
+# minutes on. The registry's `hosts` set is what the Orchestration client selects from, so a
+# member there is the acknowledged Register, not merely a log line.
+UP_STARTED=$(date +%s)
 registered=0
 while [ $(( $(date +%s) - UP_STARTED )) -le 60 ]; do
   members=$(docker compose exec -T redis sh -c \
@@ -74,11 +74,11 @@ while [ $(( $(date +%s) - UP_STARTED )) -le 60 ]; do
   sleep 1
 done
 if [ "$registered" != 1 ]; then
-  echo "No Game Host registered in Redis within 60 s of compose up." >&2
+  echo "No Game Host registered in Redis within 60 s of the monolith becoming ready." >&2
   docker compose logs --no-color gamehost platform >&2
   exit 1
 fi
-echo "registered after $(( $(date +%s) - UP_STARTED )) s"
+echo "registered $(( $(date +%s) - UP_STARTED )) s after monolith readiness"
 
 echo
 echo "Frontend shell and proxy (the platform origin is the Frontend container, IMP-GATE-74):"
