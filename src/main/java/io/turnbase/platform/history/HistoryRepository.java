@@ -124,7 +124,8 @@ class HistoryRepository {
     return jdbcClient
         .sql(
             """
-            select u.user_id, u.kind, u.deleted_at, p.profile_private, p.history_visibility
+            select u.user_id, u.kind, u.deleted_at, p.profile_private, p.history_visibility,
+                   p.stats_visibility
             from app_user u
             left join user_privacy_settings p on p.user_id = u.user_id
             where u.username_skeleton = :skeleton
@@ -137,7 +138,41 @@ class HistoryRepository {
                     rs.getString("kind"),
                     rs.getObject("deleted_at", Timestamp.class) != null,
                     rs.getObject("profile_private", Boolean.class),
-                    rs.getString("history_visibility")))
+                    rs.getString("history_visibility"),
+                    rs.getString("stats_visibility")))
+        .optional();
+  }
+
+  /** FR-STATS-020 — {@code ghe_user_recent_idx}/{@code ghe_user_game_idx} cover the user filter. */
+  long totalPlayed(UUID userId) {
+    Long total =
+        jdbcClient
+            .sql("select count(*) from game_history_entry where user_id = :u")
+            .param("u", userId)
+            .query(Long.class)
+            .single();
+    return total == null ? 0 : total;
+  }
+
+  /**
+   * FR-STATS-021, {@code data-model-history.md} §3: most entries, ties by ascending live title;
+   * missing or soft-deleted games are skipped so the link always resolves.
+   */
+  Optional<MostPlayed> mostPlayed(UUID userId) {
+    return jdbcClient
+        .sql(
+            """
+            select g.game_id, g.title
+            from (select game_id, count(*) as played from game_history_entry
+                  where user_id = :u group by game_id) e
+            join game g on g.game_id = e.game_id and g.deleted_at is null
+            order by e.played desc, g.title asc
+            limit 1
+            """)
+        .param("u", userId)
+        .query(
+            (rs, rowNum) ->
+                new MostPlayed(rs.getObject("game_id", UUID.class), rs.getString("title")))
         .optional();
   }
 
@@ -223,7 +258,10 @@ class HistoryRepository {
       String kind,
       boolean deleted,
       @Nullable Boolean profilePrivate,
-      @Nullable String historyVisibility) {}
+      @Nullable String historyVisibility,
+      @Nullable String statsVisibility) {}
+
+  record MostPlayed(UUID gameId, String title) {}
 
   record Row(
       UUID gameId,

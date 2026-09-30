@@ -277,6 +277,53 @@ class HistoryIT extends PostgresIntegrationTest {
         .isTrue();
   }
 
+  @Test
+  void statisticsCountTotalAndPickMostPlayedWithAlphabeticalTieBreak() throws Exception {
+    Registered alice = register();
+    UUID zork = newGame("Zork");
+    UUID chess = newGame("Chess");
+    Map<String, Object> zero = body(getStatistics(alice.username(), null));
+    assertThat(zero.get("totalPlayed")).isEqualTo(0);
+    assertThat(zero).containsKey("mostPlayedGame");
+    assertThat(zero.get("mostPlayedGame")).isNull();
+    recordSolo(alice, zork, Instant.now());
+    recordSolo(alice, chess, Instant.now());
+
+    Map<String, Object> stats = body(getStatistics(alice.username(), null));
+
+    assertThat(stats.get("totalPlayed")).isEqualTo(2);
+    assertThat(stats.get("mostPlayedGame"))
+        .isEqualTo(Map.of("gameId", chess.toString(), "title", "Chess")); // tie -> title asc
+    recordSolo(alice, zork, Instant.now());
+    Map<String, Object> after = body(getStatistics(alice.username(), null));
+    assertThat(after.get("totalPlayed")).isEqualTo(3);
+    assertThat(after.get("mostPlayedGame"))
+        .isEqualTo(Map.of("gameId", zork.toString(), "title", "Zork"));
+    jdbc.sql("update game set deleted_at = now() where game_id = :g").param("g", zork).update();
+    assertThat(body(getStatistics(alice.username(), null)).get("mostPlayedGame"))
+        .isEqualTo(Map.of("gameId", chess.toString(), "title", "Chess"));
+  }
+
+  @Test
+  void statisticsHiddenFromOthersButNotTheOwnerAndGuestsGetZeroState() throws Exception {
+    Registered alice = register();
+    Registered stranger = register();
+    recordSolo(alice, newGame("Chess"), Instant.now());
+    patch("/api/users/me/privacy", alice.cookie(), "{\"statsVisibility\":\"HIDDEN\"}");
+
+    assertThat(body(getStatistics(alice.username(), stranger.cookie())).get("totalPlayed"))
+        .isEqualTo(0);
+    assertThat(body(getStatistics(alice.username(), null)).get("mostPlayedGame")).isNull();
+    assertThat(body(getStatistics(alice.username(), alice.cookie())).get("totalPlayed"))
+        .isEqualTo(1);
+    assertThat(getStatistics("nosuchuser123", null).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  private ResponseEntity<String> getStatistics(String username, @Nullable String cookie) {
+    return exchange("/api/users/" + username + "/statistics", HttpMethod.GET, cookie, null);
+  }
+
   // --- helpers -------------------------------------------------------------------------------
 
   private void recordSolo(Registered user, UUID game, Instant at) {

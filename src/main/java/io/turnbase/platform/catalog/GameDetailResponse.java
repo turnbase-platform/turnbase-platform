@@ -25,5 +25,6 @@ record GameDetailResponse(
     String version,
     String badge,
     long activePlayerCount,
+    long completedSessionCount,
     Instant createdAt,
     Instant updatedAt) {}

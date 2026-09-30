@@ -46,7 +46,10 @@ class CatalogRepository {
   private static final String LIST_SELECT = "select " + CATALOG_COLUMNS + CATALOG_FROM;
 
   private static final String DETAIL_SELECT =
-      "select " + CATALOG_COLUMNS + ", g.info_doc_markdown " + CATALOG_FROM;
+      "select "
+          + CATALOG_COLUMNS
+          + ", g.info_doc_markdown, g.completed_session_count "
+          + CATALOG_FROM;
 
   /** {@code catalog-rest-api.md} §3. */
   List<CatalogRowResponse> listGames(@Nullable UUID viewerId, CatalogListFilter filter) {
@@ -252,6 +255,7 @@ class CatalogRepository {
         rs.getString("author_username"),
         rs.getString("short_description"),
         rs.getString("info_doc_markdown"),
+        rs.getLong("completed_session_count"),
         rs.getInt("min_players"),
         rs.getInt("max_players"),
         rs.getBoolean("supports_ai"),
@@ -274,6 +278,7 @@ class CatalogRepository {
       String authorUsername,
       String shortDescription,
       @Nullable String infoDocMarkdown,
+      long completedSessionCount,
       int minPlayers,
       int maxPlayers,
       boolean supportsAi,

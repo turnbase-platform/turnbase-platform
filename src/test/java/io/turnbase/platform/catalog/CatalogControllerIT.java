@@ -123,6 +123,19 @@ class CatalogControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void detailCarriesTheCompletedSessionCounterAndZeroWhenNeverCompleted() throws Exception {
+    UUID gameId = seedGame(null, "OFFICIAL", true, "Chess", null);
+    assertThat(parse(get("/api/games/" + gameId)).get("completedSessionCount")).isEqualTo(0);
+
+    jdbcClient
+        .sql("update game set completed_session_count = 1284 where game_id = :g")
+        .param("g", gameId)
+        .update();
+
+    assertThat(parse(get("/api/games/" + gameId)).get("completedSessionCount")).isEqualTo(1284);
+  }
+
+  @Test
   void detailOmitsTheInfoDocAsNullWhenAbsent() throws Exception {
     UUID gameId = seedGame(null, "OFFICIAL", true, "Chess", null);
 

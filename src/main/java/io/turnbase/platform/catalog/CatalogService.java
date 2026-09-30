@@ -67,6 +67,7 @@ class CatalogService {
         row.version(),
         row.badge(),
         activePlayerCount,
+        row.completedSessionCount(),
         row.createdAt(),
         row.updatedAt());
   }
