@@ -19,6 +19,15 @@ public record JobsProperties(
     Interval roomPurge,
     Interval uploadSlotCleanup) {
 
+  /**
+   * FR-JOB-008(a): a purge job's first run waits out the startup window ({@link
+   * Reconcile#startupSuppression()}) — or a full interval, when that is longer.
+   */
+  public Duration initialDelay(Interval job) {
+    Duration suppression = reconcile.startupSuppression();
+    return job.interval().compareTo(suppression) >= 0 ? job.interval() : suppression;
+  }
+
   public record Interval(Duration interval) {}
 
   public record Reconcile(Duration interval, Duration startupSuppression, Duration orphanAge) {}

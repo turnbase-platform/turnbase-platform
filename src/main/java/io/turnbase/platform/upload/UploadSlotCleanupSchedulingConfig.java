@@ -25,7 +25,7 @@ class UploadSlotCleanupSchedulingConfig implements SchedulingConfigurer {
   @Override
   public void configureTasks(ScheduledTaskRegistrar registrar) {
     PeriodicTrigger trigger = new PeriodicTrigger(jobsProperties.uploadSlotCleanup().interval());
-    trigger.setInitialDelay(jobsProperties.uploadSlotCleanup().interval());
+    trigger.setInitialDelay(jobsProperties.initialDelay(jobsProperties.uploadSlotCleanup()));
     registrar.addTriggerTask(job::run, trigger);
   }
 }

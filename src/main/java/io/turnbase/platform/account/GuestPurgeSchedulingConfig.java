@@ -28,7 +28,8 @@ class GuestPurgeSchedulingConfig implements SchedulingConfigurer {
 
   @Override
   public void configureTasks(ScheduledTaskRegistrar registrar) {
-    registrar.addTriggerTask(
-        job::run, new PeriodicTrigger(jobsProperties.guestCleanup().interval()));
+    PeriodicTrigger trigger = new PeriodicTrigger(jobsProperties.guestCleanup().interval());
+    trigger.setInitialDelay(jobsProperties.initialDelay(jobsProperties.guestCleanup()));
+    registrar.addTriggerTask(job::run, trigger);
   }
 }

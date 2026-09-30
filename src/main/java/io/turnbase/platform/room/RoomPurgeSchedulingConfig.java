@@ -25,7 +25,7 @@ class RoomPurgeSchedulingConfig implements SchedulingConfigurer {
   @Override
   public void configureTasks(ScheduledTaskRegistrar registrar) {
     PeriodicTrigger trigger = new PeriodicTrigger(jobsProperties.roomPurge().interval());
-    trigger.setInitialDelay(jobsProperties.roomPurge().interval());
+    trigger.setInitialDelay(jobsProperties.initialDelay(jobsProperties.roomPurge()));
     registrar.addTriggerTask(job::run, trigger);
   }
 }
