@@ -41,6 +41,7 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   record Delivered(UUID sessionId, long sequence, int effects) {}
 
   static final List<Delivered> DELIVERED = new CopyOnWriteArrayList<>();
+  static final List<UUID> GAME_OVERS = new CopyOnWriteArrayList<>();
 
   @Configuration
   static class Recorder {
@@ -49,6 +50,12 @@ class GameInputServiceIT extends PostgresIntegrationTest {
     EffectDelivery recordingDelivery() {
       return (sessionId, sequence, effects) ->
           DELIVERED.add(new Delivered(sessionId, sequence, effects.size()));
+    }
+
+    @Bean
+    @Primary
+    GameEndListener recordingGameEnd() {
+      return GAME_OVERS::add;
     }
   }
 
@@ -250,5 +257,44 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   void anUnroutedSessionIsNotFound() {
     assertThat(inputs.process(input(UUID.randomUUID(), 1)))
         .isEqualTo(GameInputService.Outcome.SESSION_NOT_FOUND);
+  }
+
+  @Test
+  void aDeliveredGameOverAnnouncesTheEndOnceForEachDispatchOfThatSequence() {
+    behaviour =
+        request ->
+            ProcessResult.newBuilder()
+                .setSessionId(request.getSessionId())
+                .setSequence(request.getSequence())
+                .setStatus(ProcessStatus.PROCESS_STATUS_OK)
+                .addEffects(
+                    Effect.newBuilder()
+                        .setGameOver(
+                            io.turnbase.grpc.gamehost.v1.GameOverEffect.getDefaultInstance()))
+                .build();
+    UUID session = newSession();
+
+    assertThat(inputs.process(input(session, inputs.allocateSequence(session))))
+        .isEqualTo(GameInputService.Outcome.DELIVERED);
+
+    assertThat(GAME_OVERS).containsOnlyOnce(session);
+  }
+
+  @Test
+  void anUnreachableHostMovesTheSessionToAnotherHostOfTheSameGameKey() {
+    registry.register("spare-host", "127.0.0.1:" + fakeHost.getPort(), List.of("jvm"));
+    registry.register("down-host", "127.0.0.1:1", List.of("jvm"));
+    UUID session = newSession();
+    redis.opsForValue().set("routing:" + session, "down-host");
+    redis.opsForValue().set("gamekey:" + session, UUID.randomUUID() + ":1.0.0");
+
+    assertThat(inputs.process(input(session, 1))).isEqualTo(GameInputService.Outcome.RETRY);
+
+    assertThat(redis.opsForValue().get("routing:" + session))
+        .isIn("input-host", "spare-host")
+        .isNotEqualTo("down-host");
+    behaviour = request -> ok(request, 0);
+    assertThat(inputs.process(input(session, 1))).isEqualTo(GameInputService.Outcome.DELIVERED);
+    registry.deregister("down-host");
   }
 }

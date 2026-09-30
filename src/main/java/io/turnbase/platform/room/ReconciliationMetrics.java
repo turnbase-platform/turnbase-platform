@@ -29,6 +29,7 @@ class ReconciliationMetrics {
   private final Map<String, AtomicLong> candidateGauges = new ConcurrentHashMap<>();
   private final AtomicLong inProgressWithoutSession = new AtomicLong();
   private final AtomicLong teardownOwed = new AtomicLong();
+  private final AtomicLong teardownOldestAgeSeconds = new AtomicLong();
   private final Timer redisOperationTimer;
   private final Counter redisErrorCounter;
 
@@ -38,6 +39,10 @@ class ReconciliationMetrics {
             "turnbase.rooms.in_progress_without_session", inProgressWithoutSession, AtomicLong::get)
         .register(registry);
     Gauge.builder("turnbase.teardown.owed", teardownOwed, AtomicLong::get).register(registry);
+    // turnbase_teardown_owed_age_seconds: the TeardownOwed alert fires past 900 (FR-ALERT-007).
+    Gauge.builder("turnbase.teardown.owed.age", teardownOldestAgeSeconds, AtomicLong::get)
+        .baseUnit("seconds")
+        .register(registry);
     this.redisOperationTimer =
         Timer.builder("turnbase_redis_operation_seconds")
             .tag("concern", "game_state")
@@ -76,8 +81,9 @@ class ReconciliationMetrics {
     inProgressWithoutSession.set(count);
   }
 
-  void setTeardownOwed(long count) {
+  void setTeardownOwed(long count, double oldestAgeSeconds) {
     teardownOwed.set(count);
+    teardownOldestAgeSeconds.set((long) oldestAgeSeconds);
   }
 
   /** {@code turnbase.job.aborted.total{job,reason}} — §5.4 guard 1 firing. */

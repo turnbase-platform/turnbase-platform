@@ -76,7 +76,7 @@ public class GameSessionService {
           GameSessionCreationException.Reason.NO_HOST_AVAILABLE, "host entry vanished");
     }
 
-    writeKeys(sessionId, instanceId);
+    writeKeys(sessionId, instanceId, command.gameId() + ":" + command.gameVersion());
     ProcessResult initialEffects;
     try {
       CreateSessionResponse response = callCreateSession(address.get(), command);
@@ -148,9 +148,10 @@ public class GameSessionService {
   }
 
   /** {@code game-host-internals.md} §13: {@code routing:}, {@code seq:}, {@code delivered:}, … */
-  private void writeKeys(String sessionId, String instanceId) {
+  private void writeKeys(String sessionId, String instanceId, String gameKey) {
     var ttl = HostRegistry.KEY_TTL;
     redis.opsForValue().set("routing:" + sessionId, instanceId, ttl);
+    redis.opsForValue().set("gamekey:" + sessionId, gameKey, ttl);
     redis.opsForValue().set("seq:" + sessionId, "0", ttl);
     redis.opsForValue().set("delivered:" + sessionId, "0", ttl);
     redis.opsForValue().set("failcount:" + sessionId, "0", ttl);
@@ -161,6 +162,7 @@ public class GameSessionService {
     redis.delete(
         List.of(
             "routing:" + sessionId,
+            "gamekey:" + sessionId,
             "queue:" + sessionId,
             "seq:" + sessionId,
             "delivered:" + sessionId,

@@ -43,14 +43,22 @@ class ReconciliationJobIT extends PostgresIntegrationTest {
     UUID roomId = insertRoom(context, "LOBBY");
     UUID sessionId = UUID.randomUUID();
     insertDueTeardown(context, sessionId, roomId);
+    // The routed host is registered but unreachable, so the teardown cannot be confirmed.
+    context
+        .getBean(org.springframework.data.redis.core.StringRedisTemplate.class)
+        .opsForHash()
+        .put("host:dead-host", "address", "127.0.0.1:1");
+    context
+        .getBean(org.springframework.data.redis.core.StringRedisTemplate.class)
+        .opsForValue()
+        .set("routing:" + sessionId, "dead-host");
 
     job.run();
 
     Map<String, Object> row = teardownRow(context, sessionId);
     assertThat(((Number) Objects.requireNonNull(row.get("attempts"))).intValue()).isEqualTo(1);
     assertThat(row.get("last_error")).isNotNull();
-    // No Game Host client exists, so this always backs off rather than clearing the row
-    // (SessionTerminatorImpl / room-lifecycle.md §4 step (c)).
+    // An unconfirmed terminate backs off rather than clearing the row (room-lifecycle.md §4 (c)).
     Instant nextAttemptAt =
         ((Timestamp) Objects.requireNonNull(row.get("next_attempt_at"))).toInstant();
     assertThat(nextAttemptAt).isAfter(Instant.now());

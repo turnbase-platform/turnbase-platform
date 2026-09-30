@@ -144,6 +144,10 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
     UUID roomId = insertRoom(context, "IN_PROGRESS");
     UUID sessionId = UUID.randomUUID();
     setActiveSession(context, roomId, sessionId);
+    // The session's host is registered but unreachable, so the inline teardown stays owed.
+    var redis = context.getBean(org.springframework.data.redis.core.StringRedisTemplate.class);
+    redis.opsForHash().put("host:dead-host", "address", "127.0.0.1:1");
+    redis.opsForValue().set("routing:" + sessionId, "dead-host");
     ownership.claim(roomId);
     UUID userId = insertParticipant(context, roomId, "PLAYER", 1, 0);
     openExpiredReservation(context, roomId, userId);

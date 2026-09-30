@@ -3,6 +3,8 @@ package io.turnbase.platform.room;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,6 +16,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 class RoomSessionDetacherImpl implements RoomSessionDetacher {
+
+  private static final Logger log = LoggerFactory.getLogger(RoomSessionDetacherImpl.class);
 
   private final RoomOwnershipService ownership;
   private final RoomEventExecutor events;
@@ -71,6 +75,7 @@ class RoomSessionDetacherImpl implements RoomSessionDetacher {
                 return new RoomEventExecutor.MutationOutcome<>(outcome2, event);
               });
     } catch (RoomUnavailableRetryException e) {
+      log.warn("detach of room {} session {} deferred: {}", roomId, sessionId, e.getMessage());
       // Ownership moved between this method's own claim and the transaction; the room's new
       // owner (or its own sweep) picks this evaluation up again on its own next tick.
       return;

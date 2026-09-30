@@ -3,6 +3,7 @@ package io.turnbase.platform.game;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.turnbase.grpc.gamehost.v1.ActionInput;
+import io.turnbase.grpc.gamehost.v1.Effect;
 import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
 import io.turnbase.grpc.gamehost.v1.ProcessInputRequest;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
@@ -55,6 +56,7 @@ public class GameInputService {
   private final StringRedisTemplate redis;
   private final OrchestrationProperties properties;
   private final EffectDelivery effects;
+  private final GameEndListener gameEnd;
   private final int retryLimit;
   private final Map<UUID, ReentrantLock> submitLocks = new ConcurrentHashMap<>();
 
@@ -64,12 +66,14 @@ public class GameInputService {
       StringRedisTemplate redis,
       OrchestrationProperties properties,
       EffectDelivery effects,
+      GameEndListener gameEnd,
       @Value("${turnbase.gamehost.retry-limit:3}") int retryLimit) {
     this.registry = registry;
     this.channels = channels;
     this.redis = redis;
     this.properties = properties;
     this.effects = effects;
+    this.gameEnd = gameEnd;
     this.retryLimit = retryLimit;
   }
 
@@ -114,6 +118,7 @@ public class GameInputService {
     Optional<String> address = registry.addressOf(instanceId);
     if (address.isEmpty()) {
       log.warn("Host {} of sessionId={} is gone; input left for retry", instanceId, sessionId);
+      reassign(sessionId, instanceId);
       return failedAttempt(sessionId, Outcome.RETRY);
     }
     ProcessResult result;
@@ -124,11 +129,14 @@ public class GameInputService {
               .processInput(request)
               .getResult();
     } catch (StatusRuntimeException e) {
-      return onTransportFailure(sessionId, address.get(), e);
+      return onTransportFailure(sessionId, instanceId, address.get(), e);
     }
     if (result.getStatus() == ProcessStatus.PROCESS_STATUS_OK) {
       redis.opsForValue().set("failcount:" + sessionId, "0", HostRegistry.KEY_TTL);
       deliverOnce(sessionId, request.getSequence(), result);
+      if (result.getEffectsList().stream().anyMatch(Effect::hasGameOver)) {
+        announceGameOver(sessionId);
+      }
       return Outcome.DELIVERED;
     }
     // Detail goes to the log only: it is game-supplied text and never reaches a client.
@@ -139,6 +147,42 @@ public class GameInputService {
         result.getFailure().getKind(),
         result.getFailure().getMessage());
     return failedAttempt(sessionId, Outcome.REJECTED);
+  }
+
+  /**
+   * FR-EFF-006: effects after {@code game_over} were delivered first. A failure here must not turn
+   * a delivered result into a failed input: the replay of this sequence re-announces the end, and
+   * detach is idempotent.
+   */
+  private void announceGameOver(UUID sessionId) {
+    try {
+      gameEnd.onGameOver(sessionId);
+    } catch (RuntimeException e) {
+      log.error("Game end of sessionId={} could not be detached", sessionId, e);
+    }
+  }
+
+  /**
+   * FR-ORCH-005: the routed host is unreachable, so route the session to another. The next attempt
+   * of the same sequence finds the session record in Redis and the new host restores it (§9.3). The
+   * game key is what {@code gamekey:} exists to supply; with no other host the routing stays put
+   * and the attempt is retried.
+   */
+  private void reassign(UUID sessionId, String failedInstance) {
+    String gameKey = redis.opsForValue().get("gamekey:" + sessionId);
+    int colon = gameKey == null ? -1 : gameKey.indexOf(':');
+    if (colon < 0) {
+      return;
+    }
+    Optional<String> replacement =
+        registry.selectHost(
+            gameKey.substring(0, colon), gameKey.substring(colon + 1), failedInstance);
+    if (replacement.isEmpty()) {
+      log.warn("No host to reassign sessionId={} from {}", sessionId, failedInstance);
+      return;
+    }
+    redis.opsForValue().set("routing:" + sessionId, replacement.get(), HostRegistry.KEY_TTL);
+    log.warn("Reassigned sessionId={} from {} to {}", sessionId, failedInstance, replacement.get());
   }
 
   private void deliverOnce(UUID sessionId, long sequence, ProcessResult result) {
@@ -152,7 +196,8 @@ public class GameInputService {
         .set("delivered:" + sessionId, Long.toString(sequence), HostRegistry.KEY_TTL);
   }
 
-  private Outcome onTransportFailure(UUID sessionId, String address, StatusRuntimeException e) {
+  private Outcome onTransportFailure(
+      UUID sessionId, String routedInstance, String address, StatusRuntimeException e) {
     Status.Code code = e.getStatus().getCode();
     log.warn("ProcessInput sessionId={} failed with {}", sessionId, code);
     return switch (code) {
@@ -160,6 +205,7 @@ public class GameInputService {
       case FAILED_PRECONDITION, RESOURCE_EXHAUSTED -> Outcome.SESSION_FAILED;
       case UNAVAILABLE -> {
         channels.discard(address);
+        reassign(sessionId, routedInstance);
         yield failedAttempt(sessionId, Outcome.RETRY);
       }
       default -> failedAttempt(sessionId, Outcome.RETRY);

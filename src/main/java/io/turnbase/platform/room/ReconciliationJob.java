@@ -38,7 +38,7 @@ class ReconciliationJob {
    * deleted together.
    */
   private static final List<String> SESSION_KEY_PREFIXES =
-      List.of("session:", "routing:", "queue:", "seq:", "delivered:", "failcount:");
+      List.of("session:", "routing:", "gamekey:", "queue:", "seq:", "delivered:", "failcount:");
 
   private static final int TEARDOWN_BATCH = 100;
 
@@ -129,7 +129,8 @@ class ReconciliationJob {
       terminator.terminateAndCleanup(teardown.sessionId(), teardown.reason());
       metrics.recordRepair("a", "retried");
     }
-    metrics.setTeardownOwed(repository.countSessionTeardownOwed());
+    metrics.setTeardownOwed(
+        repository.countSessionTeardownOwed(), repository.oldestSessionTeardownAgeSeconds());
   }
 
   // ---------------------------------------------------------------------

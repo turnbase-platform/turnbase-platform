@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
@@ -136,6 +137,11 @@ class HostRegistry {
    * entry has expired is dropped from {@code hosts} as it is met.
    */
   Optional<String> selectHost(String gameId, String gameVersion) {
+    return selectHost(gameId, gameVersion, null);
+  }
+
+  /** As {@link #selectHost(String, String)}, never choosing {@code excluded} (a failed host). */
+  Optional<String> selectHost(String gameId, String gameVersion, @Nullable String excluded) {
     Set<String> members = redis.opsForSet().members(HOSTS);
     if (members == null) {
       return Optional.empty();
@@ -143,6 +149,9 @@ class HostRegistry {
     String contextKey = gameId + ":" + gameVersion;
     List<Candidate> candidates = new ArrayList<>();
     for (String instanceId : members) {
+      if (instanceId.equals(excluded)) {
+        continue;
+      }
       Map<Object, Object> entry = redis.opsForHash().entries(hostKey(instanceId));
       if (entry.isEmpty()) {
         redis.opsForSet().remove(HOSTS, instanceId);

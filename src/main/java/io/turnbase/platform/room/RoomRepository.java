@@ -2636,6 +2636,38 @@ class RoomRepository {
 
   record DueTeardown(UUID sessionId, UUID roomId, String reason) {}
 
+  /** {@code terminateAndCleanup} step (b): the confirmed teardown is no longer owed. */
+  void deleteSessionTeardown(UUID sessionId) {
+    jdbcClient
+        .sql("delete from session_teardown where session_id = :sessionId")
+        .param("sessionId", sessionId)
+        .update();
+  }
+
+  /**
+   * Age in seconds of the oldest owed teardown, {@code 0} when none is owed — the {@code
+   * TeardownOwed} alert's input (FR-ALERT-007).
+   */
+  double oldestSessionTeardownAgeSeconds() {
+    Double age =
+        jdbcClient
+            .sql(
+                "select coalesce(extract(epoch from now() - min(requested_at)), 0)"
+                    + " from session_teardown")
+            .query(Double.class)
+            .single();
+    return age == null ? 0 : age;
+  }
+
+  /** The room whose active session this is, for the game-end caller. */
+  Optional<UUID> roomOfActiveSession(UUID sessionId) {
+    return jdbcClient
+        .sql("select room_id from room where active_session_id = :sessionId")
+        .param("sessionId", sessionId)
+        .query(UUID.class)
+        .optional();
+  }
+
   /** {@code turnbase.teardown.owed} (§6): outstanding teardown debt, independent of due-ness. */
   long countSessionTeardownOwed() {
     Long count = jdbcClient.sql("select count(*) from session_teardown").query(Long.class).single();
