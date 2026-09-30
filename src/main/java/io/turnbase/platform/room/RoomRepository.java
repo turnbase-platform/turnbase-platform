@@ -2552,6 +2552,33 @@ class RoomRepository {
         .optional();
   }
 
+  /**
+   * The current participants (not left) of the room whose active session this is, as {@code
+   * (userId, role, teamId)} rows; empty when no room claims the session. Deliberately not
+   * restricted to {@code IN_PROGRESS}: the initial effects are fanned out before the room's own
+   * commit.
+   */
+  List<SessionParticipant> sessionParticipants(UUID sessionId) {
+    return jdbcClient
+        .sql(
+            """
+            select rp.user_id, rp.role, rp.team_id
+            from room r
+              join room_participant rp on rp.room_id = r.room_id
+            where r.active_session_id = :sessionId and rp.left_at is null
+            """)
+        .param("sessionId", sessionId)
+        .query(
+            (rs, rowNum) ->
+                new SessionParticipant(
+                    rs.getObject("user_id", UUID.class),
+                    rs.getString("role"),
+                    rs.getObject("team_id", UUID.class)))
+        .list();
+  }
+
+  record SessionParticipant(UUID userId, String role, @Nullable UUID teamId) {}
+
   record ActingParticipant(String role, @Nullable UUID teamId, String username) {}
 
   /** {@code data-model.md} §4.2: is a room still claiming this session as active? */

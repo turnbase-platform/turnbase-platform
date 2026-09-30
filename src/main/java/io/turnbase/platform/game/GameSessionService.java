@@ -12,8 +12,11 @@ import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.grpc.gamehost.v1.Team;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -93,11 +96,22 @@ public class GameSessionService {
     }
     log.info("Session created sessionId={} instanceId={}", sessionId, instanceId);
     try {
-      effects.deliver(command.sessionId(), 0, initialEffects.getEffectsList());
+      effects.deliverInitial(
+          command.sessionId(), initialEffects.getEffectsList(), rosterOf(command));
     } catch (RuntimeException e) {
       // The session exists; a fan-out fault must not roll the room back to Lobby.
       log.error("Initial effects of sessionId={} not delivered", sessionId, e);
     }
+  }
+
+  private static SessionRoster rosterOf(CreateSessionCommand command) {
+    Map<UUID, UUID> playerTeams = new HashMap<>();
+    for (TeamSpec team : command.teams()) {
+      for (PlayerSpec player : team.players()) {
+        playerTeams.put(player.playerId(), team.teamId());
+      }
+    }
+    return new SessionRoster(playerTeams, Set.of());
   }
 
   private CreateSessionResponse callCreateSession(String address, CreateSessionCommand command) {
