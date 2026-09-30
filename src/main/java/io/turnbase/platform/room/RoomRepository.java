@@ -2581,6 +2581,16 @@ class RoomRepository {
 
   record ActingParticipant(String role, @Nullable UUID teamId, String username) {}
 
+  /** The room whose in-progress game this session is; empty once the game has ended. */
+  Optional<UUID> inProgressRoomOf(UUID sessionId) {
+    return jdbcClient
+        .sql(
+            "select room_id from room where active_session_id = :sessionId and state = 'IN_PROGRESS'")
+        .param("sessionId", sessionId)
+        .query(UUID.class)
+        .optional();
+  }
+
   /** {@code data-model.md} §4.2: is a room still claiming this session as active? */
   boolean sessionAttached(UUID sessionId) {
     return jdbcClient

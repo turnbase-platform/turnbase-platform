@@ -39,16 +39,19 @@ class EffectFanOut implements EffectDelivery {
   private final SessionRosterSource rosters;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
+  private final GameLogStore logStore;
 
   EffectFanOut(
       SimpMessagingTemplate messagingTemplate,
       SessionRosterSource rosters,
       MeterRegistry meterRegistry,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      GameLogStore logStore) {
     this.messagingTemplate = messagingTemplate;
     this.rosters = rosters;
     this.meterRegistry = meterRegistry;
     this.objectMapper = objectMapper;
+    this.logStore = logStore;
   }
 
   @Override
@@ -117,6 +120,8 @@ class EffectFanOut implements EffectDelivery {
           }
         }
         case LOG -> {
+          logStore.append(
+              sessionId, new GameLogStore.Entry(sequence, index, effect.getLog().getEntry()));
           Map<String, Object> message = base("GAME_LOG", sessionId, sequence, index);
           message.put("payload", Map.of("entry", effect.getLog().getEntry()));
           publish("/topic/game." + sessionId, message);

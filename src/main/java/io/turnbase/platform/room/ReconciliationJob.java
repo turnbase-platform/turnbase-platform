@@ -38,7 +38,15 @@ class ReconciliationJob {
    * deleted together.
    */
   private static final List<String> SESSION_KEY_PREFIXES =
-      List.of("session:", "routing:", "gamekey:", "queue:", "seq:", "delivered:", "failcount:");
+      List.of(
+          "session:",
+          "routing:",
+          "gamekey:",
+          "queue:",
+          "seq:",
+          "delivered:",
+          "failcount:",
+          "gamelog:");
 
   private static final int TEARDOWN_BATCH = 100;
 

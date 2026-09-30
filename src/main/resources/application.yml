@@ -62,13 +62,13 @@ management:
       # target, but a shared Grafana dashboard querying both series needs the label too.
       application: ${spring.application.name}
   # observability.md §4/§7.9: the Micrometer Tracing bridge's own endpoint/sampling config.
-  # Kept in agreement with the OpenTelemetry Java agent's OTEL_EXPORTER_OTLP_ENDPOINT and
+  # Sampling is kept in agreement with the OpenTelemetry Java agent's
   # OTEL_TRACES_SAMPLER_ARG (Dockerfile) — the agent's variable is the one that decides where
   # spans from its own auto-instrumentation actually go; this is what any application code
   # using Micrometer's own Tracer/ObservationRegistry uses.
   otlp:
     tracing:
-      endpoint: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:http://tempo:4317}
+      endpoint: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:http://tempo:4318/v1/traces}
   tracing:
     sampling:
       probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:0.1}

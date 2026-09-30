@@ -34,9 +34,10 @@ class EffectFanOutTest {
 
   private final SimpMessagingTemplate template = mock(SimpMessagingTemplate.class);
   private final SessionRosterSource rosters = mock(SessionRosterSource.class);
+  private final GameLogStore logStore = mock(GameLogStore.class);
   private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
   private final EffectFanOut fanOut =
-      new EffectFanOut(template, rosters, meters, new ObjectMapper());
+      new EffectFanOut(template, rosters, meters, new ObjectMapper(), logStore);
 
   private final UUID sessionId = UUID.randomUUID();
   private final UUID alice = UUID.randomUUID();
@@ -190,5 +191,18 @@ class EffectFanOutTest {
 
     verify(template, org.mockito.Mockito.times(1))
         .convertAndSend(eq("/topic/game." + sessionId), any(Object.class));
+  }
+
+  @Test
+  void retainsEachLogEntryWithItsPosition() {
+    roster();
+    fanOut.deliver(
+        sessionId,
+        7,
+        List.of(
+            broadcast("{}"),
+            Effect.newBuilder().setLog(LogEffect.newBuilder().setEntry("**X** played")).build()));
+
+    verify(logStore).append(sessionId, new GameLogStore.Entry(7, 1, "**X** played"));
   }
 }

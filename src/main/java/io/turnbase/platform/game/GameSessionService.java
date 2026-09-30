@@ -167,7 +167,8 @@ public class GameSessionService {
             "queue:" + sessionId,
             "seq:" + sessionId,
             "delivered:" + sessionId,
-            "failcount:" + sessionId));
+            "failcount:" + sessionId,
+            "gamelog:" + sessionId));
   }
 
   /** The room's final lobby state, resolved by the room (which owns those tables). */

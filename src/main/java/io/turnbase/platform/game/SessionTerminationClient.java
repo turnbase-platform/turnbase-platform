@@ -104,6 +104,7 @@ public class SessionTerminationClient {
             "queue:" + sessionId,
             "seq:" + sessionId,
             "delivered:" + sessionId,
-            "failcount:" + sessionId));
+            "failcount:" + sessionId,
+            "gamelog:" + sessionId));
   }
 }

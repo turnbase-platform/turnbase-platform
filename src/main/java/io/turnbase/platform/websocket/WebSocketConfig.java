@@ -29,6 +29,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
   private static final long[] HEARTBEAT = {10_000, 10_000};
 
   private final WebSocketChannelInterceptor channelInterceptor;
+  private final WebSocketTraceInterceptor traceInterceptor;
 
   /**
    * {@code @Lazy}: this configurer is itself a dependency of {@code
@@ -39,7 +40,10 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
    * would be circular; a lazy proxy defers resolution until the channel actually dispatches a
    * frame, by which point the broker is fully initialized.
    */
-  WebSocketConfig(@Lazy WebSocketChannelInterceptor channelInterceptor) {
+  WebSocketConfig(
+      @Lazy WebSocketChannelInterceptor channelInterceptor,
+      WebSocketTraceInterceptor traceInterceptor) {
+    this.traceInterceptor = traceInterceptor;
     this.channelInterceptor = channelInterceptor;
   }
 
@@ -61,7 +65,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   @Override
   public void configureClientInboundChannel(ChannelRegistration registration) {
-    registration.interceptors(channelInterceptor);
+    registration.interceptors(channelInterceptor, traceInterceptor);
   }
 
   @Bean
