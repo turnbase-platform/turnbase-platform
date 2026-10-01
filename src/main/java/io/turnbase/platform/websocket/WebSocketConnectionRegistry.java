@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.session.SessionRevokedEvent;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -12,6 +13,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
@@ -33,6 +36,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class WebSocketConnectionRegistry {
+
+  private static final Logger log = LoggerFactory.getLogger(WebSocketConnectionRegistry.class);
 
   private final Map<String, AuthenticatedUser> connections = new ConcurrentHashMap<>();
   private final Map<UUID, Set<String>> sessionIdsByUser = new ConcurrentHashMap<>();
@@ -71,12 +76,16 @@ public class WebSocketConnectionRegistry {
       userSessions.add(stompSessionId);
     }
     connections.put(stompSessionId, user);
+    LifecycleLog.info(
+        log, "WebSocket connected", "userId", user.userId(), "sessionId", user.sessionId());
     return true;
   }
 
   void unregister(String stompSessionId) {
     @Nullable AuthenticatedUser user = connections.remove(stompSessionId);
     if (user != null) {
+      LifecycleLog.info(
+          log, "WebSocket disconnected", "userId", user.userId(), "sessionId", user.sessionId());
       Set<String> userSessions = sessionIdsByUser.get(user.userId());
       if (userSessions != null) {
         userSessions.remove(stompSessionId);

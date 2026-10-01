@@ -2,6 +2,7 @@ package io.turnbase.platform.account;
 
 import io.turnbase.platform.common.Canonicalizer;
 import io.turnbase.platform.common.InternalRedirectPath;
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.UnauthenticatedException;
 import io.turnbase.platform.session.AuthProperties;
@@ -14,6 +15,8 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +26,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class OAuthService {
+
+  private static final Logger log = LoggerFactory.getLogger(OAuthService.class);
 
   private static final String DEFAULT_DESTINATION = "/rooms";
   private static final String LINK_RETURN_PATH = "/settings";
@@ -130,6 +135,13 @@ public class OAuthService {
     if (existing.isPresent()) {
       SessionService.IssuedSession session =
           sessionService.issueSession(existing.get().userId(), null);
+      LifecycleLog.info(
+          log,
+          "User logged in via Google",
+          "userId",
+          existing.get().userId(),
+          "sessionId",
+          session.sessionId());
       return CallbackResult.loggedIn(session, destination);
     }
 
@@ -191,6 +203,8 @@ public class OAuthService {
     pending.consume(token);
 
     SessionService.IssuedSession session = sessionService.issueSession(userId, null);
+    LifecycleLog.info(
+        log, "User registered via Google", "userId", userId, "sessionId", session.sessionId());
     return CompleteRegistrationResult.created(userId, username.display(), session);
   }
 

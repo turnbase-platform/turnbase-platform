@@ -3,6 +3,9 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
@@ -11,6 +14,7 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -58,6 +62,42 @@ class RoomEventExecutorIT extends PostgresIntegrationTest {
             new RoomEventExecutor.MutationOutcome<>(
                 "applied again", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of())));
     assertThat(roomVersion(context, roomId)).isEqualTo(2L);
+  }
+
+  /** IMP-M7-10 / MR-06: a committed room event is one INFO line with roomId, userId, reason. */
+  @Test
+  void aCommittedRoomEventIsLoggedWithRoomUserAndReason() {
+    context = boot();
+    RoomEventExecutor executor = context.getBean(RoomEventExecutor.class);
+    RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(context);
+    UUID userId = UUID.randomUUID();
+    ownership.claim(roomId);
+    Logger logger = (Logger) LoggerFactory.getLogger(RoomEventExecutor.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      executor.execute(
+          roomId,
+          () ->
+              new RoomEventExecutor.MutationOutcome<>(
+                  "x",
+                  new RoomEventExecutor.RoomEvent(
+                      "PLAYER_LOST",
+                      new RoomRepository.PlayerLostPayload(userId, null, "GRACE_PERIOD_EXPIRED"))));
+    } finally {
+      logger.detachAppender(appender);
+    }
+
+    assertThat(appender.list)
+        .extracting(ILoggingEvent::getFormattedMessage)
+        .containsExactly(
+            "Room event event=PLAYER_LOST roomId="
+                + roomId
+                + " userId="
+                + userId
+                + " reason=GRACE_PERIOD_EXPIRED roomVersion=1");
   }
 
   @Test

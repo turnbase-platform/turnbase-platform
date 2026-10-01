@@ -11,6 +11,7 @@ import io.turnbase.grpc.gamehost.v1.PlayerRef;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.grpc.gamehost.v1.Team;
+import io.turnbase.platform.common.LifecycleLog;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
@@ -95,7 +96,15 @@ public class GameSessionService {
       throw new GameSessionCreationException(
           GameSessionCreationException.Reason.SESSION_CREATION_FAILED, e.toString());
     }
-    log.info("Session created sessionId={} instanceId={}", sessionId, instanceId);
+    LifecycleLog.info(
+        log,
+        "Game started",
+        "sessionId",
+        sessionId,
+        "gameId",
+        command.gameId(),
+        "instanceId",
+        instanceId);
     try {
       effects.deliverInitial(
           command.sessionId(), initialEffects.getEffectsList(), rosterOf(command));

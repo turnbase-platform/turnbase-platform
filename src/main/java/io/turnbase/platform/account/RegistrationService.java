@@ -1,11 +1,14 @@
 package io.turnbase.platform.account;
 
 import io.turnbase.platform.common.FieldValidationError;
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.common.ValidationFailedException;
 import io.turnbase.platform.session.SessionService;
 import java.util.List;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +19,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class RegistrationService {
+
+  private static final Logger log = LoggerFactory.getLogger(RegistrationService.class);
 
   private final UsernamePolicy usernamePolicy;
   private final CredentialPolicy credentialPolicy;
@@ -52,6 +57,7 @@ public class RegistrationService {
     accountRepository.insertRegisteredUser(userId, username, email, passwordHash);
 
     SessionService.IssuedSession session = sessionService.issueSession(userId, userAgentHash);
+    LifecycleLog.info(log, "User registered", "userId", userId, "sessionId", session.sessionId());
     return new RegistrationResult(userId, username.display(), session);
   }
 

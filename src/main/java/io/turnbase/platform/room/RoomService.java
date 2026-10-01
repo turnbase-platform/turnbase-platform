@@ -3,6 +3,7 @@ package io.turnbase.platform.room;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.GameFrontendProperties;
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.PaginationMetadata;
@@ -14,6 +15,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +30,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 class RoomService {
+
+  private static final Logger log = LoggerFactory.getLogger(RoomService.class);
 
   /** {@code room-rest-api.md} §7's own worked example: {@code Retry-After: 2}, {@code 2000}ms. */
   private static final long RETRY_AFTER_MS = 2000;
@@ -73,6 +78,8 @@ class RoomService {
     }
     RoomRepository.CreatedRoom created = repository.createRoom(creatorId, request, game);
     UUID roomId = created.roomId();
+    LifecycleLog.info(
+        log, "Room created", "roomId", roomId, "userId", creatorId, "gameId", request.gameId());
     created.releasedRoom().ifPresent(released -> settleReleasedRoom(creatorId, released));
     String header = claimAndGetInstanceHeader(roomId);
     return new ClaimedResult<>(fetchResponse(roomId, creatorId), header);

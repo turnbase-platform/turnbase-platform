@@ -10,6 +10,7 @@ import io.turnbase.grpc.gamehost.v1.GameOutcome;
 import io.turnbase.grpc.gamehost.v1.ProcessInputRequest;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
+import io.turnbase.platform.common.LifecycleLog;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -208,6 +209,18 @@ public class GameInputService {
    * detach is idempotent.
    */
   private void announceGameOver(UUID sessionId, GameOutcome outcome) {
+    LifecycleLog.info(
+        log,
+        "Game ended",
+        "sessionId",
+        sessionId,
+        "outcome",
+        outcome.getDraw() ? "DRAW" : "DECIDED",
+        "winningTeamIds",
+        outcome.getTeamResultsList().stream()
+            .filter(t -> t.getPlacement() == 1)
+            .map(t -> t.getTeamId())
+            .toList());
     recordOutcome(sessionId, outcome);
     try {
       gameEnd.onGameOver(sessionId);

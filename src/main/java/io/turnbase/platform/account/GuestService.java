@@ -1,8 +1,11 @@
 package io.turnbase.platform.account;
 
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.session.SessionService;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -14,6 +17,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class GuestService {
+
+  private static final Logger log = LoggerFactory.getLogger(GuestService.class);
 
   private final AccountRepository accountRepository;
   private final SessionService sessionService;
@@ -27,6 +32,7 @@ public class GuestService {
     UUID userId = UUID.randomUUID();
     String username = accountRepository.insertGuestUser(userId);
     SessionService.IssuedSession session = sessionService.issueSession(userId, userAgentHash);
+    LifecycleLog.info(log, "Guest created", "userId", userId, "sessionId", session.sessionId());
     return new GuestResult(userId, username, session);
   }
 

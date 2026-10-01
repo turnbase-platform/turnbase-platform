@@ -1,6 +1,7 @@
 package io.turnbase.platform.room;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.websocket.SubscriptionAuthorizer;
 import io.turnbase.platform.websocket.SubscriptionDecision;
 import io.turnbase.platform.websocket.WebSocketConnectionRegistry;
@@ -8,6 +9,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
@@ -39,6 +42,8 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
  */
 @Component
 class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
+
+  private static final Logger log = LoggerFactory.getLogger(RoomSubscriptionAuthorizer.class);
 
   private static final String ROOM_TOPIC_PREFIX = "/topic/room.";
 
@@ -110,6 +115,7 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
       // twice.
       if (membershipBySession.put(stompSessionId, new RoomMembership(roomId, user.userId()))
           == null) {
+        LifecycleLog.info(log, "Room socket connected", "roomId", roomId, "userId", user.userId());
         roomService.onConnect(roomId, user.userId());
       }
       return new SubscriptionDecision.Allow();
@@ -159,6 +165,13 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
       roomSessions.remove(stompSessionId);
     }
     if (membership != null) {
+      LifecycleLog.info(
+          log,
+          "Room socket disconnected",
+          "roomId",
+          membership.roomId(),
+          "userId",
+          membership.userId());
       roomService.onDisconnect(membership.roomId(), membership.userId());
     }
   }

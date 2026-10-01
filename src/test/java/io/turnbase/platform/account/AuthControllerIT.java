@@ -2,6 +2,9 @@ package io.turnbase.platform.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
@@ -15,6 +18,7 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.EventListener;
@@ -136,6 +140,34 @@ class AuthControllerIT extends PostgresIntegrationTest {
             .query(Integer.class)
             .single();
     assertThat(privacyCount).isEqualTo(1);
+  }
+
+  /** IMP-M7-10 / MR-06: one INFO line per auth event, carrying ids and never a secret. */
+  @Test
+  void registrationLoginAndGuestCreationAreLoggedWithoutSecrets() throws Exception {
+    Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    root.addAppender(appender);
+    String username = uniqueUsername();
+    String password = "correct horse battery";
+    ResponseEntity<String> registered = register(username, uniqueEmail(), password);
+    UUID userId = UUID.fromString((String) parse(registered).get("userId"));
+    ResponseEntity<String> loggedIn = login(username, password);
+    ResponseEntity<String> guest = post("/guest", null);
+    root.detachAppender(appender);
+
+    List<String> messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+    assertThat(messages)
+        .anyMatch(m -> m.startsWith("User registered") && m.contains("userId=" + userId));
+    assertThat(messages)
+        .anyMatch(m -> m.startsWith("User logged in") && m.contains("userId=" + userId));
+    assertThat(messages).anyMatch(m -> m.startsWith("Guest created") && m.contains("userId="));
+    for (ResponseEntity<String> response : List.of(registered, loggedIn, guest)) {
+      String token = sessionCookieHeader(response).split("=", 2)[1].split(";", 2)[0];
+      assertThat(messages).noneMatch(m -> m.contains(token));
+    }
+    assertThat(messages).noneMatch(m -> m.contains(password));
   }
 
   @Test

@@ -1,11 +1,14 @@
 package io.turnbase.platform.account;
 
 import io.turnbase.platform.common.Canonicalizer;
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.common.UnauthenticatedException;
 import io.turnbase.platform.session.SessionService;
 import java.util.Locale;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +19,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class LoginService {
+
+  private static final Logger log = LoggerFactory.getLogger(LoginService.class);
 
   private final UsernamePolicy usernamePolicy;
   private final PasswordEncoder passwordEncoder;
@@ -52,6 +57,8 @@ public class LoginService {
 
     SessionService.IssuedSession session =
         sessionService.issueSession(credential.userId(), userAgentHash);
+    LifecycleLog.info(
+        log, "User logged in", "userId", credential.userId(), "sessionId", session.sessionId());
     return new LoginResult(credential.userId(), credential.username(), session);
   }
 

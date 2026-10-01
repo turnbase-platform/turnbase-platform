@@ -1,5 +1,6 @@
 package io.turnbase.platform.room;
 
+import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.Map;
 import java.util.UUID;
@@ -8,6 +9,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
@@ -48,6 +51,8 @@ class RoomEventExecutor {
   private static final int STATEMENT_TIMEOUT_SECONDS = 5;
 
   private static final long RETRY_AFTER_MS = 2000;
+
+  private static final Logger log = LoggerFactory.getLogger(RoomEventExecutor.class);
 
   private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
   private final RoomOwnershipService ownership;
@@ -174,9 +179,55 @@ class RoomEventExecutor {
   }
 
   private void publish(UUID roomId, RoomEvent event, long version) {
+    logLifecycle(roomId, event, version);
     messagingTemplate.convertAndSend(
         "/topic/room." + roomId,
         Map.of("type", event.type(), "version", version, "payload", event.payload()));
+  }
+
+  /**
+   * MR-06: every committed room event is one INFO line carrying {@code roomId}, the affected {@code
+   * userId} where the payload names one, and the close/loss reason. Join, leave, disconnect, grace
+   * expiry ({@code PLAYER_LOST}), reconnect and close all pass through here, so none can be
+   * published unlogged. Never the payload itself: it can carry usernames and chat-adjacent text.
+   */
+  private static void logLifecycle(UUID roomId, RoomEvent event, long version) {
+    UUID userId = null;
+    String reason = null;
+    Object sessionId = null;
+    switch (event.payload()) {
+      case RoomRepository.PlayerJoinedPayload p -> userId = p.playerId();
+      case RoomRepository.PlayerLeftPayload p -> userId = p.playerId();
+      case RoomRepository.PlayerDisconnectedPayload p -> userId = p.playerId();
+      case RoomRepository.PlayerReconnectedPayload p -> userId = p.playerId();
+      case RoomRepository.PlayerKickedPayload p -> userId = p.playerId();
+      case RoomRepository.PlayerLostPayload p -> {
+        userId = p.playerId();
+        reason = p.reason();
+      }
+      case RoomRepository.HostTransferredPayload p -> {
+        userId = p.newHostId();
+        reason = p.reason();
+      }
+      case RoomRepository.RoomClosedPayload p -> reason = p.reason();
+      case Map<?, ?> m -> sessionId = m.get("sessionId");
+      default -> {}
+    }
+    LifecycleLog.info(
+        log,
+        "Room event",
+        "event",
+        event.type(),
+        "roomId",
+        roomId,
+        "userId",
+        userId,
+        "reason",
+        reason,
+        "sessionId",
+        sessionId,
+        "roomVersion",
+        version);
   }
 
   private static <T> Committed<T> requireCommitted(@Nullable Committed<T> committed) {
