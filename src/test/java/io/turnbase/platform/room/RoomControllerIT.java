@@ -225,6 +225,114 @@ class RoomControllerIT extends PostgresIntegrationTest {
   }
 
   /**
+   * {@code IMP-M7-05} (MR-02): the three ways a Lobby's last human goes — socket loss, implicit
+   * release by creating or joining another room, explicit leave — each close the room at once, and
+   * no listed room is left with {@code playerCount} 0.
+   */
+  @Test
+  void aLobbyWhoseLastHumanLeavesByAnyPathIsClosedAndUnlisted() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    RoomService roomService = Objects.requireNonNull(context).getBean(RoomService.class);
+
+    // Path 1 — socket loss: the host connected, then the socket dropped.
+    Registered socketHost = registerUser();
+    UUID socketRoom = createPublicRoom(socketHost, gameId);
+    setConnectionCount(socketRoom, socketHost.userId(), 1);
+    roomService.onDisconnect(socketRoom, socketHost.userId());
+
+    // Path 2 — implicit release by creating another room.
+    Registered creator = registerUser();
+    UUID releasedByCreate = createPublicRoom(creator, gameId);
+    UUID creatorSecond = createPublicRoom(creator, gameId);
+
+    // Path 2b — implicit release by joining another room.
+    Registered joiner = registerUser();
+    Registered otherHost = registerUser();
+    UUID releasedByJoin = createPublicRoom(joiner, gameId);
+    UUID target = createPublicRoom(otherHost, gameId);
+    postWithCookie(
+        "/api/rooms/" + target + "/participants", joiner.cookie(), "{\"role\":\"PLAYER\"}");
+
+    // Path 3 — explicit leave.
+    Registered leaver = registerUser();
+    UUID explicitRoom = createPublicRoom(leaver, gameId);
+    deleteWithCookie("/api/rooms/" + explicitRoom + "/participants/me", leaver.cookie());
+
+    for (UUID closed : List.of(socketRoom, releasedByCreate, releasedByJoin, explicitRoom)) {
+      assertThat(
+              jdbcClient
+                  .sql("select state from room where room_id = :id")
+                  .param("id", closed)
+                  .query(String.class)
+                  .single())
+          .as("room %s", closed)
+          .isEqualTo("CLOSED");
+      assertThat(getWithCookie("/api/rooms/" + closed, otherHost.cookie()).getStatusCode())
+          .as("GET %s", closed)
+          .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+    List<Map<String, Object>> listed =
+        roomsForGame(contentOf(parse(getWithCookie("/api/rooms", otherHost.cookie()))), gameId);
+    List<Object> listedIds = listed.stream().map(r -> r.get("roomId")).toList();
+    assertThat(listedIds)
+        .contains(creatorSecond.toString())
+        .doesNotContain(
+            socketRoom.toString(),
+            releasedByCreate.toString(),
+            releasedByJoin.toString(),
+            explicitRoom.toString());
+    assertThat(listed).allSatisfy(r -> assertThat(numberOf(r, "playerCount")).isPositive());
+  }
+
+  /** {@code IMP-M7-05}: with another human present, the departing host's role transfers instead. */
+  @Test
+  void aHostLeavingByAnyPathWithAnotherHumanPresentTransfersTheRole() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    RoomService roomService = Objects.requireNonNull(context).getBean(RoomService.class);
+
+    Registered host = registerUser();
+    Registered guest = registerUser();
+    UUID socketRoom = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + socketRoom + "/participants", guest.cookie(), "{\"role\":\"PLAYER\"}");
+    setConnectionCount(socketRoom, host.userId(), 1);
+    setConnectionCount(socketRoom, guest.userId(), 1);
+    roomService.onDisconnect(socketRoom, host.userId());
+
+    assertThat(roomRow(socketRoom).get("state")).isEqualTo("LOBBY");
+    assertThat(roomRow(socketRoom).get("host_user_id")).isEqualTo(guest.userId());
+
+    Registered host2 = registerUser();
+    Registered guest2 = registerUser();
+    UUID implicitRoom = createPublicRoom(host2, gameId);
+    postWithCookie(
+        "/api/rooms/" + implicitRoom + "/participants", guest2.cookie(), "{\"role\":\"PLAYER\"}");
+    createPublicRoom(host2, gameId);
+
+    assertThat(roomRow(implicitRoom).get("state")).isEqualTo("LOBBY");
+    assertThat(roomRow(implicitRoom).get("host_user_id")).isEqualTo(guest2.userId());
+  }
+
+  private void setConnectionCount(UUID roomId, UUID userId, int count) {
+    jdbcClient
+        .sql(
+            "update room_participant set connection_count = :count"
+                + " where room_id = :roomId and user_id = :userId")
+        .param("count", count)
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .update();
+  }
+
+  private Map<String, Object> roomRow(UUID roomId) {
+    return jdbcClient
+        .sql("select state, host_user_id from room where room_id = :id")
+        .param("id", roomId)
+        .query()
+        .singleRow();
+  }
+
+  /**
    * {@code IMP-M2-09}, {@code IMP-GATE-53} (FR-XFER-002): the host is the room's only human player,
    * so their own leave closes the room immediately with {@code NO_PLAYERS_REMAINING} rather than an
    * ordinary {@code PLAYER_LEFT}.

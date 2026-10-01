@@ -71,7 +71,9 @@ class RoomService {
     if (request.spectatingRequested() && !game.supportsSpectators()) {
       throw new BusinessRuleException("This game does not support spectating.");
     }
-    UUID roomId = repository.createRoom(creatorId, request, game);
+    RoomRepository.CreatedRoom created = repository.createRoom(creatorId, request, game);
+    UUID roomId = created.roomId();
+    created.releasedRoom().ifPresent(released -> settleReleasedRoom(creatorId, released));
     String header = claimAndGetInstanceHeader(roomId);
     return new ClaimedResult<>(fetchResponse(roomId, creatorId), header);
   }
@@ -106,6 +108,7 @@ class RoomService {
                     accepted.inviterUserId(),
                     "INVITATION_ACCEPTED",
                     Map.of("user", accepted.inviteeUsername(), "roomId", roomId.toString())));
+    outcome.releasedRoom().ifPresent(released -> settleReleasedRoom(userId, released));
     RoomResponse room = fetchResponse(roomId, userId);
     ReleasedRoomResponse released = outcome.releasedRoom().orElse(null);
     return new ClaimedResult<>(new JoinRoomResponse(room, released), header);
@@ -133,32 +136,96 @@ class RoomService {
       repository.leaveRoom(userId, roomId, false);
       return;
     }
-    RoomRepository.LeaveOutcome result =
+    Departure departure =
         events.execute(
             roomId,
-            () -> {
-              Optional<RoomRepository.PlayerLeftPayload> left =
-                  repository.leaveRoom(userId, roomId, true);
-              if (left.isPresent()
-                  && userId.equals(repository.hostUserIdOf(roomId))
-                  && !repository.anyHumanRemains(roomId)) {
-                UUID sessionId = repository.activeSessionId(roomId);
-                repository.detachSession(roomId, sessionId, "NO_PLAYERS_REMAINING", "CLOSED");
-                RoomEventExecutor.RoomEvent event =
-                    new RoomEventExecutor.RoomEvent(
-                        "ROOM_CLOSED",
-                        new RoomRepository.RoomClosedPayload("NO_PLAYERS_REMAINING"));
-                return new RoomEventExecutor.MutationOutcome<>(
-                    new RoomRepository.LeaveOutcome(sessionId), event);
-              }
-              RoomEventExecutor.RoomEvent event =
-                  left.map(payload -> new RoomEventExecutor.RoomEvent("PLAYER_LEFT", payload))
-                      .orElse(null);
-              return new RoomEventExecutor.MutationOutcome<>(
-                  new RoomRepository.LeaveOutcome(null), event);
-            });
-    if (result.closedSessionId() != null) {
-      terminator.terminateAndCleanup(result.closedSessionId(), "NO_PLAYERS_REMAINING");
+            () -> settleDeparture(roomId, userId, repository.leaveRoom(userId, roomId, true)));
+    afterDeparture(roomId, userId, departure);
+  }
+
+  /** What {@link #settleDeparture} decided under the lock, for {@link #afterDeparture}. */
+  private record Departure(@Nullable UUID closedSessionId, boolean hostLeftWithPlayersRemaining) {}
+
+  /**
+   * FR-XFER-002 / FR-XFER-001, shared by every immediate departure (explicit leave, Lobby socket
+   * loss, implicit release): a departing host who leaves no human player behind closes the room
+   * with {@code NO_PLAYERS_REMAINING} — one {@code ROOM_CLOSED} event instead of {@code
+   * PLAYER_LEFT}, since departure and closure are one transaction. A departing host with players
+   * remaining is reported so {@link #afterDeparture} can transfer the role. Runs under the room
+   * lock.
+   */
+  private RoomEventExecutor.MutationOutcome<Departure> settleDeparture(
+      UUID roomId, UUID userId, Optional<RoomRepository.PlayerLeftPayload> left) {
+    if (left.isEmpty()) {
+      return new RoomEventExecutor.MutationOutcome<>(new Departure(null, false), null);
+    }
+    boolean wasHost = userId.equals(repository.hostUserIdOf(roomId));
+    if (wasHost && !repository.anyHumanRemains(roomId)) {
+      UUID sessionId = repository.activeSessionId(roomId);
+      repository.detachSession(roomId, sessionId, "NO_PLAYERS_REMAINING", "CLOSED");
+      return new RoomEventExecutor.MutationOutcome<>(
+          new Departure(sessionId, false),
+          new RoomEventExecutor.RoomEvent(
+              "ROOM_CLOSED", new RoomRepository.RoomClosedPayload("NO_PLAYERS_REMAINING")));
+    }
+    return new RoomEventExecutor.MutationOutcome<>(
+        new Departure(null, wasHost), new RoomEventExecutor.RoomEvent("PLAYER_LEFT", left.get()));
+  }
+
+  /** Post-commit half of {@link #settleDeparture}: session teardown, or the host transfer. */
+  private void afterDeparture(UUID roomId, UUID departedUserId, Departure departure) {
+    if (departure.closedSessionId() != null) {
+      terminator.terminateAndCleanup(departure.closedSessionId(), "NO_PLAYERS_REMAINING");
+    }
+    if (!departure.hostLeftWithPlayersRemaining()) {
+      return;
+    }
+    try {
+      events.execute(
+          roomId,
+          () -> {
+            Optional<UUID> next = repository.nextHumanPlayer(roomId);
+            if (next.isEmpty() || next.get().equals(departedUserId)) {
+              return new RoomEventExecutor.MutationOutcome<>(Boolean.FALSE, null);
+            }
+            RoomRepository.HostTransferredPayload payload =
+                repository.transferHostAutomatically(
+                    roomId, next.get(), departedUserId, "HOST_LEFT");
+            return new RoomEventExecutor.MutationOutcome<>(
+                Boolean.TRUE, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
+          });
+    } catch (RoomUnavailableRetryException e) {
+      // Ownership moved; the new owner's sweep is responsible for this room now.
+    }
+  }
+
+  /**
+   * The implicit leave of join/create ({@code releaseCallersCurrentRoom}) committed in the new
+   * room's transaction; the old room still owes its announcement, closure or host transfer. Done
+   * here, immediately, when this instance can claim the old room — a Lobby room whose last human
+   * walked away must not linger in the listing. {@code EARLY_RELEASE} and rooms owned by a live
+   * peer are left to {@code GraceDeadlineSweepJob}'s deferred-tail duty, as before.
+   */
+  private void settleReleasedRoom(UUID userId, ReleasedRoomResponse released) {
+    if (!"LEFT".equals(released.reason())) {
+      return;
+    }
+    UUID oldRoomId = released.roomId();
+    RoomOwnershipService.ClaimOutcome claim = ownership.claim(oldRoomId);
+    if (!(claim instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine)
+        && !(claim instanceof RoomOwnershipService.ClaimOutcome.Adopted)) {
+      return;
+    }
+    try {
+      Departure departure =
+          events.execute(
+              oldRoomId,
+              () ->
+                  settleDeparture(
+                      oldRoomId, userId, repository.announceReleasedDeparture(oldRoomId, userId)));
+      afterDeparture(oldRoomId, userId, departure);
+    } catch (RoomUnavailableRetryException e) {
+      // Ownership moved; the deferred-tail duty still owns the announcement.
     }
   }
 
@@ -176,26 +243,38 @@ class RoomService {
    */
   void onDisconnect(UUID roomId, UUID userId) {
     RoomRepository.DisconnectOutcome outcome;
+    Departure departure = new Departure(null, false);
     try {
-      outcome =
+      record Result(RoomRepository.DisconnectOutcome outcome, Departure departure) {}
+      Result result =
           events.execute(
               roomId,
               () -> {
                 RoomRepository.DisconnectOutcome o =
                     repository.registerDisconnect(roomId, userId, properties.gracePeriod());
-                RoomEventExecutor.RoomEvent event =
-                    switch (o) {
-                      case RoomRepository.DisconnectOutcome.StillConnected ignored -> null;
-                      case RoomRepository.DisconnectOutcome.LeftImmediately left ->
-                          new RoomEventExecutor.RoomEvent("PLAYER_LEFT", left.payload());
-                      case RoomRepository.DisconnectOutcome.GraceOpened opened ->
-                          new RoomEventExecutor.RoomEvent("PLAYER_DISCONNECTED", opened.payload());
-                    };
-                return new RoomEventExecutor.MutationOutcome<>(o, event);
+                return switch (o) {
+                  case RoomRepository.DisconnectOutcome.StillConnected ignored ->
+                      new RoomEventExecutor.MutationOutcome<>(
+                          new Result(o, new Departure(null, false)), null);
+                  case RoomRepository.DisconnectOutcome.LeftImmediately left -> {
+                    // FR-DC-002: a Lobby disconnect is an immediate leave, so FR-XFER-001/002
+                    // apply exactly as they do to an explicit one.
+                    var settled = settleDeparture(roomId, userId, Optional.of(left.payload()));
+                    yield new RoomEventExecutor.MutationOutcome<>(
+                        new Result(o, settled.value()), settled.event());
+                  }
+                  case RoomRepository.DisconnectOutcome.GraceOpened opened ->
+                      new RoomEventExecutor.MutationOutcome<>(
+                          new Result(o, new Departure(null, false)),
+                          new RoomEventExecutor.RoomEvent("PLAYER_DISCONNECTED", opened.payload()));
+                };
               });
+      outcome = result.outcome();
+      departure = result.departure();
     } catch (RoomUnavailableRetryException e) {
       return;
     }
+    afterDeparture(roomId, userId, departure);
     if (outcome instanceof RoomRepository.DisconnectOutcome.GraceOpened opened
         && opened.wasHost()) {
       transferHostOnDisconnect(roomId, userId);

@@ -77,7 +77,7 @@ class RoomRepository {
   // ---------------------------------------------------------------------
 
   @Transactional
-  UUID createRoom(UUID creatorId, CreateRoomRequest request, CreatableGame game) {
+  CreatedRoom createRoom(UUID creatorId, CreateRoomRequest request, CreatableGame game) {
     UUID roomId = UUID.randomUUID();
     jdbcClient
         .sql(
@@ -133,9 +133,11 @@ class RoomRepository {
         .param("teamId", firstTeamId)
         .update();
 
-    releaseCallersCurrentRoom(creatorId, roomId);
-    return roomId;
+    return new CreatedRoom(roomId, releaseCallersCurrentRoom(creatorId, roomId));
   }
+
+  /** {@link #createRoom}'s outcome: the new room and the one the creator implicitly left. */
+  record CreatedRoom(UUID roomId, Optional<ReleasedRoomResponse> releasedRoom) {}
 
   // ---------------------------------------------------------------------
   // Join (room-rest-api.md §5)
@@ -2410,9 +2412,6 @@ class RoomRepository {
         .update();
   }
 
-  /** {@link RoomService#leave}'s own outcome: the session it closed, if closure was triggered. */
-  record LeaveOutcome(@Nullable UUID closedSessionId) {}
-
   /** §5.1 duty 2's query: departures a foreign instance resolved, still owed an announcement. */
   List<DeferredTail> deferredTails(String instanceId) {
     return jdbcClient
@@ -2468,6 +2467,41 @@ class RoomRepository {
         .param("instanceId", instanceId)
         .query(UUID.class)
         .list();
+  }
+
+  /**
+   * Stamps {@code lost_announced_at} on a participant {@link #releaseCallersCurrentRoom} just
+   * released, so the deferred-tail duty skips it, and returns the {@code PLAYER_LEFT} payload the
+   * caller now owes. Empty when another actor already announced it.
+   */
+  Optional<PlayerLeftPayload> announceReleasedDeparture(UUID roomId, UUID userId) {
+    return jdbcClient
+        .sql(
+            """
+            update room_participant set lost_announced_at = now()
+             where room_id = :roomId and user_id = :userId
+               and left_at is not null and lost_announced_at is null
+            returning role
+            """)
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .query(String.class)
+        .optional()
+        .map(role -> new PlayerLeftPayload(userId, role));
+  }
+
+  /** FR-XFER-001: the next human player by join order, preferring one with a live connection. */
+  Optional<UUID> nextHumanPlayer(UUID roomId) {
+    return jdbcClient
+        .sql(
+            """
+            select user_id from room_participant
+             where room_id = :roomId and role = 'PLAYER' and left_at is null
+             order by (connection_count > 0) desc, join_order asc limit 1
+            """)
+        .param("roomId", roomId)
+        .query(UUID.class)
+        .optional();
   }
 
   @Nullable UUID hostUserIdOf(UUID roomId) {
