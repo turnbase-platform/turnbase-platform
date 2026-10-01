@@ -285,6 +285,48 @@ class RoomControllerIT extends PostgresIntegrationTest {
   }
 
   /** {@code IMP-M7-05}: with another human present, the departing host's role transfers instead. */
+  /**
+   * FR-LIFE-004 / FR-EXPIRY-002 (MR-03): a confirmed leave during In Progress queues the same
+   * {@code player_left} engine input grace expiry does, reason {@code left}; a spectator's leave
+   * queues nothing.
+   */
+  @Test
+  void leavingMidGameQueuesPlayerLeftForTheEngineButASpectatorDoesNot() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    Registered host = registerUser();
+    Registered guest = registerUser();
+    Registered spectator = registerUser();
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", guest.cookie(), "{\"role\":\"PLAYER\"}");
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", spectator.cookie(), "{\"role\":\"SPECTATOR\"}");
+    UUID sessionId = UUID.randomUUID();
+    jdbcClient
+        .sql(
+            "update room set state = 'IN_PROGRESS', active_session_id = :sessionId"
+                + " where room_id = :roomId")
+        .param("sessionId", sessionId)
+        .param("roomId", roomId)
+        .update();
+
+    deleteWithCookie("/api/rooms/" + roomId + "/participants/me", spectator.cookie());
+    assertThat(outboxPayloads(sessionId)).isEmpty();
+
+    deleteWithCookie("/api/rooms/" + roomId + "/participants/me", guest.cookie());
+    List<String> payloads = outboxPayloads(sessionId);
+    assertThat(payloads).hasSize(1);
+    assertThat(payloads.get(0)).contains("\"player_left\"", "\"left\"", guest.userId().toString());
+  }
+
+  private List<String> outboxPayloads(UUID sessionId) {
+    return jdbcClient
+        .sql("select payload::text from game_input_outbox where session_id = :sessionId")
+        .param("sessionId", sessionId)
+        .query(String.class)
+        .list();
+  }
+
   @Test
   void aHostLeavingByAnyPathWithAnotherHumanPresentTransfersTheRole() throws Exception {
     UUID gameId = seedTwoPlayerGame(true, true);

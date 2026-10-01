@@ -324,14 +324,24 @@ class RoomRepository {
    * no room-ownership fence, only the old room's own {@code active_session_id} ({@link
    * #insertPlayerLeftOutbox} is itself the conditional-on-session-existing guard).
    */
+  private boolean isInProgress(UUID roomId) {
+    return jdbcClient
+        .sql("select state from room where room_id = :roomId")
+        .param("roomId", roomId)
+        .query(String.class)
+        .optional()
+        .filter("IN_PROGRESS"::equals)
+        .isPresent();
+  }
+
   private Optional<ReleasedRoomResponse> releaseCallersCurrentRoom(UUID userId, UUID newRoomId) {
     record ActiveMembership(
-        UUID roomId, @Nullable UUID graceReservationId, @Nullable UUID teamId) {}
+        UUID roomId, @Nullable UUID graceReservationId, @Nullable UUID teamId, String role) {}
 
     Optional<ActiveMembership> active =
         jdbcClient
             .sql(
-                "select room_id, grace_reservation_id, team_id from room_participant"
+                "select room_id, grace_reservation_id, team_id, role from room_participant"
                     + " where user_id = :userId and left_at is null and room_id <> :newRoomId")
             .param("userId", userId)
             .param("newRoomId", newRoomId)
@@ -340,7 +350,8 @@ class RoomRepository {
                     new ActiveMembership(
                         rs.getObject("room_id", UUID.class),
                         rs.getObject("grace_reservation_id", UUID.class),
-                        rs.getObject("team_id", UUID.class)))
+                        rs.getObject("team_id", UUID.class),
+                        rs.getString("role")))
             .optional();
     if (active.isEmpty()) {
       return Optional.empty();
@@ -363,6 +374,9 @@ class RoomRepository {
     if (earlyRelease) {
       insertPlayerLeftOutbox(
           membership.roomId(), userId, membership.teamId(), "grace_period_expired");
+    } else if ("PLAYER".equals(membership.role()) && isInProgress(membership.roomId())) {
+      // FR-LIFE-004: an abandonment confirmation is a confirmed leave — reason `left`.
+      insertPlayerLeftOutbox(membership.roomId(), userId, membership.teamId(), "left");
     }
     return Optional.of(new ReleasedRoomResponse(membership.roomId(), reason));
   }
@@ -383,17 +397,20 @@ class RoomRepository {
    */
   @Transactional
   Optional<PlayerLeftPayload> leaveRoom(UUID userId, UUID roomId, boolean announceInline) {
-    Optional<String> role =
+    record Member(String role, @Nullable UUID teamId) {}
+    Optional<Member> member =
         jdbcClient
             .sql(
-                "select role from room_participant"
+                "select role, team_id from room_participant"
                     + " where room_id = :roomId and user_id = :userId and left_at is null"
                     + " for update")
             .param("roomId", roomId)
             .param("userId", userId)
-            .query(String.class)
+            .query(
+                (rs, rowNum) ->
+                    new Member(rs.getString("role"), rs.getObject("team_id", UUID.class)))
             .optional();
-    if (role.isEmpty()) {
+    if (member.isEmpty()) {
       return Optional.empty();
     }
     jdbcClient
@@ -409,7 +426,12 @@ class RoomRepository {
         .param("roomId", roomId)
         .param("userId", userId)
         .update();
-    return Optional.of(new PlayerLeftPayload(userId, role.get()));
+    // FR-LIFE-004: a confirmed leave during In Progress tells the engine at once (reason `left`),
+    // exactly as grace-period expiry does. Only a PLAYER was ever represented to the engine.
+    if ("PLAYER".equals(member.get().role()) && isInProgress(roomId)) {
+      insertPlayerLeftOutbox(roomId, userId, member.get().teamId(), "left");
+    }
+    return Optional.of(new PlayerLeftPayload(userId, member.get().role()));
   }
 
   // ---------------------------------------------------------------------
