@@ -556,19 +556,20 @@ class RoomService {
   }
 
   /** {@code room-rest-api.md} §3: the ordinary browsing listing — no affinity header, no claim. */
-  PageResponse<RoomListRowResponse> list(UUID viewerId, RoomListFilter filter, Pageable pageable) {
+  RoomListResponse list(UUID viewerId, RoomListFilter filter, Pageable pageable) {
     int spectatorCapacity = properties.spectatorCapacity();
     List<RoomRepository.RoomListRow> rows =
         repository.listRooms(viewerId, filter, spectatorCapacity);
     long total = repository.countRooms(viewerId, filter, spectatorCapacity);
     List<RoomListRowResponse> content = rows.stream().map(this::toListRowResponse).toList();
-    return new PageResponse<>(
+    return new RoomListResponse(
         content,
         new PaginationMetadata(
             pageable.getPageNumber() + 1,
             pageable.getPageSize(),
             total,
-            (int) Math.ceil((double) total / pageable.getPageSize())));
+            (int) Math.ceil((double) total / pageable.getPageSize())),
+        repository.findReservedSlot(viewerId).orElse(null));
   }
 
   private RoomResponse fetchResponse(UUID roomId, UUID viewerId) {

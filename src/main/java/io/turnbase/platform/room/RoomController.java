@@ -54,7 +54,7 @@ class RoomController {
 
   /** {@code room-rest-api.md} §3, §3.1. */
   @GetMapping("/api/rooms")
-  ResponseEntity<PageResponse<?>> list(
+  ResponseEntity<Object> list(
       @RequestParam(required = false) @Nullable String inviteCode,
       @RequestParam(required = false) @Nullable String search,
       @RequestParam(required = false) @Nullable List<String> status,
@@ -89,7 +89,7 @@ class RoomController {
             pageable.getSort(),
             pageable.getPageSize(),
             (int) pageable.getOffset());
-    PageResponse<?> envelope = roomService.list(principal.userId(), filter, pageable);
+    Object envelope = roomService.list(principal.userId(), filter, pageable);
     return ResponseEntity.ok(envelope);
   }
 

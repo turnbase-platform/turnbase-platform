@@ -284,6 +284,55 @@ class RoomControllerIT extends PostgresIntegrationTest {
     assertThat(listed).allSatisfy(r -> assertThat(numberOf(r, "playerCount")).isPositive());
   }
 
+  /**
+   * {@code IMP-M7-07}: {@code reservedSlot} names the caller's live grace reservation whatever the
+   * filters, is {@code null} for everyone else, and is {@code null} once the grace is due.
+   */
+  @Test
+  void reservedSlotIsPopulatedForTheHolderRegardlessOfFiltersAndNullOtherwise() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    Registered host = registerUser();
+    Registered holder = registerUser();
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", holder.cookie(), "{\"role\":\"PLAYER\"}");
+    jdbcClient
+        .sql("update room set state = 'IN_PROGRESS' where room_id = :id")
+        .param("id", roomId)
+        .update();
+    jdbcClient
+        .sql(
+            "update room_participant set grace_reservation_id = gen_random_uuid(),"
+                + " grace_expires_at = now() + interval '60 seconds'"
+                + " where room_id = :id and user_id = :userId")
+        .param("id", roomId)
+        .param("userId", holder.userId())
+        .update();
+
+    for (String path : List.of("/api/rooms", "/api/rooms?search=no-such-game-xyz&status=LOBBY")) {
+      Map<String, Object> body = parse(getWithCookie(path, holder.cookie()));
+      @SuppressWarnings("unchecked")
+      Map<String, Object> slot = (Map<String, Object>) body.get("reservedSlot");
+      Objects.requireNonNull(slot, path);
+      assertThat(slot.get("roomId")).isEqualTo(roomId.toString());
+      assertThat(slot.get("gameName")).isNotNull();
+      assertThat(numberOf(slot, "graceRemainingSeconds")).isBetween(1, 60);
+    }
+
+    Map<String, Object> hostBody = parse(getWithCookie("/api/rooms", host.cookie()));
+    assertThat(hostBody).containsKey("reservedSlot");
+    assertThat(hostBody.get("reservedSlot")).isNull();
+
+    jdbcClient
+        .sql(
+            "update room_participant set grace_expires_at = now() - interval '1 second'"
+                + " where room_id = :id and user_id = :userId")
+        .param("id", roomId)
+        .param("userId", holder.userId())
+        .update();
+    assertThat(parse(getWithCookie("/api/rooms", holder.cookie())).get("reservedSlot")).isNull();
+  }
+
   /** {@code IMP-M7-05}: with another human present, the departing host's role transfers instead. */
   /**
    * FR-LIFE-004 / FR-EXPIRY-002 (MR-03): a confirmed leave during In Progress queues the same

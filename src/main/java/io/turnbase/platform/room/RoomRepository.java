@@ -1622,6 +1622,37 @@ class RoomRepository {
         .optional();
   }
 
+  /**
+   * {@code room-rest-api.md} §3's {@code reservedSlot}: the caller's live grace reservation
+   * (FR-GRACE-005), whichever room it is in. Independent of the list's filters and page. Due but
+   * unswept reservations ({@code grace_expires_at <= now()}) are not live, and the remaining
+   * seconds are clamped to at least 1 as for {@code disconnectedPlayers}.
+   */
+  Optional<RoomListResponse.ReservedSlot> findReservedSlot(UUID userId) {
+    return jdbcClient
+        .sql(
+            """
+            select rp.room_id, g.title as game_name,
+                   greatest(1, ceil(extract(epoch from rp.grace_expires_at - now())))::bigint
+                     as grace_remaining_seconds
+            from room_participant rp
+            join room r on r.room_id = rp.room_id
+            join game g on g.game_id = r.game_id
+            where rp.user_id = :userId and rp.left_at is null
+              and rp.grace_expires_at > now() and r.state = 'IN_PROGRESS'
+            order by rp.grace_expires_at desc
+            limit 1
+            """)
+        .param("userId", userId)
+        .query(
+            (rs, rowNum) ->
+                new RoomListResponse.ReservedSlot(
+                    rs.getObject("room_id", UUID.class),
+                    rs.getString("game_name"),
+                    rs.getLong("grace_remaining_seconds")))
+        .optional();
+  }
+
   /** {@code room-rest-api.md} §3 {@code included()}. */
   List<RoomListRow> listRooms(UUID viewerId, RoomListFilter filter, int spectatorCapacity) {
     WhereClause where = buildListWhereClause(viewerId, filter, spectatorCapacity);
