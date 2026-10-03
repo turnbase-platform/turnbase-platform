@@ -614,6 +614,7 @@ class RoomService {
         isHost ? row.inviteCode() : null,
         canJoin,
         canSpectate,
+        repository.findViewerRole(row.roomId(), viewerId).orElse(null),
         row.version(),
         row.createdAt());
   }

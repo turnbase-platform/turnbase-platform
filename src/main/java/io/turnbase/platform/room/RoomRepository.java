@@ -286,6 +286,21 @@ class RoomRepository {
     return Boolean.TRUE.equals(exists);
   }
 
+  /**
+   * {@code room-rest-api.md} §4 {@code viewerRole}: the caller's current role in the room ({@code
+   * left_at is null}); a grace-period reservation is an open {@code PLAYER} row, so it counts.
+   */
+  Optional<String> findViewerRole(UUID roomId, UUID userId) {
+    return jdbcClient
+        .sql(
+            "select role from room_participant where room_id = :roomId and user_id = :userId"
+                + " and left_at is null")
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .query(String.class)
+        .optional();
+  }
+
   private long countParticipants(UUID roomId, String role) {
     Long count =
         jdbcClient

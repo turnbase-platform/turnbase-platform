@@ -289,6 +289,76 @@ class RoomControllerIT extends PostgresIntegrationTest {
    * filters, is {@code null} for everyone else, and is {@code null} once the grace is due.
    */
   @Test
+  void viewerRoleNamesTheCallersMembershipAndAGetNeverEnrolsAnyone() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    Registered host = registerUser();
+    Registered player = registerUser();
+    Registered spectator = registerUser();
+    Registered visitor = registerUser();
+    Registered leaver = registerUser();
+    UUID roomId =
+        UUID.fromString(
+            (String)
+                Objects.requireNonNull(
+                    parse(
+                            postWithCookie(
+                                "/api/rooms",
+                                host.cookie(),
+                                ("{\"gameId\":\"%s\",\"visibility\":\"PUBLIC\","
+                                        + "\"spectatingEnabled\":true}")
+                                    .formatted(gameId)))
+                        .get("roomId")));
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", player.cookie(), "{\"role\":\"PLAYER\"}");
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", spectator.cookie(), "{\"role\":\"SPECTATOR\"}");
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", leaver.cookie(), "{\"role\":\"SPECTATOR\"}");
+    deleteWithCookie("/api/rooms/" + roomId + "/participants/me", leaver.cookie());
+    // a grace-period reservation still counts as PLAYER
+    jdbcClient
+        .sql(
+            "update room_participant set grace_reservation_id = gen_random_uuid(),"
+                + " grace_expires_at = now() + interval '60 seconds'"
+                + " where room_id = :id and user_id = :userId")
+        .param("id", roomId)
+        .param("userId", player.userId())
+        .update();
+    long versionBefore =
+        numberOf(parse(getWithCookie("/api/rooms/" + roomId, host.cookie())), "version");
+    long participantsBefore = participantRows(roomId);
+
+    assertThat(viewerRole(roomId, host)).isEqualTo("PLAYER");
+    assertThat(viewerRole(roomId, player)).isEqualTo("PLAYER");
+    assertThat(viewerRole(roomId, spectator)).isEqualTo("SPECTATOR");
+    assertThat(viewerRole(roomId, visitor)).isNull();
+    assertThat(viewerRole(roomId, leaver)).isNull();
+
+    Map<String, Object> after = parse(getWithCookie("/api/rooms/" + roomId, visitor.cookie()));
+    assertThat(after).containsKey("viewerRole");
+    assertThat(numberOf(after, "version")).isEqualTo((int) versionBefore);
+    assertThat(participantRows(roomId)).isEqualTo(participantsBefore);
+
+    Map<String, Object> listing = parse(getWithCookie("/api/rooms", host.cookie()));
+    assertThat(roomsForGame(contentOf(listing), gameId)).isNotEmpty();
+    assertThat(roomsForGame(contentOf(listing), gameId))
+        .allSatisfy(row -> assertThat(row).doesNotContainKey("viewerRole"));
+  }
+
+  @org.jspecify.annotations.Nullable
+  private String viewerRole(UUID roomId, Registered viewer) throws Exception {
+    return (String) parse(getWithCookie("/api/rooms/" + roomId, viewer.cookie())).get("viewerRole");
+  }
+
+  private long participantRows(UUID roomId) {
+    return jdbcClient
+        .sql("select count(*) from room_participant where room_id = :id")
+        .param("id", roomId)
+        .query(Long.class)
+        .single();
+  }
+
+  @Test
   void reservedSlotIsPopulatedForTheHolderRegardlessOfFiltersAndNullOtherwise() throws Exception {
     UUID gameId = seedTwoPlayerGame(true, true);
     Registered host = registerUser();

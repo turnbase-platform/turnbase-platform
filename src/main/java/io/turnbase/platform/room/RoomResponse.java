@@ -4,7 +4,10 @@ import java.time.Instant;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
-/** {@code room-rest-api.md} §4 — the full room resource, superset of a list row. */
+/**
+ * {@code room-rest-api.md} §4 — the full room resource, superset of a list row. {@code viewerRole}
+ * is {@code PLAYER}, {@code SPECTATOR} or null.
+ */
 record RoomResponse(
     UUID roomId,
     UUID gameId,
@@ -24,5 +27,6 @@ record RoomResponse(
     @Nullable String inviteCode,
     boolean canJoin,
     boolean canSpectate,
+    @Nullable String viewerRole,
     long version,
     Instant createdAt) {}
