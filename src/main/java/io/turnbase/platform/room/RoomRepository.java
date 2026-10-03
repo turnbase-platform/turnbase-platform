@@ -2448,6 +2448,25 @@ class RoomRepository {
   /** {@code room-websocket.md} `ROOM_CLOSED` payload shape. */
   record RoomClosedPayload(String reason) {}
 
+  /**
+   * FR-EXPIRY-006: a game end returns the room to Lobby, where a reservation means nothing, so
+   * every reservation still outstanding is resolved as a departure — announced already (the {@code
+   * GAME_ENDED} that follows is the announcement) and with no engine notification, the session
+   * being over.
+   */
+  void resolveOutstandingReservations(UUID roomId) {
+    jdbcClient
+        .sql(
+            """
+            update room_participant
+               set left_at = now(), leave_reason = 'GRACE_EXPIRED', lost_announced_at = now(),
+                   grace_reservation_id = null, grace_expires_at = null
+             where room_id = :roomId and left_at is null and grace_reservation_id is not null
+            """)
+        .param("roomId", roomId)
+        .update();
+  }
+
   /** {@code room-websocket.md} `GAME_ENDED` payload shape, shared with FR-JOB-007c's trigger. */
   record GameEndedPayload(UUID roomId, boolean readinessReset) {}
 

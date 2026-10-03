@@ -76,6 +76,7 @@ class RoomSessionDetacherImplIT extends PostgresIntegrationTest {
   void theRetryLimitFailsTheRoomBackToLobbyWithNoClosedReason() {
     context = boot();
     UUID roomId = insertRoom(context);
+    insertPlayer(context, roomId);
     UUID sessionId = UUID.randomUUID();
     context
         .getBean(JdbcClient.class)
@@ -147,6 +148,17 @@ class RoomSessionDetacherImplIT extends PostgresIntegrationTest {
         .param("roomId", roomId)
         .param("inviter", inviter)
         .param("invitee", invitee)
+        .update();
+  }
+
+  private static void insertPlayer(ConfigurableApplicationContext context, UUID roomId) {
+    context
+        .getBean(JdbcClient.class)
+        .sql(
+            "insert into room_participant (room_id, user_id, role, join_order, connection_count)"
+                + " values (:roomId, :userId, 'PLAYER', 1, 1)")
+        .param("roomId", roomId)
+        .param("userId", insertUser(context))
         .update();
   }
 

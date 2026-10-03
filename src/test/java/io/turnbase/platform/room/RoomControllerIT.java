@@ -449,6 +449,122 @@ class RoomControllerIT extends PostgresIntegrationTest {
     assertThat(room.get("active_session_id")).isNull();
   }
 
+  /**
+   * {@code IMP-M8-04} (RR-04, {@code 09203c03}): three members' sockets close within one scheduling
+   * instant. The leaves are serialised per room, so the host's departure (players behind it) is
+   * committed first and the last one out is not the host — the room closes anyway.
+   */
+  @Test
+  void membersLeavingTogetherCloseTheRoomAndNeverLeaveItListedEmpty() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    RoomService roomService = Objects.requireNonNull(context).getBean(RoomService.class);
+    for (int attempt = 0; attempt < 5; attempt++) {
+      Registered host = registerUser();
+      Registered b = registerUser();
+      Registered c = registerUser();
+      UUID roomId = createPublicRoom(host, gameId);
+      postWithCookie("/api/rooms/" + roomId + "/participants", b.cookie(), "{\"role\":\"PLAYER\"}");
+      postWithCookie("/api/rooms/" + roomId + "/participants", c.cookie(), "{\"role\":\"PLAYER\"}");
+      for (Registered r : List.of(host, b, c)) {
+        setConnectionCount(roomId, r.userId(), 1);
+      }
+
+      List<java.util.concurrent.CompletableFuture<Void>> leaves =
+          List.of(host, b, c).stream()
+              .map(
+                  r ->
+                      java.util.concurrent.CompletableFuture.runAsync(
+                          () -> roomService.onDisconnect(roomId, r.userId())))
+              .toList();
+      leaves.forEach(java.util.concurrent.CompletableFuture::join);
+
+      Map<String, Object> room =
+          jdbcClient
+              .sql("select state, closed_reason from room where room_id = :id")
+              .param("id", roomId)
+              .query()
+              .singleRow();
+      assertThat(room.get("state")).isEqualTo("CLOSED");
+      assertThat(room.get("closed_reason")).isEqualTo("NO_PLAYERS_REMAINING");
+    }
+    ResponseEntity<String> list = getWithCookie("/api/rooms?size=100", registerUser().cookie());
+    assertThat(contentOf(parse(list))).noneMatch(row -> numberOf(row, "playerCount") == 0);
+  }
+
+  /**
+   * The same outcome when the host's departure is committed before the others', deterministically.
+   */
+  @Test
+  void theLastPlayerOutClosesTheRoomEvenWhenTheHostLeftFirst() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    Registered host = registerUser();
+    Registered guest = registerUser();
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", guest.cookie(), "{\"role\":\"PLAYER\"}");
+
+    deleteWithCookie("/api/rooms/" + roomId + "/participants/me", host.cookie());
+    // The transfer to the guest has not run in the race this models; make the guest the leaver.
+    jdbcClient
+        .sql("update room set host_user_id = :h where room_id = :id")
+        .param("h", host.userId())
+        .param("id", roomId)
+        .update();
+    deleteWithCookie("/api/rooms/" + roomId + "/participants/me", guest.cookie());
+
+    assertThat(roomRow(roomId).get("state")).isEqualTo("CLOSED");
+  }
+
+  /**
+   * {@code IMP-M8-04} (RR-04, {@code fe4d83bc}): both players are in grace when the game ends, so
+   * the room returns to Lobby with members long gone. Outstanding reservations resolve as
+   * departures (FR-EXPIRY-006) and the room closes in the same step. Each disconnected player was
+   * given the full configured grace period, not a shorter one for the pair.
+   */
+  @Test
+  void aGameEndingWithEveryPlayerInGraceClosesTheRoom() throws Exception {
+    UUID gameId = seedTwoPlayerGame(true, true);
+    RoomService roomService = Objects.requireNonNull(context).getBean(RoomService.class);
+    Registered host = registerUser();
+    Registered guest = registerUser();
+    UUID roomId = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + roomId + "/participants", guest.cookie(), "{\"role\":\"PLAYER\"}");
+    UUID sessionId = UUID.randomUUID();
+    jdbcClient
+        .sql("update room set state = 'IN_PROGRESS', active_session_id = :s where room_id = :id")
+        .param("s", sessionId)
+        .param("id", roomId)
+        .update();
+    setConnectionCount(roomId, host.userId(), 1);
+    setConnectionCount(roomId, guest.userId(), 1);
+    roomService.onDisconnect(roomId, host.userId());
+    roomService.onDisconnect(roomId, guest.userId());
+
+    List<Double> graceSeconds =
+        jdbcClient
+            .sql(
+                "select extract(epoch from grace_expires_at - now())::float8 from room_participant"
+                    + " where room_id = :id and grace_expires_at is not null")
+            .param("id", roomId)
+            .query(Double.class)
+            .list();
+    assertThat(graceSeconds).hasSize(2).allSatisfy(s -> assertThat(s).isBetween(50.0, 61.0));
+
+    Objects.requireNonNull(context)
+        .getBean(RoomSessionDetacher.class)
+        .detach(roomId, sessionId, "GAME_OVER", "LOBBY");
+
+    Map<String, Object> room =
+        jdbcClient
+            .sql("select state, closed_reason from room where room_id = :id")
+            .param("id", roomId)
+            .query()
+            .singleRow();
+    assertThat(room.get("state")).isEqualTo("CLOSED");
+    assertThat(room.get("closed_reason")).isEqualTo("NO_PLAYERS_REMAINING");
+  }
+
   /** {@code IMP-GATE-50}: a departed row is reused, never left to collide with a fresh insert. */
   @Test
   void rejoiningARoomAfterLeavingReusesTheParticipantRowInsteadOfCollidingOnItsKey()

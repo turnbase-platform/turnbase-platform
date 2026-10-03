@@ -167,7 +167,11 @@ class RoomService {
       return new RoomEventExecutor.MutationOutcome<>(new Departure(null, false), null);
     }
     boolean wasHost = userId.equals(repository.hostUserIdOf(roomId));
-    if (wasHost && !repository.anyHumanRemains(roomId)) {
+    // The last human closes the room whoever they are: when leaves race, the host's departure
+    // (which found players behind it) is committed before the others', so the last one out is no
+    // longer the host.
+    boolean wasPlayer = "PLAYER".equals(left.get().role());
+    if ((wasHost || wasPlayer) && !repository.anyHumanRemains(roomId)) {
       UUID sessionId = repository.activeSessionId(roomId);
       repository.detachSession(roomId, sessionId, "NO_PLAYERS_REMAINING", "CLOSED");
       return new RoomEventExecutor.MutationOutcome<>(

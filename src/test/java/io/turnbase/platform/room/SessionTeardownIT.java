@@ -116,6 +116,24 @@ class SessionTeardownIT extends PostgresIntegrationTest {
     return roomId;
   }
 
+  /** A connected human, so the room a game returns to Lobby is not empty (and so closed). */
+  private static void insertPlayer(UUID roomId) {
+    UUID userId = UUID.randomUUID();
+    jdbc.sql(
+            "insert into app_user (user_id, kind, username, username_skeleton, guest_serial)"
+                + " values (:userId, 'GUEST', :username, :username, :serial)")
+        .param("userId", userId)
+        .param("username", "user-" + userId.toString().substring(0, 8))
+        .param("serial", userId.getLeastSignificantBits() & Long.MAX_VALUE)
+        .update();
+    jdbc.sql(
+            "insert into room_participant (room_id, user_id, role, join_order, connection_count)"
+                + " values (:roomId, :userId, 'PLAYER', 1, 1)")
+        .param("roomId", roomId)
+        .param("userId", userId)
+        .update();
+  }
+
   private static UUID sessionWithKeys() {
     UUID sessionId = UUID.randomUUID();
     for (String prefix :
@@ -199,6 +217,7 @@ class SessionTeardownIT extends PostgresIntegrationTest {
   void theNormalEndOfAGameReturnsTheRoomToLobbyAndTerminatesWithGameOver() {
     HOST_UP.set(true);
     UUID roomId = insertRoom("IN_PROGRESS");
+    insertPlayer(roomId);
     UUID sessionId = sessionWithKeys();
     redis.opsForValue().set("routing:" + sessionId, "teardown-host");
     jdbc.sql("update room set active_session_id = :s where room_id = :r")
