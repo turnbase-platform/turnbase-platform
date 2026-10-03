@@ -1,7 +1,7 @@
 package io.turnbase.platform.account;
 
 import io.turnbase.platform.common.AuthenticatedUser;
-import io.turnbase.platform.common.SessionCookie;
+import io.turnbase.platform.common.SessionCookies;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.security.Principal;
@@ -30,10 +30,15 @@ class ProfileController {
 
   private final ProfileService profileService;
   private final AccountDeletionService accountDeletionService;
+  private final SessionCookies sessionCookies;
 
-  ProfileController(ProfileService profileService, AccountDeletionService accountDeletionService) {
+  ProfileController(
+      ProfileService profileService,
+      AccountDeletionService accountDeletionService,
+      SessionCookies sessionCookies) {
     this.profileService = profileService;
     this.accountDeletionService = accountDeletionService;
+    this.sessionCookies = sessionCookies;
   }
 
   @GetMapping("/{username}")
@@ -84,14 +89,8 @@ class ProfileController {
         .build();
   }
 
-  private static ResponseCookie clearedSessionCookie() {
-    return ResponseCookie.from(SessionCookie.NAME, "")
-        .httpOnly(true)
-        .secure(true)
-        .sameSite("Strict")
-        .path("/")
-        .maxAge(0)
-        .build();
+  private ResponseCookie clearedSessionCookie() {
+    return sessionCookies.clear();
   }
 
   private static AuthenticatedUser principalOf(HttpServletRequest request) {

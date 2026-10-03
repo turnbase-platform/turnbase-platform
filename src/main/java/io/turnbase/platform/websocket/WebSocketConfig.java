@@ -68,7 +68,13 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     registration.interceptors(channelInterceptor, traceInterceptor);
   }
 
-  @Bean
+  /**
+   * Not an autowire candidate: Spring Boot's own {@code taskScheduler} is the one
+   * {@code @Scheduled} jobs resolve by type, and a second candidate makes the scheduling
+   * post-processor log "more than one TaskScheduler bean" at start-up. The broker receives this one
+   * by direct call above.
+   */
+  @Bean(autowireCandidate = false)
   TaskScheduler heartbeatTaskScheduler() {
     ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
     scheduler.setPoolSize(1);

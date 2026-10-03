@@ -56,6 +56,7 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
           "/api/auth/oauth/complete-registration",
           "/api/auth/oauth/link-challenge",
           "/api/games");
+  private static final String SESSION_PROBE_PATH = "/api/auth/session";
   private static final String TEST_HARNESS_PREFIX = "/test/";
   private static final String USERS_PATH_PREFIX = "/api/users/";
   private static final String GAME_ASSET_PREFIX = "/g/";
@@ -73,11 +74,22 @@ class SessionAuthenticationInterceptor implements HandlerInterceptor {
         || path.startsWith(TEST_HARNESS_PREFIX)
         || path.startsWith(GAME_ASSET_PREFIX)
         || path.startsWith(GAME_BOOTSTRAP_PREFIX)
+        || isAnonymousSessionProbe(request, path)
         || isPublicProfileRead(request, path)
         || isPublicGameDetailRead(request, path)) {
       return true;
     }
     throw new UnauthenticatedException(detailFor(failureReasonOf(request)));
+  }
+
+  /**
+   * {@code GET /api/auth/session} from a visitor who presented no session token at all. It is
+   * answered {@code 200 {"authenticated":false}} (see {@code AuthController}) so an anonymous page
+   * load logs no console error. A request that <em>did</em> present a token the filter rejected
+   * (displaced, expired, invalid) still gets the FR-SESS-004 {@code 401} naming why.
+   */
+  private static boolean isAnonymousSessionProbe(HttpServletRequest request, String path) {
+    return SESSION_PROBE_PATH.equals(path) && failureReasonOf(request) == null;
   }
 
   /**

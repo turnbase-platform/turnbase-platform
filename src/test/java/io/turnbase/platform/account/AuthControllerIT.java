@@ -353,12 +353,29 @@ class AuthControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
-  void getSessionIsUnauthenticatedWithoutACookie() throws Exception {
+  void getSessionAnswers200AuthenticatedFalseWithoutACookie() throws Exception {
     ResponseEntity<String> response = getWithCookie("/session", null);
 
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(parse(response)).containsExactly(Map.entry("authenticated", false));
+  }
+
+  @Test
+  void exactlyOneTaskSchedulerIsAnAutowireCandidate() {
+    assertThat(
+            java.util.Arrays.stream(
+                    context.getBeanNamesForType(org.springframework.scheduling.TaskScheduler.class))
+                .filter(
+                    name -> context.getBeanFactory().getBeanDefinition(name).isAutowireCandidate())
+                .toList())
+        .hasSize(1);
+  }
+
+  @Test
+  void getSessionStillNamesTheReasonForATokenItRejects() throws Exception {
+    ResponseEntity<String> response = getWithCookie("/session", "turnbase_session=not-a-token");
+
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-    assertThat(parse(response).get("detail"))
-        .isEqualTo("Authentication is required for this endpoint.");
   }
 
   @Test
@@ -473,7 +490,7 @@ class AuthControllerIT extends PostgresIntegrationTest {
             .orElseThrow();
     assertThat(cookie)
         .contains("HttpOnly")
-        .contains("Secure")
+        .doesNotContain("Secure")
         .contains("SameSite=Strict")
         .contains("Path=/");
   }

@@ -49,8 +49,16 @@ class SessionAuthenticationInterceptorTest {
   }
 
   @Test
-  void anUnauthenticatedRequestToAProtectedPathWithNoCookieIsRejected() {
+  void anAnonymousSessionProbeIsLetThroughSoTheHandlerCanAnswerAuthenticatedFalse() {
     MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/session");
+
+    assertThat(interceptor.preHandle(request, new MockHttpServletResponse(), new Object()))
+        .isTrue();
+  }
+
+  @Test
+  void anUnauthenticatedRequestToAProtectedPathWithNoCookieIsRejected() {
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/users/me");
 
     assertThatThrownBy(
             () -> interceptor.preHandle(request, new MockHttpServletResponse(), new Object()))

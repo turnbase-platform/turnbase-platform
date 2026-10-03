@@ -1,15 +1,14 @@
 package io.turnbase.platform.account;
 
 import io.turnbase.platform.common.AuthenticatedUser;
-import io.turnbase.platform.common.SessionCookie;
+import io.turnbase.platform.common.SessionCookies;
 import io.turnbase.platform.common.UnauthenticatedException;
 import io.turnbase.platform.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.security.Principal;
-import java.time.Duration;
-import java.time.Instant;
+import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -31,23 +30,28 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/auth")
 class AuthController {
 
+  private static final Map<String, Boolean> ANONYMOUS = Map.of("authenticated", false);
+
   private final RegistrationService registrationService;
   private final LoginService loginService;
   private final GuestService guestService;
   private final SessionService sessionService;
   private final AccountRepository accountRepository;
+  private final SessionCookies sessionCookies;
 
   AuthController(
       RegistrationService registrationService,
       LoginService loginService,
       GuestService guestService,
       SessionService sessionService,
-      AccountRepository accountRepository) {
+      AccountRepository accountRepository,
+      SessionCookies sessionCookies) {
     this.registrationService = registrationService;
     this.loginService = loginService;
     this.guestService = guestService;
     this.sessionService = sessionService;
     this.accountRepository = accountRepository;
+    this.sessionCookies = sessionCookies;
   }
 
   @PostMapping("/register")
@@ -77,10 +81,16 @@ class AuthController {
         .body(PrincipalResponse.guest(result.userId(), result.username()));
   }
 
-  /** {@code rest-conventions.md}: "the frontend's tier check on load." */
+  /**
+   * {@code rest-conventions.md}: "the frontend's tier check on load." Public (NFR-SEC-006): a
+   * visitor with no valid session gets {@code 200 {"authenticated":false}}, not {@code 401}, so an
+   * anonymous page load logs no console error.
+   */
   @GetMapping("/session")
-  ResponseEntity<PrincipalResponse> session(HttpServletRequest request) {
-    AuthenticatedUser principal = principalOf(request);
+  ResponseEntity<?> session(HttpServletRequest request) {
+    if (!(request.getUserPrincipal() instanceof AuthenticatedUser principal)) {
+      return ResponseEntity.ok(ANONYMOUS);
+    }
     return ResponseEntity.ok(
         accountRepository
             .findPrincipalById(principal.userId())
@@ -109,23 +119,11 @@ class AuthController {
   }
 
   /** {@code user-accounts.md} CON-004, {@code rest-conventions.md} § Authentication. */
-  private static ResponseCookie sessionCookie(SessionService.IssuedSession session) {
-    return ResponseCookie.from(SessionCookie.NAME, session.token())
-        .httpOnly(true)
-        .secure(true)
-        .sameSite("Strict")
-        .path("/")
-        .maxAge(Duration.between(Instant.now(), session.expiresAt()))
-        .build();
+  private ResponseCookie sessionCookie(SessionService.IssuedSession session) {
+    return sessionCookies.issue(session.token(), session.expiresAt());
   }
 
-  private static ResponseCookie clearedSessionCookie() {
-    return ResponseCookie.from(SessionCookie.NAME, "")
-        .httpOnly(true)
-        .secure(true)
-        .sameSite("Strict")
-        .path("/")
-        .maxAge(0)
-        .build();
+  private ResponseCookie clearedSessionCookie() {
+    return sessionCookies.clear();
   }
 }

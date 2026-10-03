@@ -3,7 +3,7 @@ package io.turnbase.platform.account;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.OAuthLinkCookie;
 import io.turnbase.platform.common.OAuthPendingCookie;
-import io.turnbase.platform.common.SessionCookie;
+import io.turnbase.platform.common.SessionCookies;
 import io.turnbase.platform.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -33,10 +33,13 @@ class OAuthController {
 
   private final OAuthService oauthService;
   private final OAuthProperties oauthProperties;
+  private final SessionCookies sessionCookies;
 
-  OAuthController(OAuthService oauthService, OAuthProperties oauthProperties) {
+  OAuthController(
+      OAuthService oauthService, OAuthProperties oauthProperties, SessionCookies sessionCookies) {
     this.oauthService = oauthService;
     this.oauthProperties = oauthProperties;
+    this.sessionCookies = sessionCookies;
   }
 
   /**
@@ -106,14 +109,8 @@ class OAuthController {
   }
 
   /** {@code user-accounts.md} CON-004, {@code rest-conventions.md} § Authentication. */
-  static ResponseCookie sessionCookie(SessionService.IssuedSession session) {
-    return ResponseCookie.from(SessionCookie.NAME, session.token())
-        .httpOnly(true)
-        .secure(true)
-        .sameSite("Strict")
-        .path("/")
-        .maxAge(Duration.between(Instant.now(), session.expiresAt()))
-        .build();
+  ResponseCookie sessionCookie(SessionService.IssuedSession session) {
+    return sessionCookies.issue(session.token(), session.expiresAt());
   }
 
   /** {@code oauth-rest-api.md} §2 — the same flag set as the session cookie. */
