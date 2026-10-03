@@ -301,6 +301,7 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
       StringRedisTemplate redis = context().getBean(StringRedisTemplate.class);
       assertThat(redis.opsForValue().get("routing:" + sessionId)).isEqualTo("fake-host");
       assertThat(redis.hasKey("seq:" + sessionId)).isTrue();
+      assertThat(redis.opsForHash().keys("roster:" + sessionId)).contains(aliceId.toString());
       assertThat(redis.hasKey("delivered:" + sessionId)).isTrue();
       assertThat(redis.hasKey("session:" + sessionId)).isFalse();
 

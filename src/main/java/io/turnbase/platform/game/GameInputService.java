@@ -12,8 +12,10 @@ import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.platform.common.LifecycleLog;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -258,10 +260,27 @@ public class GameInputService {
               outcome.getPlayerResultsList().stream()
                   .map(p -> new GameOutcomeReport.PlayerOutcome(p.getPlayerId(), p.getStatsMap()))
                   .toList(),
-              rosters.rosterOf(sessionId).orElse(null)));
+              startingRoster(sessionId)));
     } catch (RuntimeException e) {
       log.error("Outcome of sessionId={} could not be recorded", sessionId, e);
     }
+  }
+
+  /**
+   * The players the session started with ({@code roster:{sessionId}}), so a player who has since
+   * left the room still counts as one of the session's; the room's current members only if the key
+   * is gone.
+   */
+  private @Nullable SessionRoster startingRoster(UUID sessionId) {
+    Map<Object, Object> stored = redis.opsForHash().entries("roster:" + sessionId);
+    if (stored.isEmpty()) {
+      return rosters.rosterOf(sessionId).orElse(null);
+    }
+    Map<UUID, UUID> players = new HashMap<>();
+    stored.forEach(
+        (user, team) ->
+            players.put(UUID.fromString(user.toString()), UUID.fromString(team.toString())));
+    return new SessionRoster(players, Set.of());
   }
 
   /**

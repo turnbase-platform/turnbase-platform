@@ -33,15 +33,16 @@ class ReconciliationJob {
   private static final Logger log = LoggerFactory.getLogger(ReconciliationJob.class);
 
   /**
-   * {@code game-host-internals.md} §13 — the six key families Orchestration/the Game Host write per
-   * session, all sharing one lifecycle from duty (b)'s point of view: present or absent together,
-   * deleted together.
+   * {@code game-host-internals.md} §13 — the seven key families Orchestration/the Game Host write
+   * per session, all sharing one lifecycle from duty (b)'s point of view: present or absent
+   * together, deleted together.
    */
   private static final List<String> SESSION_KEY_PREFIXES =
       List.of(
           "session:",
           "routing:",
           "gamekey:",
+          "roster:",
           "queue:",
           "seq:",
           "delivered:",

@@ -77,7 +77,8 @@ public class GameSessionService {
           GameSessionCreationException.Reason.NO_HOST_AVAILABLE, "host entry vanished");
     }
 
-    writeKeys(sessionId, instanceId, command.gameId() + ":" + command.gameVersion());
+    writeKeys(
+        sessionId, instanceId, command.gameId() + ":" + command.gameVersion(), rosterOf(command));
     ProcessResult initialEffects;
     try {
       CreateSessionResponse response = callCreateSession(address.get(), command);
@@ -158,13 +159,20 @@ public class GameSessionService {
   }
 
   /** {@code game-host-internals.md} §13: {@code routing:}, {@code seq:}, {@code delivered:}, … */
-  private void writeKeys(String sessionId, String instanceId, String gameKey) {
+  private void writeKeys(
+      String sessionId, String instanceId, String gameKey, SessionRoster roster) {
     var ttl = HostRegistry.KEY_TTL;
     redis.opsForValue().set("routing:" + sessionId, instanceId, ttl);
     redis.opsForValue().set("gamekey:" + sessionId, gameKey, ttl);
     redis.opsForValue().set("seq:" + sessionId, "0", ttl);
     redis.opsForValue().set("delivered:" + sessionId, "0", ttl);
     redis.opsForValue().set("failcount:" + sessionId, "0", ttl);
+    // The players the session started with: the room's own rows lose a leaver, the history
+    // recorded at game end must not (RR-03).
+    Map<String, String> players = new HashMap<>();
+    roster.playerTeams().forEach((user, team) -> players.put(user.toString(), team.toString()));
+    redis.opsForHash().putAll("roster:" + sessionId, players);
+    redis.expire("roster:" + sessionId, ttl);
     // queue:{sessionId} is a list and cannot exist empty; the first enqueue creates it.
   }
 
@@ -173,6 +181,7 @@ public class GameSessionService {
         List.of(
             "routing:" + sessionId,
             "gamekey:" + sessionId,
+            "roster:" + sessionId,
             "queue:" + sessionId,
             "seq:" + sessionId,
             "delivered:" + sessionId,

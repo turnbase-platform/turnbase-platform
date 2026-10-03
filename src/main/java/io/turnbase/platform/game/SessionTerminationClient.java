@@ -101,6 +101,7 @@ public class SessionTerminationClient {
             "session:" + sessionId,
             "routing:" + sessionId,
             "gamekey:" + sessionId,
+            "roster:" + sessionId,
             "queue:" + sessionId,
             "seq:" + sessionId,
             "delivered:" + sessionId,

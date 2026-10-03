@@ -302,6 +302,87 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void aForfeitIsRecordedForEveryPlayerTheSessionStartedWithEvenAfterTheLeaverLeftTheRoom() {
+    // RR-03: the leaver's room_participant row is already gone, so the room no longer names them.
+    var jdbc = context.getBean(org.springframework.jdbc.core.simple.JdbcClient.class);
+    UUID game = UUID.randomUUID();
+    jdbc.sql(
+            "insert into game (game_id, owner_user_id, title, short_description, badge, listed)"
+                + " values (:id, null, 'Forfeit', 'x', 'OFFICIAL', false)")
+        .param("id", game)
+        .update();
+    UUID leaver = registeredUser(jdbc);
+    UUID winner = registeredUser(jdbc);
+    UUID leaverTeam = UUID.randomUUID();
+    UUID winnerTeam = UUID.randomUUID();
+    UUID session = newSession();
+    redis.opsForValue().set("gamekey:" + session, game + ":1.0.0");
+    redis
+        .opsForHash()
+        .putAll(
+            "roster:" + session,
+            java.util.Map.of(
+                leaver.toString(),
+                leaverTeam.toString(),
+                winner.toString(),
+                winnerTeam.toString()));
+    behaviour =
+        request ->
+            ProcessResult.newBuilder()
+                .setSessionId(request.getSessionId())
+                .setSequence(request.getSequence())
+                .setStatus(ProcessStatus.PROCESS_STATUS_OK)
+                .addEffects(
+                    Effect.newBuilder()
+                        .setGameOver(
+                            io.turnbase.grpc.gamehost.v1.GameOverEffect.newBuilder()
+                                .setOutcome(
+                                    io.turnbase.grpc.gamehost.v1.GameOutcome.newBuilder()
+                                        .addTeamResults(
+                                            io.turnbase.grpc.gamehost.v1.TeamResult.newBuilder()
+                                                .setTeamId(winnerTeam.toString())
+                                                .setPlacement(1))
+                                        .addTeamResults(
+                                            io.turnbase.grpc.gamehost.v1.TeamResult.newBuilder()
+                                                .setTeamId(leaverTeam.toString())
+                                                .setPlacement(2))
+                                        .addPlayerResults(
+                                            io.turnbase.grpc.gamehost.v1.PlayerResult.newBuilder()
+                                                .setPlayerId(leaver.toString())))))
+                .build();
+
+    inputs.process(input(session, inputs.allocateSequence(session)));
+
+    assertThat(
+            jdbc.sql(
+                    "select user_id from game_history_entry where session_id = :s"
+                        + " order by placement")
+                .param("s", session)
+                .query(UUID.class)
+                .list())
+        .containsExactly(winner, leaver);
+    assertThat(
+            jdbc.sql("select completed_session_count from game where game_id = :g")
+                .param("g", game)
+                .query(Long.class)
+                .single())
+        .isEqualTo(1);
+  }
+
+  private static UUID registeredUser(org.springframework.jdbc.core.simple.JdbcClient jdbc) {
+    UUID id = UUID.randomUUID();
+    String name = "u" + id.toString().replace("-", "").substring(0, 12);
+    jdbc.sql(
+            "insert into app_user (user_id, kind, username, username_skeleton, email, email_source)"
+                + " values (:id, 'REGISTERED', :n, :n, :e, 'SELF')")
+        .param("id", id)
+        .param("n", name)
+        .param("e", name + "@example.com")
+        .update();
+    return id;
+  }
+
+  @Test
   void anUnreachableHostMovesTheSessionToAnotherHostOfTheSameGameKey() {
     registry.register("spare-host", "127.0.0.1:" + fakeHost.getPort(), List.of("jvm"));
     registry.register("down-host", "127.0.0.1:1", List.of("jvm"));
