@@ -54,6 +54,16 @@ class SeedRepository {
         .param("userId", userId)
         .param("passwordHash", passwordHash)
         .update();
+    // data-model-accounts.md §4: a registered user always has a privacy row; registration writes
+    // it, so the seeder, which bypasses registration, must too.
+    jdbcClient
+        .sql(
+            """
+            insert into user_privacy_settings (user_id) values (:userId)
+            on conflict do nothing
+            """)
+        .param("userId", userId)
+        .update();
   }
 
   void insertFriendship(UUID a, UUID b) {

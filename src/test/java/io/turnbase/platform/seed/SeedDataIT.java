@@ -110,6 +110,80 @@ class SeedDataIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void everySeededUserHasExactlyOnePrivacySettingsRow() {
+    boot("local", null);
+
+    assertThat(
+            jdbcClient
+                .sql(
+                    "select u.username || ':' || count(p.user_id) from app_user u"
+                        + " left join user_privacy_settings p on p.user_id = u.user_id"
+                        + " where u.kind = 'REGISTERED' group by u.username order by u.username")
+                .query(String.class)
+                .list())
+        .containsExactly("alice:1", "bob:1", "carol:1", "dave:1");
+  }
+
+  @Test
+  void aSeededUserAndAnApiRegisteredUserCanBeReadAsThemselvesAndAsOneAnother() {
+    boot("local", null);
+    String base = "http://localhost:" + port();
+    HttpHeaders json = new HttpHeaders();
+    json.setContentType(MediaType.APPLICATION_JSON);
+    ResponseEntity<String> registered =
+        restTemplate.postForEntity(
+            base + "/api/auth/register",
+            new HttpEntity<>(
+                "{\"username\":\"erin\",\"email\":\"erin@example.test\","
+                    + "\"password\":\"correct horse battery 1\","
+                    + "\"confirmPassword\":\"correct horse battery 1\"}",
+                json),
+            String.class);
+    assertThat(registered.getStatusCode().is2xxSuccessful()).isTrue();
+    List<String> names = List.of("alice", "bob", "carol", "dave", "erin");
+
+    for (String viewer : names) {
+      String cookie =
+          viewer.equals("erin")
+              ? sessionCookie(registered)
+              : sessionCookie(login(base, viewer, "password", json));
+      HttpHeaders headers = new HttpHeaders();
+      headers.add(HttpHeaders.COOKIE, cookie);
+      assertThat(get(base + "/api/users/me", headers)).as("%s /me", viewer).isEqualTo(200);
+      for (String target : names) {
+        assertThat(get(base + "/api/users/" + target, headers))
+            .as("%s views %s", viewer, target)
+            .isEqualTo(200);
+      }
+    }
+    assertThat(count("user_privacy_settings")).isEqualTo(5);
+  }
+
+  private ResponseEntity<String> login(
+      String base, String username, String password, HttpHeaders json) {
+    return restTemplate.postForEntity(
+        base + "/api/auth/login",
+        new HttpEntity<>(
+            "{\"usernameOrEmail\":\"" + username + "\",\"password\":\"" + password + "\"}", json),
+        String.class);
+  }
+
+  private static String sessionCookie(ResponseEntity<String> response) {
+    return java.util.Objects.requireNonNull(response.getHeaders().get(HttpHeaders.SET_COOKIE))
+        .stream()
+        .map(c -> c.split(";", 2)[0])
+        .collect(java.util.stream.Collectors.joining("; "));
+  }
+
+  private int get(String url, HttpHeaders headers) {
+    return restTemplate
+        .exchange(
+            url, org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), String.class)
+        .getStatusCode()
+        .value();
+  }
+
+  @Test
   void aBundleInTheSeedDirectoryIsUploadedThroughThePipelineAndItsFrontendIsServed()
       throws IOException {
     Files.write(bundlesDir.resolve(GAME_ID + ".zip"), TestBundles.validChessBundle("1.0.0"));
