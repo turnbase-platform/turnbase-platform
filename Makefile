@@ -1,4 +1,4 @@
-.PHONY: e2e reset-db seed
+.PHONY: e2e reset-db seed env check-env up
 
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 
@@ -28,3 +28,19 @@ reset-db:
 	   CREATE EXTENSION IF NOT EXISTS btree_gin;"
 	$(COMPOSE) exec -T redis sh -c 'redis-cli -a "$$TURNBASE_REDIS_PASSWORD" FLUSHALL'
 	$(COMPOSE) up -d --wait platform gamehost frontend
+
+# local-environment.md §5, IMP-GATE-94: the first-run path. Copies the dummy-valued .env.example
+# when there is no .env (never overwrites one).
+ENV_FILE := deploy/compose/.env
+
+env:
+	@test -f $(ENV_FILE) || { cp deploy/compose/.env.example $(ENV_FILE) && echo "created $(ENV_FILE) from .env.example"; }
+
+# Every variable the compose files mark `:?... is required` must be set and non-empty.
+check-env: env
+	@missing=$$(for v in $$(grep -ho '\$${[A-Z0-9_]*:?' deploy/compose/docker-compose*.yml | sed 's/[$${:?]//g' | sort -u); do \
+	  grep -Eq "^$$v=.+" $(ENV_FILE) || echo $$v; done); \
+	if [ -n "$$missing" ]; then echo "missing or empty in $(ENV_FILE):" $$missing >&2; exit 1; fi
+
+up: check-env
+	$(COMPOSE) up -d --wait
