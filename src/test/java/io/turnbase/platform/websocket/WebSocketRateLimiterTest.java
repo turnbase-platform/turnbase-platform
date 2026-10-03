@@ -47,6 +47,35 @@ class WebSocketRateLimiterTest {
   }
 
   @Test
+  void unsubscribeFramesDoNotConsumeTheSubscribeBudget() {
+    // Tier 6 charges "any SUBSCRIBE frame" (rate-limiting.md): tearing a game view down must not
+    // starve the next one's subscriptions.
+    var roomy = bucket(100, 100, Duration.ofSeconds(1));
+    var subscribe = bucket(1, 1, Duration.ofHours(1));
+    var properties =
+        new WebSocketRateLimitProperties(
+            roomy,
+            roomy,
+            roomy,
+            roomy,
+            roomy,
+            subscribe,
+            4,
+            20,
+            Duration.ofSeconds(10),
+            new WebSocketRateLimitProperties.Lockout(
+                Duration.ofSeconds(30), Duration.ofMinutes(15)));
+    var limiter = new WebSocketRateLimiter(properties, stringRedisTemplate, metrics);
+
+    for (int i = 0; i < 5; i++) {
+      var decision = limiter.checkFrame(user, "s1", StompCommand.UNSUBSCRIBE, null);
+      assertThat(decision).isInstanceOf(WebSocketRateLimiter.FrameDecision.Allow.class);
+    }
+    var first = limiter.checkFrame(user, "s1", StompCommand.SUBSCRIBE, "/topic/room.x");
+    assertThat(first).isInstanceOf(WebSocketRateLimiter.FrameDecision.Allow.class);
+  }
+
+  @Test
   void exhaustingTheConnectionBucketDropsAndNotifiesOnceThenThrottles() {
     WebSocketRateLimiter limiter = newLimiter(bucket(1, 1, Duration.ofHours(1)), 20);
     limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/room.x.chat");

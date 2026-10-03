@@ -85,7 +85,7 @@ class WebSocketRateLimiter {
   }
 
   private @Nullable String classify(StompCommand command, @Nullable String destination) {
-    if (command == StompCommand.SUBSCRIBE || command == StompCommand.UNSUBSCRIBE) {
+    if (command == StompCommand.SUBSCRIBE) {
       return "subscribe";
     }
     if (command != StompCommand.SEND || destination == null) {
