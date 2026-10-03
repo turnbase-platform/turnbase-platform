@@ -392,6 +392,12 @@ class RoomService {
         });
   }
 
+  private String gameFrontendUrl(UUID roomId, UUID sessionId) {
+    return frontend.originTemplate().replace("{gameId}", repository.gameIdOf(roomId).toString())
+        + "/play/"
+        + sessionId;
+  }
+
   /** {@code REQUEST_ROOM_STATE} — a read, so its {@code MutationOutcome} carries no event. */
   RoomRepository.RoomStateSnapshotWithVersion roomState(UUID roomId, UUID userId) {
     return events.execute(
@@ -400,8 +406,17 @@ class RoomService {
           if (!repository.isCurrentParticipant(roomId, userId)) {
             throw new RoomCommandException("NOT_MEMBER", "You are not a member of this room.");
           }
-          RoomRepository.RoomStateSnapshotWithVersion snapshot =
+          RoomRepository.RoomStateSnapshotWithVersion read =
               repository.roomStateSnapshot(roomId, properties.spectatorCapacity());
+          // room-websocket.md § ROOM_STATE: `gameFrontendUrl` is non-null exactly when `sessionId`
+          // is, so a reconnecting client can rebuild the iframe from the snapshot alone.
+          UUID sessionId = read.snapshot().sessionId();
+          RoomRepository.RoomStateSnapshotWithVersion snapshot =
+              sessionId == null
+                  ? read
+                  : new RoomRepository.RoomStateSnapshotWithVersion(
+                      read.version(),
+                      read.snapshot().withGameFrontendUrl(gameFrontendUrl(roomId, sessionId)));
           return new RoomEventExecutor.MutationOutcome<>(snapshot, null);
         });
   }
@@ -510,10 +525,7 @@ class RoomService {
                 "The game could not be started. Try again.",
                 Map.of("reason", e.reason().name()));
           }
-          String gameFrontendUrl =
-              frontend.originTemplate().replace("{gameId}", repository.gameIdOf(roomId).toString())
-                  + "/play/"
-                  + sessionId;
+          String gameFrontendUrl = gameFrontendUrl(roomId, sessionId);
           events.execute(
               roomId,
               () -> {

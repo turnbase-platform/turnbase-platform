@@ -268,6 +268,15 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
       assertThat((String) payload.get("gameFrontendUrl"))
           .isEqualTo("http://" + gameId + ".games.localhost:8080/play/" + sessionId);
 
+      // A reconnecting client rebuilds the iframe from the snapshot alone (room-websocket.md
+      // § ROOM_STATE): `gameFrontendUrl` is non-null exactly when `sessionId` is.
+      host.send("REQUEST_ROOM_STATE", "s2", null);
+      Map<?, ?> midGame = (Map<?, ?>) Objects.requireNonNull(poll(host.roomState).get("payload"));
+      assertThat(midGame.get("state")).isEqualTo("IN_PROGRESS");
+      assertThat(midGame.get("sessionId")).isEqualTo(sessionId);
+      assertThat(midGame.get("gameFrontendUrl"))
+          .isEqualTo("http://" + gameId + ".games.localhost:8080/play/" + sessionId);
+
       JdbcClient jdbc = context().getBean(JdbcClient.class);
       assertThat(
               jdbc.sql("select state from room where room_id = :r")

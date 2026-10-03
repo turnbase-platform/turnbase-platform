@@ -23,6 +23,26 @@ record RoomStateSnapshot(
     @Nullable UUID sessionId,
     @Nullable String gameFrontendUrl) {
 
+  /** The same snapshot carrying the absolute game-frontend URL the service expanded for it. */
+  RoomStateSnapshot withGameFrontendUrl(@Nullable String url) {
+    return new RoomStateSnapshot(
+        roomId,
+        state,
+        gameId,
+        gameName,
+        spectatingEnabled,
+        spectatorCapacity,
+        hostId,
+        players,
+        aiPlayers,
+        spectators,
+        teams,
+        parameters,
+        disconnectedPlayers,
+        sessionId,
+        url);
+  }
+
   record PlayerEntry(
       UUID playerId,
       String username,
