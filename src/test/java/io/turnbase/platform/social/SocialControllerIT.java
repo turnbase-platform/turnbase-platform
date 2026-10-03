@@ -322,6 +322,51 @@ class SocialControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void friendsListReturnsEmptyOnePageAndPagedResultsInCaseInsensitiveOrder() throws Exception {
+    Registered owner = registerUser();
+
+    Map<String, Object> none = parse(getWithCookie(friendsPath(owner, ""), owner.cookie()));
+    assertThat((List<?>) none.get("content")).isEmpty();
+    assertThat(pagination(none).get("totalElements")).isEqualTo(0);
+
+    Registered first = registerUser();
+    accept(first, requestIdOf(send(owner, first.username())));
+    ResponseEntity<String> oneResponse = getWithCookie(friendsPath(owner, ""), owner.cookie());
+    assertThat(oneResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+    List<Map<String, Object>> one = (List<Map<String, Object>>) parse(oneResponse).get("content");
+    assertThat(one).extracting(m -> m.get("username")).containsExactly(first.username());
+
+    // The owner is user_id_low for some friendships and user_id_high for others; the sort must
+    // not depend on which side the owner is on.
+    Registered second = registerUser();
+    accept(owner, requestIdOf(send(second, owner.username())));
+    List<String> expected =
+        List.of(first.username(), second.username()).stream()
+            .sorted(String.CASE_INSENSITIVE_ORDER)
+            .toList();
+
+    Map<String, Object> page1 = parse(getWithCookie(friendsPath(owner, "?size=1"), owner.cookie()));
+    Map<String, Object> page2 =
+        parse(getWithCookie(friendsPath(owner, "?size=1&page=2"), owner.cookie()));
+    assertThat(((List<Map<String, Object>>) page1.get("content")))
+        .extracting(m -> m.get("username"))
+        .containsExactly(expected.get(0));
+    assertThat(((List<Map<String, Object>>) page2.get("content")))
+        .extracting(m -> m.get("username"))
+        .containsExactly(expected.get(1));
+    assertThat(pagination(page1).get("totalElements")).isEqualTo(2);
+    assertThat(pagination(page1).get("totalPages")).isEqualTo(2);
+  }
+
+  private static Map<?, ?> pagination(Map<String, Object> body) {
+    return (Map<?, ?>) Objects.requireNonNull(body.get("pagination"));
+  }
+
+  private static String friendsPath(Registered owner, String query) {
+    return "/api/users/" + owner.username() + "/friends" + query;
+  }
+
+  @Test
   void relationshipStateReflectsAPendingRequestInEitherDirection() throws Exception {
     Registered a = registerUser();
     Registered b = registerUser();

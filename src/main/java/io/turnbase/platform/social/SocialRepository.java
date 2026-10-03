@@ -353,15 +353,16 @@ class SocialRepository {
     return jdbcClient
         .sql(
             """
-            select case when f.user_id_low = :profileUserId then hi.user_id else lo.user_id end
-                     as friend_id,
-                   case when f.user_id_low = :profileUserId then hi.username else lo.username end
-                     as friend_username
-            from friendship f
-            join app_user lo on lo.user_id = f.user_id_low
-            join app_user hi on hi.user_id = f.user_id_high
-            where f.user_id_low = :profileUserId or f.user_id_high = :profileUserId
-            order by lower(friend_username) asc
+            select friend_id, friend_username
+            from (select case when f.user_id_low = :profileUserId then hi.user_id else lo.user_id end
+                           as friend_id,
+                         case when f.user_id_low = :profileUserId then hi.username else lo.username end
+                           as friend_username
+                  from friendship f
+                  join app_user lo on lo.user_id = f.user_id_low
+                  join app_user hi on hi.user_id = f.user_id_high
+                  where f.user_id_low = :profileUserId or f.user_id_high = :profileUserId) friends
+            order by lower(friend_username) asc, friend_id asc
             limit :limit offset :offset
             """)
         .param("profileUserId", profileUserId)
