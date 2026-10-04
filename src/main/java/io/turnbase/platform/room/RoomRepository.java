@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -35,10 +36,14 @@ class RoomRepository {
   private final ObjectMapper objectMapper;
   private final RoomInvitationRepository invitationRepository;
 
+  private final ApplicationEventPublisher events;
+
   RoomRepository(
       JdbcClient jdbcClient,
       ObjectMapper objectMapper,
-      RoomInvitationRepository invitationRepository) {
+      RoomInvitationRepository invitationRepository,
+      ApplicationEventPublisher events) {
+    this.events = events;
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
     this.invitationRepository = invitationRepository;
@@ -403,10 +408,10 @@ class RoomRepository {
         .update();
     if (earlyRelease) {
       insertPlayerLeftOutbox(
-          membership.roomId(), userId, membership.teamId(), "grace_period_expired");
+          membership.roomId(), userId, membership.teamId(), "grace_period_expired", true);
     } else if ("PLAYER".equals(membership.role()) && isInProgress(membership.roomId())) {
       // FR-LIFE-004: an abandonment confirmation is a confirmed leave — reason `left`.
-      insertPlayerLeftOutbox(membership.roomId(), userId, membership.teamId(), "left");
+      insertPlayerLeftOutbox(membership.roomId(), userId, membership.teamId(), "left", true);
     }
     return Optional.of(new ReleasedRoomResponse(membership.roomId(), reason));
   }
@@ -459,7 +464,7 @@ class RoomRepository {
     // FR-LIFE-004: a confirmed leave during In Progress tells the engine at once (reason `left`),
     // exactly as grace-period expiry does. Only a PLAYER was ever represented to the engine.
     if ("PLAYER".equals(member.get().role()) && isInProgress(roomId)) {
-      insertPlayerLeftOutbox(roomId, userId, member.get().teamId(), "left");
+      insertPlayerLeftOutbox(roomId, userId, member.get().teamId(), "left", true);
     }
     return Optional.of(new PlayerLeftPayload(userId, member.get().role()));
   }
@@ -877,13 +882,18 @@ class RoomRepository {
     // exists for the outbox row to reference until IMP-M3-05 (data-model.md §4.2, session_id NOT
     // NULL) — the same conditional shape as room-lifecycle.md §3.3's grace-expiry insert.
     if ("IN_PROGRESS".equals(roomState) && "PLAYER".equals(target.role())) {
-      insertPlayerLeftOutbox(roomId, targetPlayerId, target.teamId(), "kicked");
+      insertPlayerLeftOutbox(roomId, targetPlayerId, target.teamId(), "kicked", true);
     }
     return new PlayerKickedPayload(targetPlayerId, hostUserId);
   }
 
+  /**
+   * @param dispatchInline whether to attempt the dispatch once after the surrounding transaction
+   *     commits (IMP-M9-05; {@code data-model.md} §4.2's "inline attempt at detach time"). The
+   *     sweep stays the retry path either way.
+   */
   private void insertPlayerLeftOutbox(
-      UUID roomId, UUID playerId, @Nullable UUID teamId, String reason) {
+      UUID roomId, UUID playerId, @Nullable UUID teamId, String reason, boolean dispatchInline) {
     UUID sessionId =
         jdbcClient
             .sql("select active_session_id from room where room_id = :roomId")
@@ -919,7 +929,13 @@ class RoomRepository {
         .param("sessionId", sessionId)
         .param("payload", payloadJson)
         .update();
+    if (dispatchInline) {
+      events.publishEvent(new PlayerLeftQueued(sessionId));
+    }
   }
+
+  /** Published when a {@code player_left} row is written; handled after the transaction commits. */
+  record PlayerLeftQueued(UUID sessionId) {}
 
   /**
    * {@code CHANGE_PARAMETERS}, FR-HOST-007. {@code input-validation.md}'s whitelist: every key
@@ -2363,7 +2379,9 @@ class RoomRepository {
     }
     UUID teamId = rows.get(0);
     if (due.activeSessionId() != null) {
-      insertPlayerLeftOutbox(due.roomId(), due.userId(), teamId, "grace_period_expired");
+      // Left to the sweep's own duty 4 (§5.1's ordering note): duty 2 may close this room in the
+      // same tick and discard the row, which an inline dispatch would have already delivered.
+      insertPlayerLeftOutbox(due.roomId(), due.userId(), teamId, "grace_period_expired", false);
     }
     return Optional.of(new ResolvedReservation(teamId));
   }
@@ -2638,6 +2656,27 @@ class RoomRepository {
              for update skip locked
             """)
         .param("limit", limit)
+        .query(
+            (rs, n) ->
+                new OutboxRow(
+                    rs.getLong("id"),
+                    rs.getObject("session_id", UUID.class),
+                    rs.getObject("sequence") == null ? null : rs.getLong("sequence"),
+                    rs.getString("payload")))
+        .list();
+  }
+
+  /** The session's undelivered rows, oldest first — what an inline attempt after commit drains. */
+  List<OutboxRow> pendingOutboxRows(UUID sessionId) {
+    return jdbcClient
+        .sql(
+            """
+            select id, session_id, sequence, payload::text as payload
+              from game_input_outbox
+             where dispatched_at is null and session_id = :sessionId
+             order by id
+            """)
+        .param("sessionId", sessionId)
         .query(
             (rs, n) ->
                 new OutboxRow(

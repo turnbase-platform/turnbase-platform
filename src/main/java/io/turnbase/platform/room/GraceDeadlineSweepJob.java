@@ -4,8 +4,6 @@ import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -23,8 +21,6 @@ import org.springframework.stereotype.Component;
 @Component
 class GraceDeadlineSweepJob {
 
-  private static final Logger log = LoggerFactory.getLogger(GraceDeadlineSweepJob.class);
-
   /** No document names a batch size for the drain; a reasoned default, not a measurement. */
   private static final int OUTBOX_DRAIN_BATCH = 100;
 
@@ -32,19 +28,19 @@ class GraceDeadlineSweepJob {
   private final RoomEventExecutor events;
   private final PodIdentity pod;
   private final RoomSessionDetacher detacher;
-  private final GameInputDispatcher dispatcher;
+  private final GameInputOutbox outbox;
 
   GraceDeadlineSweepJob(
       RoomRepository repository,
       RoomEventExecutor events,
       PodIdentity pod,
       RoomSessionDetacher detacher,
-      GameInputDispatcher dispatcher) {
+      GameInputOutbox outbox) {
     this.repository = repository;
     this.events = events;
     this.pod = pod;
     this.detacher = detacher;
-    this.dispatcher = dispatcher;
+    this.outbox = outbox;
   }
 
   void run() {
@@ -224,31 +220,7 @@ class GraceDeadlineSweepJob {
 
   private void drainOutbox() {
     for (RoomRepository.OutboxRow row : repository.pendingOutboxRows(OUTBOX_DRAIN_BATCH)) {
-      drainOne(row);
-    }
-  }
-
-  private void drainOne(RoomRepository.OutboxRow row) {
-    // data-model.md §4.2: allocated once from the session's `seq:` counter, persisted, reused on
-    // every retry.
-    long sequence =
-        row.sequence() != null
-            ? row.sequence()
-            : repository.allocateOutboxSequence(
-                row.id(), dispatcher.allocateSequence(row.sessionId()));
-    boolean delivered;
-    try {
-      delivered = dispatcher.dispatch(row.id(), row.sessionId(), sequence, row.payloadJson());
-    } catch (RuntimeException e) {
-      log.warn("outbox row {} dispatch threw", row.id(), e);
-      repository.recordOutboxAttemptFailure(
-          row.id(), e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-      return;
-    }
-    if (delivered) {
-      repository.markOutboxDispatched(row.id());
-    } else {
-      repository.recordOutboxAttemptFailure(row.id(), "dispatch reported failure");
+      outbox.drainOne(row);
     }
   }
 }
