@@ -90,12 +90,42 @@ class NotificationEmitterRegistry {
       Map<String, Object> payload,
       java.time.Instant createdAt,
       long eventSeq) {
+    send(
+        emitterId,
+        notificationData(notificationId, type, payload, createdAt),
+        "notification",
+        String.valueOf(eventSeq));
+  }
+
+  boolean hasOpenStream(UUID userId) {
+    return !emitterIdsOf(userId).isEmpty();
+  }
+
+  /**
+   * The live push of a just-committed notification: the same frame as the catch-up, to every
+   * stream.
+   */
+  void pushNotification(
+      UUID userId,
+      UUID notificationId,
+      String type,
+      Map<String, Object> payload,
+      java.time.Instant createdAt,
+      long eventSeq) {
+    Map<String, Object> data = notificationData(notificationId, type, payload, createdAt);
+    for (String emitterId : emitterIdsOf(userId)) {
+      send(emitterId, data, "notification", String.valueOf(eventSeq));
+    }
+  }
+
+  private static Map<String, Object> notificationData(
+      UUID notificationId, String type, Map<String, Object> payload, java.time.Instant createdAt) {
     Map<String, Object> data = new LinkedHashMap<>();
     data.put("type", type);
     data.put("notificationId", notificationId.toString());
     data.putAll(payload);
     data.put("timestamp", createdAt.toString());
-    send(emitterId, data, "notification", String.valueOf(eventSeq));
+    return data;
   }
 
   /**

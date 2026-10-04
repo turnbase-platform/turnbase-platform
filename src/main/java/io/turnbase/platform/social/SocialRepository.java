@@ -5,6 +5,7 @@ import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.ConflictException;
 import io.turnbase.platform.common.ForbiddenException;
 import io.turnbase.platform.common.NotFoundException;
+import io.turnbase.platform.notification.NotificationPersistedEvent;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -15,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -38,10 +40,13 @@ class SocialRepository {
 
   private final JdbcClient jdbcClient;
   private final ObjectMapper objectMapper;
+  private final ApplicationEventPublisher eventPublisher;
 
-  SocialRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  SocialRepository(
+      JdbcClient jdbcClient, ObjectMapper objectMapper, ApplicationEventPublisher eventPublisher) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
+    this.eventPublisher = eventPublisher;
   }
 
   /** FR-SOC-020/FR-GUEST-007: every endpoint in this feature is registered-only. */
@@ -446,19 +451,21 @@ class SocialRepository {
       @Nullable UUID friendRequestId,
       UUID otherUserId,
       String otherUsername) {
+    UUID notificationId = UUID.randomUUID();
     jdbcClient
         .sql(
             """
             insert into notification (notification_id, user_id, type, payload, friend_request_id)
             values (:notificationId, :userId, :type, :payload::jsonb, :friendRequestId)
             """)
-        .param("notificationId", UUID.randomUUID())
+        .param("notificationId", notificationId)
         .param("userId", userId)
         .param("type", type)
         .param(
             "payload", jsonOf(Map.of("userId", otherUserId.toString(), "username", otherUsername)))
         .param("friendRequestId", friendRequestId)
         .update();
+    eventPublisher.publishEvent(new NotificationPersistedEvent(notificationId, userId));
   }
 
   /**

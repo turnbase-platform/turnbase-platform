@@ -150,6 +150,30 @@ class NotificationRepository {
     return rows.stream().sorted(Comparator.comparingLong(UndeliveredRow::eventSeq)).toList();
   }
 
+  /**
+   * The live push's claim: stamps one row delivered if nobody has yet. Empty when the stream-open
+   * catch-up got there first, so the frame is sent exactly once.
+   */
+  Optional<UndeliveredRow> markDelivered(UUID notificationId) {
+    return jdbcClient
+        .sql(
+            """
+            update notification set delivered_at = now()
+            where notification_id = :id and delivered_at is null
+            returning notification_id, event_seq, type, payload, created_at
+            """)
+        .param("id", notificationId)
+        .query(
+            (rs, rowNum) ->
+                new UndeliveredRow(
+                    rs.getObject("notification_id", UUID.class),
+                    rs.getLong("event_seq"),
+                    rs.getString("type"),
+                    parsePayload(rs.getString("payload")),
+                    rs.getTimestamp("created_at").toInstant()))
+        .optional();
+  }
+
   private NotificationRow mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
     Timestamp readAt = rs.getTimestamp("read_at");
     return new NotificationRow(

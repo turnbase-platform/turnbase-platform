@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.ForbiddenException;
 import io.turnbase.platform.common.NotFoundException;
+import io.turnbase.platform.notification.NotificationPersistedEvent;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,10 +30,13 @@ class RoomInvitationRepository {
 
   private final JdbcClient jdbcClient;
   private final ObjectMapper objectMapper;
+  private final ApplicationEventPublisher eventPublisher;
 
-  RoomInvitationRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  RoomInvitationRepository(
+      JdbcClient jdbcClient, ObjectMapper objectMapper, ApplicationEventPublisher eventPublisher) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
+    this.eventPublisher = eventPublisher;
   }
 
   /** {@code room-invitation-rest-api.md} §2's evaluation order, steps 1-7, in one transaction. */
@@ -129,13 +134,14 @@ class RoomInvitationRepository {
 
     String hostUsername = usernameOf(hostUserId);
     String gameName = gameTitleOf(room.gameId());
+    UUID notificationId = UUID.randomUUID();
     jdbcClient
         .sql(
             """
             insert into notification (notification_id, user_id, type, payload, invitation_id)
             values (:notificationId, :userId, :type, :payload::jsonb, :invitationId)
             """)
-        .param("notificationId", UUID.randomUUID())
+        .param("notificationId", notificationId)
         .param("userId", invitee.userId())
         .param("type", TYPE_ROOM_INVITATION)
         .param(
@@ -150,6 +156,7 @@ class RoomInvitationRepository {
                     gameName)))
         .param("invitationId", invitationId)
         .update();
+    eventPublisher.publishEvent(new NotificationPersistedEvent(notificationId, invitee.userId()));
 
     return new SendResult(invitationId, invitee.username(), createdAt, expiresAt);
   }

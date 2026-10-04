@@ -1,6 +1,7 @@
 package io.turnbase.platform.admin;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.turnbase.platform.notification.NotificationPersistedEvent;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -8,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,10 +30,13 @@ class AdminGameRepository {
 
   private final JdbcClient jdbcClient;
   private final ObjectMapper objectMapper;
+  private final ApplicationEventPublisher eventPublisher;
 
-  AdminGameRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  AdminGameRepository(
+      JdbcClient jdbcClient, ObjectMapper objectMapper, ApplicationEventPublisher eventPublisher) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
+    this.eventPublisher = eventPublisher;
   }
 
   /** {@code admin-rest-api.md} §3 — the one row-creation mechanism this document supplies. */
@@ -184,17 +189,19 @@ class AdminGameRepository {
   }
 
   private void insertNotification(UUID userId, String type, Map<String, Object> payload) {
+    UUID notificationId = UUID.randomUUID();
     jdbcClient
         .sql(
             """
             insert into notification (notification_id, user_id, type, payload)
             values (:notificationId, :userId, :type, :payload::jsonb)
             """)
-        .param("notificationId", UUID.randomUUID())
+        .param("notificationId", notificationId)
         .param("userId", userId)
         .param("type", type)
         .param("payload", jsonOf(payload))
         .update();
+    eventPublisher.publishEvent(new NotificationPersistedEvent(notificationId, userId));
   }
 
   private String jsonOf(Map<String, Object> payload) {
