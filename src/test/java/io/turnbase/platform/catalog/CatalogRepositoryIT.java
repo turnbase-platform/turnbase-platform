@@ -132,7 +132,8 @@ class CatalogRepositoryIT extends PostgresIntegrationTest {
     UUID gameB = activeGame(null, "OFFICIAL", true, "Beta", "10.0.0");
 
     CatalogListFilter filter =
-        new CatalogListFilter(null, null, null, null, Sort.by(Sort.Order.asc("version")), 25, 0);
+        new CatalogListFilter(
+            null, null, null, null, null, Sort.by(Sort.Order.asc("version")), 25, 0);
     List<CatalogRowResponse> rows = repository.listGames(null, filter);
 
     assertThat(rows).extracting(CatalogRowResponse::gameId).containsExactly(gameA, gameB);
@@ -140,7 +141,7 @@ class CatalogRepositoryIT extends PostgresIntegrationTest {
 
   private List<String> listTitles(@Nullable UUID viewerId) {
     CatalogListFilter filter =
-        new CatalogListFilter(null, null, null, null, Sort.unsorted(), 25, 0);
+        new CatalogListFilter(null, null, null, null, null, Sort.unsorted(), 25, 0);
     return repository.listGames(viewerId, filter).stream().map(CatalogRowResponse::title).toList();
   }
 

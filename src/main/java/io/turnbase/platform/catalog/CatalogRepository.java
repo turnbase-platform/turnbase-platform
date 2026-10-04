@@ -172,6 +172,10 @@ class CatalogRepository {
               + " (:tags))\n");
       params.put("tags", filter.tags());
     }
+    if (filter.owner() != null) {
+      sql.append(" and u.username = :owner\n");
+      params.put("owner", filter.owner());
+    }
     return new WhereClause(sql.toString(), params);
   }
 

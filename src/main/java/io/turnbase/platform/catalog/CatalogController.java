@@ -42,6 +42,7 @@ class CatalogController {
       @RequestParam(required = false) @Nullable Integer minPlayers,
       @RequestParam(required = false) @Nullable Integer maxPlayers,
       @RequestParam(required = false) @Nullable List<String> tags,
+      @RequestParam(required = false) @Nullable String owner,
       Pageable pageable,
       HttpServletRequest servletRequest) {
     sortFieldValidator.validate(pageable.getSort(), LIST_SORT_FIELDS);
@@ -52,6 +53,7 @@ class CatalogController {
             minPlayers,
             maxPlayers,
             tags,
+            owner,
             pageable.getSort(),
             pageable.getPageSize(),
             (int) pageable.getOffset());

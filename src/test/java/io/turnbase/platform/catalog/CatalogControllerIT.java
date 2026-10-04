@@ -103,6 +103,34 @@ class CatalogControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void ownerFilterRestrictsToThatUsersGamesAndComposesWithVisibility() throws Exception {
+    Registered alice = registerUser();
+    Registered bob = registerUser();
+    seedGame(alice.userId(), "VERIFIED", true, "Alice Listed", null);
+    seedGame(alice.userId(), "VERIFIED", false, "Alice Unlisted", null);
+    seedGame(alice.userId(), "UNVERIFIED", true, "Alice Unverified", null);
+    seedGame(bob.userId(), "VERIFIED", true, "Bob Game", null);
+    seedGame(null, "OFFICIAL", true, "Official Game", null);
+    String path = "/api/games?owner=" + alice.username();
+
+    assertThat(titlesOf(contentOf(parse(getWithCookie(path, alice.cookie())))))
+        .containsExactlyInAnyOrder("Alice Listed", "Alice Unlisted", "Alice Unverified");
+    assertThat(titlesOf(contentOf(parse(getWithCookie(path, bob.cookie())))))
+        .containsExactly("Alice Listed");
+    assertThat(titlesOf(contentOf(parse(get(path))))).containsExactly("Alice Listed");
+  }
+
+  @Test
+  void ownerFilterOfAnUnknownUsernameIsAnEmptyPageNotA404() throws Exception {
+    seedGame(null, "OFFICIAL", true, "Official Game", null);
+
+    ResponseEntity<String> response = get("/api/games?owner=nobody-by-that-name");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(contentOf(parse(response))).isEmpty();
+  }
+
+  @Test
   void everyRowCarriesExactlyOneBadgeFromTheGameColumn() throws Exception {
     seedGame(null, "OFFICIAL", true, "Chess", null);
 

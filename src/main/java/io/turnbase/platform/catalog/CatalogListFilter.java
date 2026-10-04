@@ -10,6 +10,7 @@ record CatalogListFilter(
     @Nullable Integer minPlayers,
     @Nullable Integer maxPlayers,
     @Nullable List<String> tags,
+    @Nullable String owner,
     Sort sort,
     int pageSize,
     int offset) {}
