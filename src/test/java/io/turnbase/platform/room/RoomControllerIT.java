@@ -132,6 +132,81 @@ class RoomControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void aMemberOfAnInviteOnlyRoomReEntersItWithoutTheCode() throws Exception {
+    Registered host = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createRoom(host, gameId, "INVITE_ONLY");
+
+    ResponseEntity<String> rejoin =
+        postWithCookie(
+            "/api/rooms/" + roomId + "/participants", host.cookie(), "{\"role\":\"PLAYER\"}");
+
+    assertThat(rejoin.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    ResponseEntity<String> read = getWithCookie("/api/rooms/" + roomId, host.cookie());
+    assertThat(read.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(parse(read).get("viewerRole")).isEqualTo("PLAYER");
+  }
+
+  @Test
+  void anInviteeReadsAndJoinsAnInviteOnlyRoomWithoutTheCodeAndTheInvitationIsResolved()
+      throws Exception {
+    Registered host = registerUser();
+    Registered invitee = registerUser();
+    befriend(host, invitee);
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createRoom(host, gameId, "INVITE_ONLY");
+    postWithCookie(
+        "/api/rooms/" + roomId + "/invitations",
+        host.cookie(),
+        "{\"inviteeUsername\":\"%s\"}".formatted(invitee.username()));
+
+    assertThat(getWithCookie("/api/rooms/" + roomId, invitee.cookie()).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
+    ResponseEntity<String> join =
+        postWithCookie(
+            "/api/rooms/" + roomId + "/participants", invitee.cookie(), "{\"role\":\"PLAYER\"}");
+
+    assertThat(join.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    Long pending =
+        jdbcClient
+            .sql("select count(*) from room_invitation where room_id = :r")
+            .param("r", roomId)
+            .query(Long.class)
+            .single();
+    assertThat(pending).isZero();
+  }
+
+  @Test
+  void anotherCallerWithoutTheCodeStillGets404OnAnInviteOnlyRoom() throws Exception {
+    Registered host = registerUser();
+    Registered stranger = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID roomId = createRoom(host, gameId, "INVITE_ONLY");
+
+    assertThat(getWithCookie("/api/rooms/" + roomId, stranger.cookie()).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(
+            postWithCookie(
+                    "/api/rooms/" + roomId + "/participants",
+                    stranger.cookie(),
+                    "{\"role\":\"PLAYER\"}")
+                .getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(
+            roomsForGame(contentOf(parse(getWithCookie("/api/rooms", stranger.cookie()))), gameId))
+        .isEmpty();
+  }
+
+  private UUID createRoom(Registered host, UUID gameId, String visibility) throws Exception {
+    ResponseEntity<String> response =
+        postWithCookie(
+            "/api/rooms",
+            host.cookie(),
+            "{\"gameId\":\"%s\",\"visibility\":\"%s\"}".formatted(gameId, visibility));
+    return UUID.fromString((String) Objects.requireNonNull(parse(response).get("roomId")));
+  }
+
+  @Test
   void aWrongInviteCodeResolvesToAnEmptyListNeverA404() throws Exception {
     Registered viewer = registerUser();
 

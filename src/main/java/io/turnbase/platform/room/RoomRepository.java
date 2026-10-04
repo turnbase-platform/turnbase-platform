@@ -168,6 +168,8 @@ class RoomRepository {
 
     boolean visibleToCaller =
         isVisible(room.visibility(), room.hostUserId(), userId)
+            || isCurrentParticipant(roomId, userId)
+            || hasPendingInvitation(roomId, userId)
             || (inviteCode != null && inviteCode.equals(room.inviteCode()));
     if (!visibleToCaller) {
       throw new NotFoundException("No such room.");
@@ -270,6 +272,19 @@ class RoomRepository {
         .param("roomId", roomId)
         .query(UUID.class)
         .optional();
+  }
+
+  /** {@code room-rest-api.md} §3 {@code reachable()}: a pending {@code room_invitation}. */
+  private boolean hasPendingInvitation(UUID roomId, UUID userId) {
+    return Boolean.TRUE.equals(
+        jdbcClient
+            .sql(
+                "select exists(select 1 from room_invitation"
+                    + " where room_id = :roomId and invitee_user_id = :userId)")
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .query(Boolean.class)
+            .single());
   }
 
   /** Room or spectator membership, current only ({@code left_at is null}) — role-agnostic. */
@@ -1600,12 +1615,13 @@ class RoomRepository {
   }
 
   /**
-   * {@code room-rest-api.md} §4: {@code visible()} from §3, plus a current-participant carve-out —
-   * necessary so a client can re-fetch (page refresh, pre-socket read) a room it already belongs
-   * to, including an {@code INVITE_ONLY} one, without re-presenting the invite code. §4's own text
-   * only rules out an id-based bypass of the invite code, not a membership-based one; §3's
-   * predicate is written for the *browsing* case where the caller is not yet a member. Not applied
-   * to listing (§3 below), where FR-LIST-007's "for any player" stays literal.
+   * {@code room-rest-api.md} §4: {@code reachable()} from §3 ({@code visible()}, a current
+   * participant, or a pending invitation). The participant carve-out is — necessary so a client can
+   * re-fetch (page refresh, pre-socket read) a room it already belongs to, including an {@code
+   * INVITE_ONLY} one, without re-presenting the invite code. §4's own text only rules out an
+   * id-based bypass of the invite code, not a membership-based one; §3's predicate is written for
+   * the *browsing* case where the caller is not yet a member. Not applied to listing (§3 below),
+   * where FR-LIST-007's "for any player" stays literal.
    */
   Optional<RoomResourceRow> findVisibleRoomResource(UUID roomId, UUID viewerId) {
     return jdbcClient
@@ -1620,7 +1636,10 @@ class RoomRepository {
                               and f.user_id_high = greatest(r.host_user_id, :viewerId)))
                       or exists (select 1 from room_participant rp
                                  where rp.room_id = r.room_id and rp.user_id = :viewerId
-                                   and rp.left_at is null) )
+                                   and rp.left_at is null)
+                      or exists (select 1 from room_invitation ri
+                                 where ri.room_id = r.room_id
+                                   and ri.invitee_user_id = :viewerId) )
                 """)
         .param("roomId", roomId)
         .param("viewerId", viewerId)
