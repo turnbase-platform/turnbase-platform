@@ -92,6 +92,10 @@ class RoomService {
    */
   ClaimedResult<JoinRoomResponse> join(
       UUID userId, UUID roomId, JoinRoomRequest request, @Nullable String inviteCode) {
+    // IMP-M10-03: deny before the claim writes any Redis key; the locked re-check below stays
+    // authoritative.
+    repository.precheckJoin(
+        userId, roomId, request.role(), inviteCode, properties.spectatorCapacity());
     String header = claimAndGetInstanceHeader(roomId);
     RoomRepository.JoinOutcome outcome =
         events.execute(

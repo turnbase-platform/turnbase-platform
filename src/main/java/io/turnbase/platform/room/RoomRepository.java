@@ -155,62 +155,12 @@ class RoomRepository {
       ParticipantRole role,
       @Nullable String inviteCode,
       int spectatorCapacity) {
-    RoomForJoin room =
-        jdbcClient
-            .sql(
-                """
-                select r.room_id, r.visibility, r.state, r.spectating_enabled, r.host_user_id,
-                       r.invite_code, gv.supports_spectators, gv.supports_mid_game_join
-                from room r
-                join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
-                where r.room_id = :roomId
-                for update
-                """)
-            .param("roomId", roomId)
-            .query(RoomRepository::mapRoomForJoin)
-            .optional()
-            .orElseThrow(() -> new NotFoundException("No such room."));
-
-    boolean visibleToCaller =
-        isVisible(room.visibility(), room.hostUserId(), userId)
-            || isCurrentParticipant(roomId, userId)
-            || hasPendingInvitation(roomId, userId)
-            || (inviteCode != null && inviteCode.equals(room.inviteCode()));
-    if (!visibleToCaller) {
-      throw new NotFoundException("No such room.");
-    }
-
-    if (isCurrentParticipant(roomId, userId)) {
+    JoinPlan plan = planJoin(userId, roomId, role, inviteCode, spectatorCapacity, true);
+    if (plan.alreadyParticipant()) {
       return new JoinOutcome(
           roomId, releaseCallersCurrentRoom(userId, roomId), Optional.empty(), Optional.empty());
     }
-
-    if ("CLOSED".equals(room.state())) {
-      throw new NotFoundException("No such room.");
-    }
-    if (role == ParticipantRole.PLAYER
-        && "IN_PROGRESS".equals(room.state())
-        && !room.supportsMidGameJoin()) {
-      throw new BusinessRuleException("This game does not support joining once it has started.");
-    }
-
-    UUID teamId = null;
-    if (role == ParticipantRole.PLAYER) {
-      Optional<UUID> availableTeam = findAvailableTeam(roomId);
-      if (availableTeam.isEmpty()) {
-        throw new BusinessRuleException("No player slot is available in this room.");
-      }
-      teamId = availableTeam.get();
-    } else {
-      if (!room.spectatingEnabled() || !room.supportsSpectators()) {
-        throw new BusinessRuleException("This room does not support spectating.");
-      }
-      long spectatorCount = countParticipants(roomId, "SPECTATOR");
-      if (spectatorCount >= spectatorCapacity) {
-        throw new BusinessRuleException("Spectator capacity has been reached.");
-      }
-    }
-
+    UUID teamId = plan.teamId();
     long nextJoinOrder = nextJoinOrder(roomId);
     // data-model.md §2 / room-rest-api.md §5 step 6 (IMP-GATE-50): room_participant keeps one row
     // per (room_id, user_id) for a caller's entire history in this room, so a caller re-joining
@@ -248,6 +198,87 @@ class RoomRepository {
     Optional<RoomInvitationRepository.ResolvedInvitation> acceptedInvitation =
         invitationRepository.resolveOnAcceptedJoin(roomId, userId);
     return new JoinOutcome(roomId, released, Optional.of(joined), acceptedInvitation);
+  }
+
+  /**
+   * {@code room-rest-api.md} §5 steps 1-4 with no write and no row lock, run <em>before</em> the
+   * ownership claim (IMP-M10-03, AUD-03) so a caller who is going to be refused leaves no Redis key
+   * behind. Throws exactly what {@link #joinRoom} would; the locked re-check inside the transaction
+   * stays authoritative.
+   */
+  void precheckJoin(
+      UUID userId,
+      UUID roomId,
+      ParticipantRole role,
+      @Nullable String inviteCode,
+      int spectatorCapacity) {
+    planJoin(userId, roomId, role, inviteCode, spectatorCapacity, false);
+  }
+
+  private record JoinPlan(boolean alreadyParticipant, @Nullable UUID teamId) {}
+
+  private JoinPlan planJoin(
+      UUID userId,
+      UUID roomId,
+      ParticipantRole role,
+      @Nullable String inviteCode,
+      int spectatorCapacity,
+      boolean lock) {
+    RoomForJoin room =
+        jdbcClient
+            .sql(
+                """
+                select r.room_id, r.visibility, r.state, r.spectating_enabled, r.host_user_id,
+                       r.invite_code, gv.supports_spectators, gv.supports_mid_game_join
+                from room r
+                join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
+                where r.room_id = :roomId
+                """
+                    + (lock ? "for update" : ""))
+            .param("roomId", roomId)
+            .query(RoomRepository::mapRoomForJoin)
+            .optional()
+            .orElseThrow(() -> new NotFoundException("No such room."));
+
+    boolean visibleToCaller =
+        isVisible(room.visibility(), room.hostUserId(), userId)
+            || isCurrentParticipant(roomId, userId)
+            || hasPendingInvitation(roomId, userId)
+            || (inviteCode != null && inviteCode.equals(room.inviteCode()));
+    if (!visibleToCaller) {
+      throw new NotFoundException("No such room.");
+    }
+
+    if (isCurrentParticipant(roomId, userId)) {
+      return new JoinPlan(true, null);
+    }
+
+    if ("CLOSED".equals(room.state())) {
+      throw new NotFoundException("No such room.");
+    }
+    if (role == ParticipantRole.PLAYER
+        && "IN_PROGRESS".equals(room.state())
+        && !room.supportsMidGameJoin()) {
+      throw new BusinessRuleException("This game does not support joining once it has started.");
+    }
+
+    UUID teamId = null;
+    if (role == ParticipantRole.PLAYER) {
+      Optional<UUID> availableTeam = findAvailableTeam(roomId);
+      if (availableTeam.isEmpty()) {
+        throw new BusinessRuleException("No player slot is available in this room.");
+      }
+      teamId = availableTeam.get();
+    } else {
+      if (!room.spectatingEnabled() || !room.supportsSpectators()) {
+        throw new BusinessRuleException("This room does not support spectating.");
+      }
+      long spectatorCount = countParticipants(roomId, "SPECTATOR");
+      if (spectatorCount >= spectatorCapacity) {
+        throw new BusinessRuleException("Spectator capacity has been reached.");
+      }
+    }
+    return new JoinPlan(false, teamId);
   }
 
   private String usernameOf(UUID userId) {

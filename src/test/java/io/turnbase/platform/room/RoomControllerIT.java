@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -842,6 +843,49 @@ class RoomControllerIT extends PostgresIntegrationTest {
             "/api/rooms/" + roomId + "/participants", third.cookie(), "{\"role\":\"PLAYER\"}");
 
     assertThat(thirdJoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+  }
+
+  @Test
+  void refusedJoinsWriteNoRedisKeyAndALegitimateJoinStillClaims() throws Exception {
+    Registered host = registerUser();
+    Registered stranger = registerUser();
+    Registered second = registerUser();
+    Registered third = registerUser();
+    UUID gameId = seedTwoPlayerGame(true, true);
+    UUID inviteOnly = createRoom(host, gameId, "INVITE_ONLY");
+    UUID full = createPublicRoom(host, gameId);
+    postWithCookie(
+        "/api/rooms/" + full + "/participants", second.cookie(), "{\"role\":\"PLAYER\"}");
+
+    // Forget the tenures the creates established, so any key below is written by a join alone.
+    StringRedisTemplate redis = Objects.requireNonNull(context).getBean(StringRedisTemplate.class);
+    redis.delete(Objects.requireNonNull(redis.keys("room:*")));
+
+    for (int i = 0; i < 5; i++) {
+      assertThat(
+              postWithCookie(
+                      "/api/rooms/" + inviteOnly + "/participants",
+                      stranger.cookie(),
+                      "{\"role\":\"PLAYER\"}")
+                  .getStatusCode())
+          .isEqualTo(HttpStatus.NOT_FOUND);
+      assertThat(
+              postWithCookie(
+                      "/api/rooms/" + full + "/participants",
+                      third.cookie(),
+                      "{\"role\":\"PLAYER\"}")
+                  .getStatusCode())
+          .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+    }
+    assertThat(redis.keys("room:*")).isEmpty();
+
+    UUID open = createPublicRoom(host, gameId);
+    assertThat(
+            postWithCookie(
+                    "/api/rooms/" + open + "/participants", third.cookie(), "{\"role\":\"PLAYER\"}")
+                .getStatusCode())
+        .isEqualTo(HttpStatus.CREATED);
+    assertThat(redis.keys("room:" + open + ":*")).contains("room:" + open + ":pod");
   }
 
   @Test
