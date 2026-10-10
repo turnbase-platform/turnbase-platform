@@ -397,6 +397,16 @@ class HistoryIT extends PostgresIntegrationTest {
     }
   }
 
+  @Test
+  void searchWithNulOrControlByteIsRejectedNotA500() throws Exception {
+    Registered alice = register();
+    for (String bad : List.of("\u0000", "a\u0000b", "\u0001", "\u001F", "\u007F")) {
+      ResponseEntity<String> response = getHistory(alice.username(), null, "?search=" + bad);
+      assertThat(response.getStatusCode()).as("control byte").isEqualTo(HttpStatus.BAD_REQUEST);
+      assertThat(response.getBody()).contains("validation-failed");
+    }
+  }
+
   private UUID guest() throws Exception {
     return UUID.fromString(
         (String) body(exchange("/api/auth/guest", HttpMethod.POST, null, null)).get("userId"));

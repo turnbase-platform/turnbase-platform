@@ -496,6 +496,16 @@ class SocialControllerIT extends PostgresIntegrationTest {
     return restTemplate.exchange(baseUrl + path, method, request, String.class);
   }
 
+  @Test
+  void searchWithNulOrControlByteIsRejectedNotA500() throws Exception {
+    Registered a = registerUser();
+    for (String bad : List.of("\u0000", "a\u0000b", "\u0001", "\u001F", "\u007F")) {
+      ResponseEntity<String> response = getWithCookie("/api/users?search=" + bad, a.cookie());
+      assertThat(response.getStatusCode()).as("control byte").isEqualTo(HttpStatus.BAD_REQUEST);
+      assertThat(response.getBody()).contains("validation-failed");
+    }
+  }
+
   private ResponseEntity<String> getWithCookie(String path, @Nullable String cookie) {
     HttpHeaders headers = new HttpHeaders();
     if (cookie != null) {

@@ -1,6 +1,7 @@
 package io.turnbase.platform.history;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.Canonicalizer;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.SortFieldValidator;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,6 +39,8 @@ class HistoryController {
     Principal principal = request.getUserPrincipal();
     var viewer = principal instanceof AuthenticatedUser user ? user.userId() : null;
     return ResponseEntity.ok(
-        PageResponse.from(historyService.historyOf(username, viewer, search, pageable)));
+        PageResponse.from(
+            historyService.historyOf(
+                username, viewer, Canonicalizer.searchTerm(search), pageable)));
   }
 }

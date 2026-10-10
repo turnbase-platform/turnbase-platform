@@ -1,6 +1,8 @@
 package io.turnbase.platform.common;
 
 import java.text.Normalizer;
+import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * input-validation.md § Canonicalization — applied to every user-supplied string before any length
@@ -25,6 +27,24 @@ public final class Canonicalizer {
    */
   public static boolean hasForbiddenCodePoint(String s) {
     return s.codePoints().anyMatch(Canonicalizer::isForbidden);
+  }
+
+  /**
+   * Canonicalizes a {@code search}-style filter and rejects control bytes. A NUL reaching Postgres
+   * raises a driver error (a 500), so it is refused here as a {@code validation-failed} 400 that
+   * names the field and never echoes the value.
+   */
+  public static @Nullable String searchTerm(@Nullable String raw) {
+    if (raw == null) {
+      return null;
+    }
+    // Checked before canonicalize(): strip() would swallow U+001C–U+001F at the edges.
+    if (hasForbiddenCodePoint(raw)) {
+      throw new ValidationFailedException(
+          "Validation failed",
+          List.of(new FieldValidationError("search", "must not contain control characters")));
+    }
+    return canonicalize(raw);
   }
 
   private static boolean isForbidden(int codePoint) {

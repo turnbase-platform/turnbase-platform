@@ -1,6 +1,7 @@
 package io.turnbase.platform.room;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.Canonicalizer;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.SortFieldValidator;
 import jakarta.servlet.http.HttpServletRequest;
@@ -80,7 +81,7 @@ class RoomController {
     sortFieldValidator.validate(pageable.getSort(), LIST_SORT_FIELDS);
     RoomListFilter filter =
         new RoomListFilter(
-            search,
+            Canonicalizer.searchTerm(search),
             status,
             minPlayers,
             maxPlayers,

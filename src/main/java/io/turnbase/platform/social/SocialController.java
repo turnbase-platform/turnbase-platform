@@ -1,12 +1,14 @@
 package io.turnbase.platform.social;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.Canonicalizer;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.SortFieldValidator;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.security.Principal;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
@@ -44,7 +46,11 @@ class SocialController {
     sortFieldValidator.validate(pageable.getSort(), SEARCH_SORT_FIELDS);
     AuthenticatedUser principal = principalOf(request);
     return ResponseEntity.ok(
-        PageResponse.from(socialService.search(principal.userId(), search, pageable)));
+        PageResponse.from(
+            socialService.search(
+                principal.userId(),
+                Objects.requireNonNull(Canonicalizer.searchTerm(search)),
+                pageable)));
   }
 
   /** {@code social-rest-api.md} §3. */

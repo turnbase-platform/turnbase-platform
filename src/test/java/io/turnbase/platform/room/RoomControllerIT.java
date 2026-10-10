@@ -1035,6 +1035,16 @@ class RoomControllerIT extends PostgresIntegrationTest {
     return restTemplate.exchange(baseUrl + path, method, request, String.class);
   }
 
+  @Test
+  void searchWithNulOrControlByteIsRejectedNotA500() throws Exception {
+    Registered user = registerUser();
+    for (String bad : List.of("\u0000", "a\u0000b", "\u0001", "\u001F", "\u007F")) {
+      ResponseEntity<String> response = getWithCookie("/api/rooms?search=" + bad, user.cookie());
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+      assertThat(response.getBody()).contains("validation-failed");
+    }
+  }
+
   private ResponseEntity<String> getWithCookie(String path, String cookie) {
     HttpHeaders headers = new HttpHeaders();
     headers.add(HttpHeaders.COOKIE, cookie);

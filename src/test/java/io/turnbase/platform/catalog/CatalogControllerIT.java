@@ -263,6 +263,15 @@ class CatalogControllerIT extends PostgresIntegrationTest {
     return restTemplate.exchange(baseUrl + path, HttpMethod.POST, request, String.class);
   }
 
+  @Test
+  void searchWithNulOrControlByteIsRejectedNotA500() {
+    for (String bad : List.of("\u0000", "a\u0000b", "\u0001", "\u001F", "\u007F")) {
+      ResponseEntity<String> response = get("/api/games?search=" + bad);
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+      assertThat(response.getBody()).contains("validation-failed");
+    }
+  }
+
   private ResponseEntity<String> get(String path) {
     return restTemplate.exchange(baseUrl + path, HttpMethod.GET, HttpEntity.EMPTY, String.class);
   }

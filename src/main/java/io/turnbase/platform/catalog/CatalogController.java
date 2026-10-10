@@ -1,6 +1,7 @@
 package io.turnbase.platform.catalog;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.Canonicalizer;
 import io.turnbase.platform.common.PageResponse;
 import io.turnbase.platform.common.SortFieldValidator;
 import jakarta.servlet.http.HttpServletRequest;
@@ -49,7 +50,7 @@ class CatalogController {
     AuthenticatedUser viewer = optionalPrincipalOf(servletRequest);
     CatalogListFilter filter =
         new CatalogListFilter(
-            search,
+            Canonicalizer.searchTerm(search),
             minPlayers,
             maxPlayers,
             tags,
