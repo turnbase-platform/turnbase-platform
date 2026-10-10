@@ -5,6 +5,7 @@ import io.turnbase.platform.session.SessionService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -26,6 +27,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 class WebSocketChannelInterceptor implements ChannelInterceptor {
+
+  private static final Pattern USER_QUEUE = Pattern.compile("/user/queue/[A-Za-z0-9_-]+");
 
   private final SessionService sessionService;
   private final WebSocketConnectionRegistry registry;
@@ -112,6 +115,17 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
       return null;
     }
 
+    if (command == StompCommand.SEND && !isApplicationDestination(accessor.getDestination())) {
+      // Defense-in-depth (SEC-S-03): the only legitimate client SEND target is /app/*; a frame
+      // aimed straight at a broker destination would bypass every @MessageMapping authorization.
+      sendError(
+          user,
+          stompSessionId,
+          "DESTINATION_NOT_ALLOWED",
+          "Messages may only be sent to application destinations.",
+          Map.of());
+      return null;
+    }
     if (command == StompCommand.SUBSCRIBE) {
       Message<?> dropped = enforceSubscriptionAuthorization(user, stompSessionId, accessor);
       if (dropped != null) {
@@ -159,6 +173,15 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
     if (destination == null) {
       return null;
     }
+    if (isWildcard(destination)) {
+      // AUD-02: the simple broker matches a subscription destination as an AntPathMatcher
+      // pattern, so a wildcard or ancestor would widen to other users' queues and topics.
+      return rejectDestination(user, stompSessionId);
+    }
+    if (USER_QUEUE.matcher(destination).matches()) {
+      // /user/queue/x is resolved by Spring to /queue/x-user{this session}: bound to the principal.
+      return null;
+    }
     for (SubscriptionAuthorizer authorizer : subscriptionAuthorizers) {
       if (!authorizer.supports(destination)) {
         continue;
@@ -178,7 +201,29 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
         }
       };
     }
-    return null;
+    // No authorizer governs it — notably a raw /queue/…-user{sessionId} address, which the broker
+    // would serve to anyone. Subscriptions are allow-listed, not deny-listed (AUD-02).
+    return rejectDestination(user, stompSessionId);
+  }
+
+  private @Nullable Message<?> rejectDestination(AuthenticatedUser user, String stompSessionId) {
+    sendError(
+        user,
+        stompSessionId,
+        "DESTINATION_NOT_ALLOWED",
+        "You cannot subscribe to this destination.",
+        Map.of());
+    return DROPPED;
+  }
+
+  private static boolean isWildcard(String destination) {
+    return destination.indexOf('*') >= 0
+        || destination.indexOf('?') >= 0
+        || destination.indexOf('{') >= 0;
+  }
+
+  private static boolean isApplicationDestination(@Nullable String destination) {
+    return destination != null && destination.startsWith("/app/");
   }
 
   private void sendError(

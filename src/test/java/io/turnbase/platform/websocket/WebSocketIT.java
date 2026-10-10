@@ -28,10 +28,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.messaging.simp.user.SimpUser;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
@@ -146,6 +149,93 @@ class WebSocketIT extends PostgresIntegrationTest {
 
     assertThat(errorFrames).isEmpty();
     session.disconnect();
+  }
+
+  @Test
+  void aCrossUserQueueSubscriptionReceivesNothingAndIsRefused() throws Exception {
+    List<Object> victimFrames = new CopyOnWriteArrayList<>();
+    StompSession victim = connect(mintGuestCookie());
+    victim.subscribe("/user/queue/game", collecting(victimFrames));
+    SimpUserRegistry userRegistry = context().getBean(SimpUserRegistry.class);
+    SimpUser victimUser = userRegistry.getUsers().iterator().next();
+    String victimSessionId = victimUser.getSessions().iterator().next().getId();
+
+    List<Object> attackerFrames = new CopyOnWriteArrayList<>();
+    StompSession attacker = connect(mintGuestCookie());
+    attacker.subscribe("/user/queue/errors", collecting(attackerFrames));
+    for (String crafted :
+        List.of(
+            "/queue/game-user" + victimSessionId,
+            "/queue/**",
+            "/queue/game-user*",
+            "/queue/*",
+            "/queue/game-user" + victimSessionId + "/**",
+            "/topic/**",
+            "/topic/room.*.chat")) {
+      attacker.subscribe(crafted, collecting(attackerFrames));
+    }
+
+    context()
+        .getBean(SimpMessagingTemplate.class)
+        .convertAndSendToUser(
+            victimUser.getName(), "/queue/game", Map.of("type", "GAME_EVENT", "secret", "x"));
+    awaitCount(victimFrames, 1);
+    Thread.sleep(500);
+
+    assertThat(victimFrames).hasSize(1);
+    assertThat(attackerFrames)
+        .allSatisfy(f -> assertThat(f).asString().contains("DESTINATION_NOT_ALLOWED"))
+        .hasSize(7)
+        .noneSatisfy(f -> assertThat(f).asString().contains("secret"));
+    attacker.disconnect();
+    victim.disconnect();
+  }
+
+  @Test
+  void aSendOutsideTheApplicationPrefixIsRefused() throws Exception {
+    String cookie = mintGuestCookie();
+    List<Object> chatFrames = new CopyOnWriteArrayList<>();
+    List<Object> errorFrames = new CopyOnWriteArrayList<>();
+    StompSession session = connect(cookie);
+    session.subscribe("/user/queue/errors", collecting(errorFrames));
+    UUID roomId = createPublicRoom(cookie, seedTwoPlayerGame());
+    session.subscribe("/topic/room." + roomId + ".chat", collecting(chatFrames));
+
+    session.send("/topic/room." + roomId + ".chat", Map.of("type", "CHAT", "text", "forged"));
+    awaitCount(errorFrames, 1);
+    Thread.sleep(300);
+
+    assertThat(errorFrames.get(0)).asString().contains("DESTINATION_NOT_ALLOWED");
+    assertThat(chatFrames).isEmpty();
+    session.disconnect();
+  }
+
+  private StompSession connect(String cookie) throws Exception {
+    WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
+    handshakeHeaders.add(HttpHeaders.COOKIE, cookie);
+    return newStompClient()
+        .connectAsync(wsUrl, handshakeHeaders, new StompSessionHandlerAdapter() {})
+        .get(5, TimeUnit.SECONDS);
+  }
+
+  private static StompFrameHandler collecting(List<Object> sink) {
+    return new StompFrameHandler() {
+      @Override
+      public Type getPayloadType(StompHeaders headers) {
+        return Map.class;
+      }
+
+      @Override
+      public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+        sink.add(payload);
+      }
+    };
+  }
+
+  private static void awaitCount(List<Object> sink, int count) throws InterruptedException {
+    for (int i = 0; i < 100 && sink.size() < count; i++) {
+      Thread.sleep(50);
+    }
   }
 
   private WebSocketStompClient newStompClient() {
