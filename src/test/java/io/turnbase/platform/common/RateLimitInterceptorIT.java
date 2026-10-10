@@ -170,6 +170,29 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void tier1IgnoresAClientSuppliedForwardedForFromAnUntrustedPeer() {
+    bootApplication(
+        "--turnbase.rate-limit.auth.failures-before-lockout=2",
+        "--turnbase.rate-limit.minting.registration.capacity=1000",
+        "--turnbase.rate-limit.minting.guest.capacity=1000");
+    String username = uniqueUsername();
+    register(username, uniqueEmail(), "correct horse battery", "correct horse battery");
+
+    // A fresh forged address per attempt does not escape the caller's own bucket ...
+    assertThat(loginFrom("203.0.113.1", username, "wrong password one").getStatusCode())
+        .isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(loginFrom("203.0.113.2", username, "wrong password two").getStatusCode())
+        .isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(loginFrom("203.0.113.3", username, "correct horse battery").getStatusCode())
+        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+
+    // ... and naming a victim's address cannot have counted against the victim's bucket.
+    String victim = "198.51.100.77";
+    assertThat(redisKeyCount("rate:auth:" + victim)).isZero();
+    assertThat(redisKeyCount("rate:auth:203.0.113.*")).isZero();
+  }
+
+  @Test
   void tier1SuccessfulLoginsDoNotCountTowardTheLockout() {
     bootApplication(
         "--turnbase.rate-limit.auth.failures-before-lockout=2",
@@ -322,6 +345,31 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
         {"usernameOrEmail":"%s","password":"%s"}
         """
             .formatted(usernameOrEmail, password));
+  }
+
+  private int redisKeyCount(String pattern) {
+    try {
+      String out = REDIS.execInContainer("redis-cli", "--scan", "--pattern", pattern).getStdout();
+      return (int) out.lines().filter(line -> !line.isBlank()).count();
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private ResponseEntity<String> loginFrom(String forgedAddress, String user, String password) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("X-Forwarded-For", forgedAddress);
+    return restTemplate.exchange(
+        baseUrl + "/api/auth/login",
+        HttpMethod.POST,
+        new HttpEntity<>(
+            """
+            {"usernameOrEmail":"%s","password":"%s"}
+            """
+                .formatted(user, password),
+            headers),
+        String.class);
   }
 
   private ResponseEntity<String> post(String path, @Nullable String body) {

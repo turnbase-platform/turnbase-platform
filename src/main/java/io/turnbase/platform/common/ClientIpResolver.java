@@ -32,7 +32,7 @@ class ClientIpResolver {
     InetAddress clientAddress = socketAddress;
     if (socketAddress != null && isTrusted(socketAddress)) {
       String forwardedFor = request.getHeader(FORWARDED_FOR_HEADER);
-      InetAddress forwarded = forwardedFor == null ? null : parseLiteral(forwardedFor.strip());
+      InetAddress forwarded = forwardedFor == null ? null : parseLiteral(lastEntry(forwardedFor));
       if (forwarded != null) {
         clientAddress = forwarded;
       }
@@ -43,6 +43,15 @@ class ClientIpResolver {
       return request.getRemoteAddr();
     }
     return keyFor(clientAddress);
+  }
+
+  /**
+   * The entry the trusted hop appended — the rightmost. The edge overwrites the header so there is
+   * only one, but if a client-supplied prefix ever survives, the leftmost entries are the forgeable
+   * ones.
+   */
+  private static String lastEntry(String forwardedFor) {
+    return forwardedFor.substring(forwardedFor.lastIndexOf(',') + 1).strip();
   }
 
   private boolean isTrusted(InetAddress address) {
