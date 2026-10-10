@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
+import java.io.ByteArrayInputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -239,6 +243,48 @@ class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONTENT_TOO_LARGE);
     Map<String, Object> body = parse(response);
     assertThat(body.get("type")).isEqualTo(PROBLEM_BASE + "payload-too-large");
+  }
+
+  @Test
+  void aChunkedBodyOverTheCapIsRejectedAsPayloadTooLarge() throws Exception {
+    java.net.http.HttpResponse<String> response =
+        postChunked("/echo", "x".repeat(70_000), "text/plain");
+
+    assertThat(response.statusCode()).isEqualTo(413);
+    assertThat(response.body()).contains(PROBLEM_BASE + "payload-too-large");
+  }
+
+  @Test
+  void aChunkedJsonBodyOverTheCapIsRejectedAsPayloadTooLarge() throws Exception {
+    String json = "{\"name\":\"" + "x".repeat(70_000) + "\"}";
+
+    java.net.http.HttpResponse<String> response =
+        postChunked("/validate", json, "application/json");
+
+    assertThat(response.statusCode()).isEqualTo(413);
+    assertThat(response.body()).contains(PROBLEM_BASE + "payload-too-large");
+  }
+
+  @Test
+  void aChunkedBodyUnderTheCapIsAccepted() throws Exception {
+    java.net.http.HttpResponse<String> response =
+        postChunked("/echo", "x".repeat(1_000), "text/plain");
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(response.body()).isEqualTo("1000");
+  }
+
+  private java.net.http.HttpResponse<String> postChunked(
+      String path, String body, String contentType) throws Exception {
+    byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    // ofInputStream has no known length, so the JDK client sends Transfer-Encoding: chunked.
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create(baseUrl + path))
+            .header("Content-Type", contentType)
+            .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes)))
+            .build();
+    return HttpClient.newHttpClient()
+        .send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
   }
 
   @Test

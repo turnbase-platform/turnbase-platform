@@ -99,6 +99,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
+    for (Throwable cause = ex.getCause(); cause != null; cause = cause.getCause()) {
+      if (cause instanceof PayloadTooLargeException tooLarge) {
+        ProblemDetail tooLargeBody =
+            problemDetail(tooLarge.problemType(), tooLarge.detail(), instancePath(request));
+        return ResponseEntity.status(tooLarge.problemType().status()).body(tooLargeBody);
+      }
+    }
     ProblemDetail body =
         problemDetail(
             ProblemType.VALIDATION_FAILED, "The request body is malformed.", instancePath(request));
