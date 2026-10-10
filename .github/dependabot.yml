@@ -22,10 +22,10 @@ updates:
       prefix: chore
       include: scope
     ignore:
-      # CLAUDE.md pins Spring Boot 3.5+, not 4.x. A major bump is a deliberate upgrade this
-      # project hasn't made, not a routine update — closed once already (2026-09-02).
+      # ADR-0016 moved the platform to Spring Boot 4.1. A major bump is a deliberate upgrade
+      # (own milestone, Jackson/Modulith/Testcontainers moves with it), not a routine update.
       - dependency-name: org.springframework.boot:spring-boot-starter-parent
-        versions: ['>=4.0.0']
+        versions: ['>=5.0.0']
     groups:
       spring:
         patterns:

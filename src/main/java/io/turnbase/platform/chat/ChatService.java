@@ -73,7 +73,7 @@ class ChatService {
     envelope.put("type", "CHAT_MESSAGE");
     envelope.put("version", null);
     envelope.put("payload", chatPayload);
-    messagingTemplate.convertAndSend(destination, envelope);
+    messagingTemplate.convertAndSend(destination, (Object) envelope);
   }
 
   private ChatChannel parseChannel(SendChatMessageCommand.@Nullable ChatPayload payload) {

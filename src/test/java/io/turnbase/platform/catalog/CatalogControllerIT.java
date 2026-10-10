@@ -316,7 +316,10 @@ class CatalogControllerIT extends PostgresIntegrationTest {
     }
 
     @Override
-    public void handleError(org.springframework.http.client.ClientHttpResponse response) {
+    public void handleError(
+        java.net.URI url,
+        org.springframework.http.HttpMethod method,
+        org.springframework.http.client.ClientHttpResponse response) {
       // Never called: hasError() always returns false so assertions see the real status.
     }
   }

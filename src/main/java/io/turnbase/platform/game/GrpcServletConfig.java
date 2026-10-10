@@ -2,7 +2,7 @@ package io.turnbase.platform.game;
 
 import io.grpc.servlet.jakarta.GrpcServlet;
 import java.util.List;
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.context.annotation.Bean;

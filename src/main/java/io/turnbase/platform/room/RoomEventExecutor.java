@@ -182,7 +182,7 @@ class RoomEventExecutor {
     logLifecycle(roomId, event, version);
     messagingTemplate.convertAndSend(
         "/topic/room." + roomId,
-        Map.of("type", event.type(), "version", version, "payload", event.payload()));
+        (Object) Map.of("type", event.type(), "version", version, "payload", event.payload()));
   }
 
   /**

@@ -43,7 +43,7 @@ class RoomSessionFailureListener implements SessionFailureListener {
               message.put("type", "SESSION_FAILED");
               message.put("sessionId", sessionId);
               message.put("payload", payload);
-              messagingTemplate.convertAndSend("/topic/game." + sessionId, message);
+              messagingTemplate.convertAndSend("/topic/game." + sessionId, (Object) message);
               detacher.detach(roomId, sessionId, "RETRY_LIMIT", "LOBBY");
             });
   }

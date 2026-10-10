@@ -1,6 +1,6 @@
 # turnbase-platform — CLAUDE.md
 
-The Platform Monolith. Spring Boot 3.5+ on Java 21, Docker image `turnbase/platform`.
+The Platform Monolith. Spring Boot 4.1+ on Java 21, Docker image `turnbase/platform`.
 
 **This file is additive.** The specification corpus, the work-item registry, the code conventions and
 the session workflow live in the parent repository and apply here unchanged:

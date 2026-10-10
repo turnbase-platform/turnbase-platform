@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisConnectionDetails;
+import org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration;
+import org.springframework.boot.data.redis.autoconfigure.DataRedisConnectionDetails;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -20,7 +20,7 @@ class RedisConnectionConfigTest {
   private final ApplicationContextRunner contextRunner =
       new ApplicationContextRunner()
           .withInitializer(new ConfigDataApplicationContextInitializer())
-          .withConfiguration(AutoConfigurations.of(RedisAutoConfiguration.class));
+          .withConfiguration(AutoConfigurations.of(DataRedisAutoConfiguration.class));
 
   @Test
   void passwordSuppliedSeparatelyReachesTheConnection() {
@@ -28,10 +28,12 @@ class RedisConnectionConfigTest {
         .withPropertyValues("spring.data.redis.password=s3cret")
         .run(
             context -> {
-              RedisConnectionDetails details = context.getBean(RedisConnectionDetails.class);
+              DataRedisConnectionDetails details =
+                  context.getBean(DataRedisConnectionDetails.class);
               assertThat(details.getPassword()).isEqualTo("s3cret");
-              assertThat(details.getStandalone().getHost()).isEqualTo("localhost");
-              assertThat(details.getStandalone().getPort()).isEqualTo(6379);
+              var standalone = java.util.Objects.requireNonNull(details.getStandalone());
+              assertThat(standalone.getHost()).isEqualTo("localhost");
+              assertThat(standalone.getPort()).isEqualTo(6379);
             });
   }
 
@@ -44,9 +46,11 @@ class RedisConnectionConfigTest {
             "spring.data.redis.password=s3cret")
         .run(
             context -> {
-              RedisConnectionDetails details = context.getBean(RedisConnectionDetails.class);
-              assertThat(details.getStandalone().getHost()).isEqualTo("redis");
-              assertThat(details.getStandalone().getPort()).isEqualTo(6380);
+              DataRedisConnectionDetails details =
+                  context.getBean(DataRedisConnectionDetails.class);
+              var standalone = java.util.Objects.requireNonNull(details.getStandalone());
+              assertThat(standalone.getHost()).isEqualTo("redis");
+              assertThat(standalone.getPort()).isEqualTo(6380);
               assertThat(details.getPassword()).isEqualTo("s3cret");
             });
   }

@@ -1,6 +1,6 @@
 # turnbase-platform
 
-TurnBase Platform Monolith — Spring Boot 3.5+ on Java 21, packaged by feature
+TurnBase Platform Monolith — Spring Boot 4.1+ on Java 21, packaged by feature
 ([ADR-0014](../docs/decisions/0014-modular-monolith-spring-modulith.md)). Ships as the Docker image
 `turnbase/platform`.
 

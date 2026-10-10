@@ -145,7 +145,7 @@ class EffectFanOut implements EffectDelivery {
   }
 
   private void publish(String destination, Map<String, Object> message) {
-    messagingTemplate.convertAndSend(destination, message);
+    messagingTemplate.convertAndSend(destination, (Object) message);
   }
 
   private void reject(String kind, UUID sessionId, String address) {

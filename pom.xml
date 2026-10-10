@@ -5,7 +5,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.5.16</version>
+    <version>4.1.1</version>
     <relativePath/>
   </parent>
 
@@ -15,7 +15,7 @@
   <packaging>jar</packaging>
 
   <name>turnbase-platform</name>
-  <description>TurnBase Platform Monolith — Spring Boot 3.5+, packaged by feature
+  <description>TurnBase Platform Monolith — Spring Boot 4.1+, packaged by feature
     (ADR-0014).</description>
 
   <!--
@@ -30,15 +30,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
     <!-- Dependencies -->
-    <!--
-      CVE-2026-65182 (CRITICAL): a security-constraint bypass fixed in 10.1.58+, found by
-      IMP-M0-11's Trivy dependency gate. Spring Boot 3.5.16 (already the latest 3.5.x) still
-      manages 10.1.55; overriding the property is Spring Boot's own supported mechanism for
-      this, and 10.1.58 was never published to Central — 10.1.59 is the first 10.1.x release
-      that carries the fix.
-    -->
-    <tomcat.version>10.1.59</tomcat.version>
-    <spring-modulith.version>1.4.13</spring-modulith.version>
+    <spring-modulith.version>2.1.1</spring-modulith.version>
     <!-- Matches turnbase-common's pin — grpc-netty-shaded is the transport turnbase-grpc
          deliberately leaves to its consumers to choose (conventions.md §5). -->
     <grpc.version>1.84.0</grpc.version>
@@ -50,6 +42,7 @@
       talks to both by overriding the endpoint, so it is the client rather than a MinIO-specific
       SDK that would need swapping out for production.
     -->
+    <!-- IMP-M11-02: independent of Spring; no change needed for Boot 4. -->
     <aws-sdk.version>2.54.13</aws-sdk.version>
 
     <!--
@@ -68,6 +61,7 @@
     <turnbase-common.version>0.1.0-SNAPSHOT</turnbase-common.version>
 
     <!-- IMP-M1-03: HS256 JWT issuance/verification (secrets-and-configuration.md §3). -->
+    <!-- IMP-M11-02: jjwt-jackson stays on Jackson 2 deliberately (ADR-0016 §2); never sees a Spring mapper. -->
     <jjwt.version>0.12.6</jjwt.version>
 
     <!--
@@ -90,6 +84,7 @@
       (schema-migrations.md §5) for exactly this — net.javacrumbs.shedlock is the mechanism that
       table exists to serve, not a choice made here.
     -->
+    <!-- IMP-M11-02: ShedLock 7.x targets Spring 7; compiles against Boot 4.1.1, exercised by the ITs (IMP-M11-04). -->
     <shedlock.version>7.7.0</shedlock.version>
 
     <!--
@@ -98,6 +93,7 @@
       API, -lettuce is the distributed proxy manager this repo's Lettuce client backs. No document
       names a library — "Redis (Bucket4j RedisBucket)" is rate-limiting.md's own phrase.
     -->
+    <!-- IMP-M11-02: bucket4j-lettuce is built against Lettuce 6; kept for now, rate-limit ITs verify it on Lettuce 7 (IMP-M11-04, ADR-0016 R8). -->
     <bucket4j.version>8.19.0</bucket4j.version>
 
     <!-- Plugins -->
@@ -167,7 +163,7 @@
   <dependencies>
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -410,17 +406,17 @@
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>postgresql</artifactId>
+      <artifactId>testcontainers-postgresql</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>minio</artifactId>
+      <artifactId>testcontainers-minio</artifactId>
       <scope>test</scope>
     </dependency>
     <!--

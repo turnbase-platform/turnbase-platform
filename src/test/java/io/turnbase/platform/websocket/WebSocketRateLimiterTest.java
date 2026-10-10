@@ -104,7 +104,7 @@ class WebSocketRateLimiterTest {
     assertThat(fourth).isInstanceOf(WebSocketRateLimiter.FrameDecision.ForceClose.class);
     assertThat(((WebSocketRateLimiter.FrameDecision.ForceClose) fourth).code())
         .isEqualTo("RATE_LIMIT_ABUSE");
-    verify(valueOperations).set(anyString(), anyString(), any());
+    verify(valueOperations).set(anyString(), anyString(), any(Duration.class));
   }
 
   @Test

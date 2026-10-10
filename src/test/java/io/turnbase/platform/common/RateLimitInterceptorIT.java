@@ -322,7 +322,10 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
     }
 
     @Override
-    public void handleError(ClientHttpResponse response) {
+    public void handleError(
+        java.net.URI url,
+        org.springframework.http.HttpMethod method,
+        org.springframework.http.client.ClientHttpResponse response) {
       // No-op: 4xx/5xx responses are asserted on directly rather than thrown as exceptions.
     }
   }

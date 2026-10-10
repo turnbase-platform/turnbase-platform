@@ -66,7 +66,7 @@ class WebSocketRateLimiter {
   FrameDecision checkFrame(
       AuthenticatedUser user,
       String stompSessionId,
-      StompCommand command,
+      @Nullable StompCommand command,
       @Nullable String destination) {
     ConsumptionProbe connectionProbe =
         consume(user.userId(), "connection", properties.connection());
@@ -84,7 +84,7 @@ class WebSocketRateLimiter {
     return new FrameDecision.Allow();
   }
 
-  private @Nullable String classify(StompCommand command, @Nullable String destination) {
+  private @Nullable String classify(@Nullable StompCommand command, @Nullable String destination) {
     if (command == StompCommand.SUBSCRIBE) {
       return "subscribe";
     }

@@ -106,7 +106,7 @@ class RoomSubscriptionAuthorizerIT extends PostgresIntegrationTest {
                   @Override
                   public void handleException(
                       StompSession s,
-                      StompCommand command,
+                      @Nullable StompCommand command,
                       StompHeaders headers,
                       byte[] payload,
                       Throwable exception) {

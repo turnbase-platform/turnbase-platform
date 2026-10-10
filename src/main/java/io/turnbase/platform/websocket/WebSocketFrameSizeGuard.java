@@ -23,7 +23,7 @@ class WebSocketFrameSizeGuard {
   private static final int SYNC_LIMIT_BYTES = 1024;
 
   @Nullable Violation check(
-      StompCommand command, @Nullable String destination, int payloadLengthBytes) {
+      @Nullable StompCommand command, @Nullable String destination, int payloadLengthBytes) {
     if (command != StompCommand.SEND || destination == null) {
       return null;
     }
