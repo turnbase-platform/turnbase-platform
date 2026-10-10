@@ -18,6 +18,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
@@ -125,6 +126,65 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> afterLockout = login(username, "correct horse battery");
     assertThat(afterLockout.getStatusCode()).isEqualTo(HttpStatus.OK);
+  }
+
+  @Test
+  void tier1AdmitsNoMoreThanTheThresholdUnderConcurrentBadLogins() throws Exception {
+    bootApplication(
+        "--turnbase.rate-limit.auth.failures-before-lockout=5",
+        "--turnbase.rate-limit.auth.initial-lockout=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1000",
+        "--turnbase.rate-limit.minting.guest.capacity=1000");
+
+    String username = uniqueUsername();
+    register(username, uniqueEmail(), "correct horse battery", "correct horse battery");
+
+    int attempts = 40;
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newFixedThreadPool(attempts);
+    java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+    List<java.util.concurrent.Future<HttpStatusCode>> futures = new java.util.ArrayList<>();
+    for (int i = 0; i < attempts; i++) {
+      futures.add(
+          pool.submit(
+              () -> {
+                go.await();
+                return login(username, "wrong password").getStatusCode();
+              }));
+    }
+    go.countDown();
+    int unauthorized = 0;
+    int locked = 0;
+    for (var f : futures) {
+      HttpStatusCode status = f.get();
+      if (status.value() == 401) {
+        unauthorized++;
+      } else if (status.value() == 429) {
+        locked++;
+      }
+    }
+    pool.shutdown();
+
+    assertThat(unauthorized).isEqualTo(5);
+    assertThat(locked).isEqualTo(attempts - 5);
+  }
+
+  @Test
+  void tier1SuccessfulLoginsDoNotCountTowardTheLockout() {
+    bootApplication(
+        "--turnbase.rate-limit.auth.failures-before-lockout=2",
+        "--turnbase.rate-limit.auth.initial-lockout=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1000",
+        "--turnbase.rate-limit.minting.guest.capacity=1000");
+
+    String username = uniqueUsername();
+    register(username, uniqueEmail(), "correct horse battery", "correct horse battery");
+
+    for (int i = 0; i < 5; i++) {
+      assertThat(login(username, "correct horse battery").getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+    assertThat(login(username, "wrong").getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(login(username, "correct horse battery").getStatusCode()).isEqualTo(HttpStatus.OK);
   }
 
   @Test

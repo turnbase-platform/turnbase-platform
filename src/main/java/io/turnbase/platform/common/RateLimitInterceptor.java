@@ -11,10 +11,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -62,11 +64,50 @@ class RateLimitInterceptor implements HandlerInterceptor {
   private static final String AUTH_FAILURE_COUNT_PREFIX = "rate:auth:count:";
   private static final String AUTH_LOCKOUT_PREFIX = "rate:auth:lockout:";
 
+  private static final String AUTH_RESERVED_ATTRIBUTE =
+      RateLimitInterceptor.class.getName() + ".t1";
+
+  /** NFR-SEC-003: the counter (and so the escalation) resets after an hour with no failure. */
+  private static final Duration AUTH_FAILURE_COUNTER_TTL = Duration.ofHours(1);
+
+  /** NFR-SEC-003: the doubling stops at 15 minutes (never below the configured initial lockout). */
+  private static final Duration AUTH_LOCKOUT_CAP = Duration.ofMinutes(15);
+
   /**
-   * No decay window is stated for Tier 1 (unlike Tier 6's explicit one hour) — this is memory
-   * hygiene for the Redis key, generous enough never to interrupt an active escalation.
+   * KEYS: count, lockout. ARGV: threshold, initial ms, cap ms, max doublings, counter TTL s.
+   * Returns {0} when admitted, {1, remainingMillis} when locked out. The attempt that brings the
+   * count to the threshold or beyond sets the lockout at once, so concurrent arrivals are refused.
    */
-  private static final Duration AUTH_FAILURE_COUNTER_TTL = Duration.ofHours(24);
+  private static final DefaultRedisScript<List> AUTH_ADMIT =
+      new DefaultRedisScript<>(
+          """
+          local t = redis.call('TIME')
+          local now = t[1] * 1000 + math.floor(t[2] / 1000)
+          local until_ = tonumber(redis.call('GET', KEYS[2]))
+          if until_ and until_ > now then return {1, until_ - now} end
+          local c = redis.call('INCR', KEYS[1])
+          redis.call('EXPIRE', KEYS[1], ARGV[5])
+          local threshold = tonumber(ARGV[1])
+          if c >= threshold then
+            local d = math.min(c - threshold, tonumber(ARGV[4]))
+            local ms = math.min(tonumber(ARGV[2]) * 2 ^ d, tonumber(ARGV[3]))
+            ms = math.floor(ms)
+            redis.call('SET', KEYS[2], string.format('%d', now + ms), 'PX', ms)
+          end
+          return {0, 0}
+          """,
+          List.class);
+
+  /** KEYS: count, lockout. ARGV: threshold. Undoes one admission, and the lockout it set. */
+  private static final DefaultRedisScript<Long> AUTH_REFUND =
+      new DefaultRedisScript<>(
+          """
+          local c = redis.call('DECR', KEYS[1])
+          if c <= 0 then redis.call('DEL', KEYS[1]) end
+          if c < tonumber(ARGV[1]) then redis.call('DEL', KEYS[2]) end
+          return c
+          """,
+          Long.class);
 
   /**
    * Bounds the doubling shift so a very persistent attacker cannot overflow the lockout math; 2^40
@@ -107,15 +148,25 @@ class RateLimitInterceptor implements HandlerInterceptor {
     String path = pathOf(request);
 
     if (isTier1(method, path)) {
-      enforceAuthFailureLockout(request);
+      admitAuthAttempt(request);
     }
-    if (isTier5(method, path)) {
-      consumeMintingToken(request, path);
-    }
+    try {
+      if (isTier5(method, path)) {
+        consumeMintingToken(request, path);
+      }
 
-    Classification classification = classify(request, method, path);
-    if (classification != null) {
-      consumeGeneralBucket(request, response, classification);
+      Classification classification = classify(request, method, path);
+      if (classification != null) {
+        consumeGeneralBucket(request, response, classification);
+      }
+    } catch (RuntimeException e) {
+      // afterCompletion does not run when preHandle throws, so release the Tier 1 reservation here:
+      // a request refused by another tier never reached the credential check.
+      Object ip = request.getAttribute(AUTH_RESERVED_ATTRIBUTE);
+      if (ip instanceof String reserved) {
+        refundAuthAttempt(reserved);
+      }
+      throw e;
     }
     return true;
   }
@@ -129,10 +180,9 @@ class RateLimitInterceptor implements HandlerInterceptor {
     if (!properties.enabled()) {
       return;
     }
-    boolean failed = response.getStatus() >= 400;
-
-    if (failed && isTier1(request.getMethod(), pathOf(request))) {
-      recordAuthFailure(request);
+    if (request.getAttribute(AUTH_RESERVED_ATTRIBUTE) instanceof String ip
+        && response.getStatus() < 400) {
+      refundAuthAttempt(ip);
     }
 
     Object attribute = request.getAttribute(TIER5_BUCKET_ATTRIBUTE);
@@ -152,45 +202,43 @@ class RateLimitInterceptor implements HandlerInterceptor {
 
   // ---- Tier 1 — auth failures (IP, strict, doubling lockout) ----
 
-  private void enforceAuthFailureLockout(HttpServletRequest request) {
-    String lockKey = AUTH_LOCKOUT_PREFIX + ipResolver.resolve(request);
-    String lockedUntil = metrics.record(() -> stringRedisTemplate.opsForValue().get(lockKey));
-    if (lockedUntil == null) {
+  /**
+   * Admits one Tier 1 attempt, atomically. The attempt is counted at admission (refunded in {@link
+   * #afterCompletion} if it succeeds), so concurrent bad logins cannot each observe a sub-threshold
+   * count: the attempt that reaches the threshold sets the lockout in the same script, and every
+   * later arrival is refused.
+   */
+  private void admitAuthAttempt(HttpServletRequest request) {
+    String ip = ipResolver.resolve(request);
+    long initialMillis = properties.auth().initialLockout().toMillis();
+    List<?> result =
+        metrics.record(
+            () ->
+                stringRedisTemplate.execute(
+                    AUTH_ADMIT,
+                    List.of(AUTH_FAILURE_COUNT_PREFIX + ip, AUTH_LOCKOUT_PREFIX + ip),
+                    String.valueOf(properties.auth().failuresBeforeLockout()),
+                    String.valueOf(initialMillis),
+                    String.valueOf(Math.max(initialMillis, AUTH_LOCKOUT_CAP.toMillis())),
+                    String.valueOf(MAX_LOCKOUT_DOUBLINGS),
+                    String.valueOf(AUTH_FAILURE_COUNTER_TTL.toSeconds())));
+    if (result == null || Long.valueOf(0).equals(result.get(0))) {
+      request.setAttribute(AUTH_RESERVED_ATTRIBUTE, ip);
       return;
     }
-    long remainingMillis = Long.parseLong(lockedUntil) - System.currentTimeMillis();
-    if (remainingMillis > 0) {
-      throw new RateLimitExceededException(
-          "Too many failed attempts. Please wait before retrying.",
-          Math.ceilDiv(remainingMillis, 1000L));
-    }
+    throw new RateLimitExceededException(
+        "Too many failed attempts. Please wait before retrying.",
+        Math.ceilDiv((Long) result.get(1), 1000L));
   }
 
-  private void recordAuthFailure(HttpServletRequest request) {
-    String ip = ipResolver.resolve(request);
-    String countKey = AUTH_FAILURE_COUNT_PREFIX + ip;
-    Long failures = metrics.record(() -> stringRedisTemplate.opsForValue().increment(countKey));
+  /** A successful (or never-run) attempt does not count: undo its admission-time reservation. */
+  private void refundAuthAttempt(String ip) {
     metrics.record(
-        () -> {
-          stringRedisTemplate.expire(countKey, AUTH_FAILURE_COUNTER_TTL);
-          return null;
-        });
-    if (failures == null) {
-      return;
-    }
-    int threshold = properties.auth().failuresBeforeLockout();
-    if (failures < threshold) {
-      return;
-    }
-    long doublings = Math.min(failures - threshold, MAX_LOCKOUT_DOUBLINGS);
-    Duration lockout = properties.auth().initialLockout().multipliedBy(1L << doublings);
-    String lockKey = AUTH_LOCKOUT_PREFIX + ip;
-    long lockedUntil = System.currentTimeMillis() + lockout.toMillis();
-    metrics.record(
-        () -> {
-          stringRedisTemplate.opsForValue().set(lockKey, String.valueOf(lockedUntil), lockout);
-          return null;
-        });
+        () ->
+            stringRedisTemplate.execute(
+                AUTH_REFUND,
+                List.of(AUTH_FAILURE_COUNT_PREFIX + ip, AUTH_LOCKOUT_PREFIX + ip),
+                String.valueOf(properties.auth().failuresBeforeLockout())));
   }
 
   // ---- Tier 5 — account minting (IP, success-counting) ----
