@@ -27,6 +27,13 @@ public class LoginService {
   private final AccountRepository accountRepository;
   private final SessionService sessionService;
 
+  /**
+   * NFR-SEC-001: verified against when no account matches, so an absent identifier costs the same
+   * Argon2 work as a present one. Hashed once with the live encoder, so the cost parameters track
+   * {@code PasswordEncoderConfig}.
+   */
+  private final String dummyHash;
+
   LoginService(
       UsernamePolicy usernamePolicy,
       PasswordEncoder passwordEncoder,
@@ -36,6 +43,7 @@ public class LoginService {
     this.passwordEncoder = passwordEncoder;
     this.accountRepository = accountRepository;
     this.sessionService = sessionService;
+    this.dummyHash = passwordEncoder.encode("timing-equaliser-not-a-real-credential");
   }
 
   public LoginResult login(LoginRequest request, @Nullable String userAgentHash) {
@@ -43,14 +51,16 @@ public class LoginService {
     String skeleton = usernamePolicy.skeletonOfLoginIdentifier(canonicalIdentifier);
     String lowercasedEmail = canonicalIdentifier.toLowerCase(Locale.ROOT);
 
-    AccountRepository.Credential credential =
-        accountRepository
-            .findCredentialByIdentifier(skeleton, lowercasedEmail)
-            .orElseThrow(LoginService::invalidCredentials);
-
     // FR-AUTH-005/input-validation.md: the stored hash was computed from the canonicalized
     // password at registration, so verification must canonicalize the same way.
     String canonicalPassword = Canonicalizer.canonicalize(request.password());
+
+    AccountRepository.Credential credential =
+        accountRepository.findCredentialByIdentifier(skeleton, lowercasedEmail).orElse(null);
+    if (credential == null) {
+      passwordEncoder.matches(canonicalPassword, dummyHash);
+      throw invalidCredentials();
+    }
     if (!passwordEncoder.matches(canonicalPassword, credential.passwordHash())) {
       throw invalidCredentials();
     }
