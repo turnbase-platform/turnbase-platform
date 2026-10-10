@@ -1,7 +1,5 @@
 package io.turnbase.platform.game;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -9,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The one thing the platform retains per session (FR-DELIVER-003, FR-LOG-004): {@code log} effect
@@ -25,9 +25,9 @@ public class GameLogStore {
   public record Entry(long sequence, int index, String entry) {}
 
   private final StringRedisTemplate redis;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
-  GameLogStore(StringRedisTemplate redis, ObjectMapper objectMapper) {
+  GameLogStore(StringRedisTemplate redis, JsonMapper objectMapper) {
     this.redis = redis;
     this.objectMapper = objectMapper;
   }
@@ -37,7 +37,7 @@ public class GameLogStore {
     try {
       redis.opsForList().rightPush(key, objectMapper.writeValueAsString(entry));
       redis.expire(key, HostRegistry.KEY_TTL);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("log entry is not serialisable", e);
     }
   }
@@ -52,7 +52,7 @@ public class GameLogStore {
     for (String json : raw) {
       try {
         entries.add(objectMapper.readValue(json, Entry.class));
-      } catch (JsonProcessingException e) {
+      } catch (JacksonException e) {
         log.warn("sessionId={} unreadable game-log entry skipped", sessionId);
       }
     }

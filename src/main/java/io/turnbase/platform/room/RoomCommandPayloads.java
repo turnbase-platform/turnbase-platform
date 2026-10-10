@@ -1,8 +1,8 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Map;
 import java.util.UUID;
+import tools.jackson.databind.JsonNode;
 
 /**
  * {@code room-websocket.md} § Client→Server Command Catalogue — required-field extraction from a

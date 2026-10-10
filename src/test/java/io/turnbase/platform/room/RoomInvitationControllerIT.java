@@ -2,7 +2,6 @@ package io.turnbase.platform.room;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.util.List;
@@ -23,6 +22,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-invitation-rest-api.md} §§2-4 end to end: send (host-only, friends-only, idempotent),
@@ -31,7 +31,7 @@ import org.springframework.web.client.RestTemplate;
  */
 class RoomInvitationControllerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private @Nullable ConfigurableApplicationContext context;

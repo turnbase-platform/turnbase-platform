@@ -1,7 +1,5 @@
 package io.turnbase.platform.account;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.RateLimitMetrics;
 import io.turnbase.platform.session.AuthProperties;
 import java.time.Duration;
@@ -9,6 +7,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code oauth-rest-api.md} §7a — the Redis record {@code /auth/callback} leaves for the settings
@@ -23,13 +23,13 @@ class PendingGoogleLink {
   private static final String REDIS_KEY_PREFIX = "oauth:link:";
 
   private final StringRedisTemplate redis;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final RateLimitMetrics metrics;
   private final Duration ttl;
 
   PendingGoogleLink(
       StringRedisTemplate redis,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       RateLimitMetrics metrics,
       AuthProperties authProperties) {
     this.redis = redis;
@@ -68,7 +68,7 @@ class PendingGoogleLink {
   private String serialize(Record record) {
     try {
       return objectMapper.writeValueAsString(record);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("could not serialize an oauth link record", e);
     }
   }
@@ -76,7 +76,7 @@ class PendingGoogleLink {
   private Record deserialize(String json) {
     try {
       return objectMapper.readValue(json, Record.class);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("corrupt oauth link record in redis", e);
     }
   }

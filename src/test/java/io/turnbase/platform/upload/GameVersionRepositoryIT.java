@@ -2,7 +2,6 @@ package io.turnbase.platform.upload;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -15,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code bundle-format.md} §5.4's activation transaction, exercised directly against the repository
@@ -39,7 +39,7 @@ class GameVersionRepositoryIT extends PostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     jdbcClient = JdbcClient.create(dataSource);
-    repository = new GameVersionRepository(jdbcClient, new ObjectMapper());
+    repository = new GameVersionRepository(jdbcClient, JsonMapper.builder().build());
   }
 
   @BeforeEach

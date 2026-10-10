@@ -2,7 +2,6 @@ package io.turnbase.platform.room;
 
 import static io.turnbase.platform.room.RoomCommandPayloads.requireBoolean;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.security.Principal;
@@ -13,6 +12,7 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-websocket.md} § Member Commands — {@code /app/room.{roomId}.member}. One handler
@@ -31,13 +31,13 @@ class RoomMemberCommandController {
   private final RoomService roomService;
   private final SimpMessagingTemplate messagingTemplate;
   private final RoomCommandErrorSender errors;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
   RoomMemberCommandController(
       RoomService roomService,
       SimpMessagingTemplate messagingTemplate,
       RoomCommandErrorSender errors,
-      ObjectMapper objectMapper) {
+      JsonMapper objectMapper) {
     this.roomService = roomService;
     this.messagingTemplate = messagingTemplate;
     this.errors = errors;

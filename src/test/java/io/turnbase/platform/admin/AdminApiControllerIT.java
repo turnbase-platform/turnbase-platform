@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import io.turnbase.platform.upload.TestBundles;
@@ -33,6 +32,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code admin-rest-api.md} end to end, against IMP-M4-05's own Done-when clause: the admin API
@@ -46,7 +46,7 @@ class AdminApiControllerIT extends PostgresIntegrationTest {
   private static final String ADMIN_USERNAME = "admin";
   private static final String ADMIN_PASSWORD = "admin";
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private @Nullable ConfigurableApplicationContext context;

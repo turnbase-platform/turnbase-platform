@@ -2,7 +2,6 @@ package io.turnbase.platform.room;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.util.List;
@@ -33,6 +32,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code IMP-M2-02}'s room-specific half, end to end on a real STOMP client: a member's {@code
@@ -46,7 +46,7 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
  */
 class RoomSubscriptionAuthorizerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private @Nullable ConfigurableApplicationContext context;

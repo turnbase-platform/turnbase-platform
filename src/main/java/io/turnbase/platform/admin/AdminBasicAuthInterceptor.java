@@ -1,6 +1,5 @@
 package io.turnbase.platform.admin;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.ProblemType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -12,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.servlet.HandlerInterceptor;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code admin-rest-api.md} §2 — HTTP Basic against the single static credential pair, all or
@@ -25,9 +25,9 @@ class AdminBasicAuthInterceptor implements HandlerInterceptor {
   private static final String REALM_HEADER_VALUE = "Basic realm=\"turnbase-admin\"";
 
   private final AdminProperties adminProperties;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
-  AdminBasicAuthInterceptor(AdminProperties adminProperties, ObjectMapper objectMapper) {
+  AdminBasicAuthInterceptor(AdminProperties adminProperties, JsonMapper objectMapper) {
     this.adminProperties = adminProperties;
     this.objectMapper = objectMapper;
   }

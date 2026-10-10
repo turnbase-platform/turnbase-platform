@@ -2,7 +2,6 @@ package io.turnbase.platform.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
@@ -32,6 +31,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code IMP-M1-11}'s own Done-when clause, end to end: the account representation, the three
@@ -42,7 +42,7 @@ class AuthMethodControllerIT extends PostgresIntegrationTest {
 
   private static final String PASSWORD = "correct horse battery";
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final HttpClient httpClient =
       HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
 

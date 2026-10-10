@@ -5,8 +5,6 @@ import static io.turnbase.platform.room.RoomCommandPayloads.requireObject;
 import static io.turnbase.platform.room.RoomCommandPayloads.requireString;
 import static io.turnbase.platform.room.RoomCommandPayloads.requireUuid;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.security.Principal;
@@ -17,6 +15,8 @@ import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Controller;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-websocket.md} § Host Commands — {@code /app/room.{roomId}.host}. {@code IMP-M2-05}'s
@@ -36,10 +36,10 @@ class RoomHostCommandController {
 
   private final RoomService roomService;
   private final RoomCommandErrorSender errors;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
   RoomHostCommandController(
-      RoomService roomService, RoomCommandErrorSender errors, ObjectMapper objectMapper) {
+      RoomService roomService, RoomCommandErrorSender errors, JsonMapper objectMapper) {
     this.roomService = roomService;
     this.errors = errors;
     this.objectMapper = objectMapper;
@@ -103,9 +103,7 @@ class RoomHostCommandController {
       case "CHANGE_PARAMETERS" -> {
         JsonNode parameters = requireObject(payload, "parameters");
         Map<String, JsonNode> requested = new LinkedHashMap<>();
-        parameters
-            .fields()
-            .forEachRemaining(entry -> requested.put(entry.getKey(), entry.getValue()));
+        parameters.properties().forEach(entry -> requested.put(entry.getKey(), entry.getValue()));
         roomService.changeParameters(roomId, hostUserId, requested);
       }
       case "START_GAME" -> roomService.startGame(roomId, hostUserId);

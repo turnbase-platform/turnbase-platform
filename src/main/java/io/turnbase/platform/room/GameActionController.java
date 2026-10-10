@@ -1,7 +1,5 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import io.turnbase.grpc.gamehost.v1.ActionInput;
 import io.turnbase.grpc.gamehost.v1.PlayerRef;
@@ -19,6 +17,8 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code websocket.md} § {@code SUBMIT_ACTION} — {@code /app/game.{sessionId}.action}, the acting
@@ -43,13 +43,13 @@ class GameActionController {
   private final RoomRepository repository;
   private final GameInputService inputs;
   private final SimpMessagingTemplate messagingTemplate;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
   GameActionController(
       RoomRepository repository,
       GameInputService inputs,
       SimpMessagingTemplate messagingTemplate,
-      ObjectMapper objectMapper) {
+      JsonMapper objectMapper) {
     this.repository = repository;
     this.inputs = inputs;
     this.messagingTemplate = messagingTemplate;
@@ -92,7 +92,7 @@ class GameActionController {
       payload =
           ByteString.copyFrom(
               objectMapper.writeValueAsBytes(envelope.payloadOrEmpty(objectMapper)));
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       error(principal, sessionId, envelope, "VALIDATION_FAILED", "The action payload is invalid.");
       return;
     }

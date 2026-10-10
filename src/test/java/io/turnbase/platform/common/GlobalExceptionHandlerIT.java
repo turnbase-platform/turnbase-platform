@@ -2,7 +2,6 @@ package io.turnbase.platform.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.util.List;
@@ -21,6 +20,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Boots the real application ({@code IMP-M1-01}'s own harness controller, {@link
@@ -33,7 +33,7 @@ class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
 
   private static final String PROBLEM_BASE = "https://turnbase.io/errors/";
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   // The JDK's legacy HttpURLConnection-backed default request factory silently drops the
   // response body on a 401 (a known JDK quirk in its built-in auth-challenge handling); the
   // java.net.http-backed factory does not have this problem.

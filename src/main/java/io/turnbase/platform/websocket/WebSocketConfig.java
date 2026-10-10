@@ -1,8 +1,11 @@
 package io.turnbase.platform.websocket;
 
+import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.messaging.converter.JacksonJsonMessageConverter;
+import org.springframework.messaging.converter.MessageConverter;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.TaskScheduler;
@@ -11,6 +14,7 @@ import org.springframework.util.AntPathMatcher;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code websocket.md} § Connection: STOMP over WebSocket at {@code /ws}, no SockJS — modern
@@ -30,6 +34,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   private final WebSocketChannelInterceptor channelInterceptor;
   private final WebSocketTraceInterceptor traceInterceptor;
+  private final JsonMapper jsonMapper;
 
   /**
    * {@code @Lazy}: this configurer is itself a dependency of {@code
@@ -42,7 +47,9 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
    */
   WebSocketConfig(
       @Lazy WebSocketChannelInterceptor channelInterceptor,
-      WebSocketTraceInterceptor traceInterceptor) {
+      WebSocketTraceInterceptor traceInterceptor,
+      JsonMapper jsonMapper) {
+    this.jsonMapper = jsonMapper;
     this.traceInterceptor = traceInterceptor;
     this.channelInterceptor = channelInterceptor;
   }
@@ -61,6 +68,16 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         .setTaskScheduler(heartbeatTaskScheduler());
     registry.setApplicationDestinationPrefixes("/app");
     registry.setPreservePublishOrder(true);
+  }
+
+  /**
+   * STOMP frames are written by the platform's mapper, not by a converter Spring builds for itself:
+   * the wire format of a frame is then pinned in {@code JacksonConfig} like every other body.
+   */
+  @Override
+  public boolean configureMessageConverters(List<MessageConverter> converters) {
+    converters.add(new JacksonJsonMessageConverter(jsonMapper));
+    return false;
   }
 
   @Override

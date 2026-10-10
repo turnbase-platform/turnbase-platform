@@ -1,7 +1,5 @@
 package io.turnbase.platform.game;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.turnbase.grpc.gamehost.v1.Effect;
@@ -15,6 +13,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code game-host-internals.md} §10 / {@code websocket.md} § {@code GAME_EVENT}: resolves each
@@ -38,14 +39,14 @@ class EffectFanOut implements EffectDelivery {
   private final SimpMessagingTemplate messagingTemplate;
   private final SessionRosterSource rosters;
   private final MeterRegistry meterRegistry;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final GameLogStore logStore;
 
   EffectFanOut(
       SimpMessagingTemplate messagingTemplate,
       SessionRosterSource rosters,
       MeterRegistry meterRegistry,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       GameLogStore logStore) {
     this.messagingTemplate = messagingTemplate;
     this.rosters = rosters;
@@ -190,7 +191,7 @@ class EffectFanOut implements EffectDelivery {
     }
     try {
       return objectMapper.readTree(payload.toByteArray());
-    } catch (java.io.IOException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("effect payload is not JSON", e);
     }
   }

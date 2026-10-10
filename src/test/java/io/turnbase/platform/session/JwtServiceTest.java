@@ -3,7 +3,6 @@ package io.turnbase.platform.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -13,6 +12,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.env.MockEnvironment;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * secrets-and-configuration.md §3.2/§3.3: a token issued under a key that is later retired must
@@ -21,7 +21,7 @@ import org.springframework.mock.env.MockEnvironment;
  */
 class JwtServiceTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
 
   private JwtKeySetManager newManager(JwtKeySet initial, Path tmp) {
     AuthProperties properties =

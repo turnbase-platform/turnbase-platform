@@ -1,7 +1,5 @@
 package io.turnbase.platform.websocket;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.turnbase.platform.common.AuthenticatedUser;
@@ -24,6 +22,8 @@ import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Every live STOMP session, keyed by its session id — the mechanism behind three of this item's
@@ -42,7 +42,7 @@ public class WebSocketConnectionRegistry {
   private final Map<String, AuthenticatedUser> connections = new ConcurrentHashMap<>();
   private final Map<UUID, Set<String>> sessionIdsByUser = new ConcurrentHashMap<>();
   private final MessageChannel clientOutboundChannel;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
   /**
    * {@code clientOutboundChannel} is {@code @Lazy}: eagerly resolving it here would force Spring to
@@ -54,7 +54,7 @@ public class WebSocketConnectionRegistry {
    */
   WebSocketConnectionRegistry(
       @Qualifier("clientOutboundChannel") @Lazy MessageChannel clientOutboundChannel,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       MeterRegistry meterRegistry) {
     this.clientOutboundChannel = clientOutboundChannel;
     this.objectMapper = objectMapper;
@@ -145,7 +145,7 @@ public class WebSocketConnectionRegistry {
           .writeValueAsString(
               Map.of("type", "ERROR", "payload", Map.of("code", code, "message", message)))
           .getBytes(StandardCharsets.UTF_8);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       return message.getBytes(StandardCharsets.UTF_8);
     }
   }

@@ -1,8 +1,5 @@
 package io.turnbase.platform.history;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;
@@ -13,6 +10,9 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 /** {@code data-model-history.md} §1–§3: the recording writes and the profile tab's read. */
 @Repository
@@ -21,9 +21,9 @@ class HistoryRepository {
   private static final TypeReference<Map<String, Object>> STATS = new TypeReference<>() {};
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
-  HistoryRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  HistoryRepository(JdbcClient jdbcClient, JsonMapper objectMapper) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
   }
@@ -240,7 +240,7 @@ class HistoryRepository {
   private String json(Map<String, String> map) {
     try {
       return objectMapper.writeValueAsString(map);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("stats map is not serializable", e);
     }
   }
@@ -248,7 +248,7 @@ class HistoryRepository {
   private Map<String, Object> parse(String json) {
     try {
       return objectMapper.readValue(json, STATS);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("stored stats are not a JSON object", e);
     }
   }

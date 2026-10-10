@@ -2,7 +2,6 @@ package io.turnbase.platform.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.lang.reflect.Type;
@@ -35,6 +34,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-chat-websocket.md} end to end on real STOMP clients: room-channel broadcast excludes
@@ -45,7 +45,7 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
  */
 class ChatControllerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private @Nullable ConfigurableApplicationContext context;

@@ -1,7 +1,5 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.game.GameSessionService;
@@ -21,6 +19,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code data-model.md} §§1-3 ({@code room}, {@code room_participant}, {@code room_team}) and
@@ -33,14 +33,14 @@ import org.springframework.transaction.annotation.Transactional;
 class RoomRepository {
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final RoomInvitationRepository invitationRepository;
 
   private final ApplicationEventPublisher events;
 
   RoomRepository(
       JdbcClient jdbcClient,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       RoomInvitationRepository invitationRepository,
       ApplicationEventPublisher events) {
     this.events = events;

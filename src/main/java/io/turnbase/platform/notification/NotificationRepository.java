@@ -1,7 +1,5 @@
 package io.turnbase.platform.notification;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Comparator;
@@ -13,6 +11,8 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Direct SQL against {@code notification} ({@code data-model-notifications.md} §1) — this package
@@ -23,9 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 class NotificationRepository {
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
-  NotificationRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  NotificationRepository(JdbcClient jdbcClient, JsonMapper objectMapper) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
   }

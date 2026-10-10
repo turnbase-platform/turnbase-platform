@@ -2,7 +2,6 @@ package io.turnbase.platform.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.io.BufferedReader;
@@ -38,6 +37,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code notification-rest-api.md} §§2-6's five endpoints, plus {@code sse-notifications.md}'s
@@ -45,7 +45,7 @@ import org.springframework.web.client.RestTemplate;
  */
 class NotificationControllerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private @Nullable ConfigurableApplicationContext context;

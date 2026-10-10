@@ -10,7 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.grpc.gamehost.v1.PlayerRef;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.game.GameLogStore;
@@ -24,10 +23,11 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 class GameSyncControllerTest {
 
-  private final ObjectMapper mapper = new ObjectMapper();
+  private final JsonMapper mapper = JsonMapper.builder().build();
   private final RoomRepository repository = mock(RoomRepository.class);
   private final GameSyncService sync = mock(GameSyncService.class);
   private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);

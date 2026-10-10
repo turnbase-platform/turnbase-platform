@@ -1,6 +1,5 @@
 package io.turnbase.platform.seed;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.UsernameSkeleton;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -10,6 +9,7 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Direct SQL against another feature's tables — {@code local-environment.md} §6: every statement is
@@ -20,9 +20,9 @@ import org.springframework.stereotype.Repository;
 class SeedRepository {
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
-  SeedRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  SeedRepository(JdbcClient jdbcClient, JsonMapper objectMapper) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
   }

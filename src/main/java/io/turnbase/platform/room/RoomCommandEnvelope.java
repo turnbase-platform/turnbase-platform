@@ -1,8 +1,8 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-websocket.md} § Message Envelope — the client→server command frame on {@code
@@ -14,7 +14,7 @@ import org.jspecify.annotations.Nullable;
 record RoomCommandEnvelope(
     String type, @Nullable String correlationId, @Nullable JsonNode payload) {
 
-  JsonNode payloadOrEmpty(ObjectMapper objectMapper) {
+  JsonNode payloadOrEmpty(JsonMapper objectMapper) {
     return payload != null ? payload : objectMapper.createObjectNode();
   }
 }

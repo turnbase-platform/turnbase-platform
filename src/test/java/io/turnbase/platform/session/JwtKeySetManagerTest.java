@@ -3,7 +3,6 @@ package io.turnbase.platform.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -12,10 +11,11 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.env.MockEnvironment;
+import tools.jackson.databind.json.JsonMapper;
 
 class JwtKeySetManagerTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
 
   private JwtKeySetManager managerFor(JwtKeySet initial, Path keyFile, boolean required) {
     AuthProperties properties =

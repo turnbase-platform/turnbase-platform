@@ -1,6 +1,5 @@
 package io.turnbase.platform.upload;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.turnbase.bundle.ArchiveEntry;
 import io.turnbase.bundle.ArchiveReadResult;
 import io.turnbase.platform.common.CheckError;
@@ -14,6 +13,8 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code bundle-format.md} §5 — Phase G. Unpacks to two object-store trees under a deny list
@@ -29,8 +30,11 @@ class PublicationService {
 
   private final ArtifactStore artifactStore;
   private final GameVersionRepository repository;
+  private final JsonMapper jsonMapper;
 
-  PublicationService(ArtifactStore artifactStore, GameVersionRepository repository) {
+  PublicationService(
+      ArtifactStore artifactStore, GameVersionRepository repository, JsonMapper jsonMapper) {
+    this.jsonMapper = jsonMapper;
     this.artifactStore = artifactStore;
     this.repository = repository;
   }
@@ -43,7 +47,6 @@ class PublicationService {
       UUID gameId,
       UUID versionId,
       String version,
-      JsonNode manifest,
       String manifestJson,
       String gdkApiVersion,
       ArchiveReadResult archive,
@@ -98,14 +101,7 @@ class PublicationService {
 
     GameVersionRepository.ActivationRequest request =
         buildActivationRequest(
-            gameId,
-            versionId,
-            version,
-            manifest,
-            manifestJson,
-            gdkApiVersion,
-            archive,
-            infoDocPath);
+            gameId, versionId, version, manifestJson, gdkApiVersion, archive, infoDocPath);
     Optional<GameVersionRepository.ActivationOutcome> outcome = repository.activate(request);
     if (outcome.isEmpty()) {
       return new Outcome(
@@ -124,11 +120,11 @@ class PublicationService {
       UUID gameId,
       UUID versionId,
       String version,
-      JsonNode manifest,
       String manifestJson,
       String gdkApiVersion,
       ArchiveReadResult archive,
       @Nullable String infoDocPath) {
+    JsonNode manifest = jsonMapper.readTree(manifestJson);
     int minPlayers = 0;
     int maxPlayers = 0;
     for (JsonNode template : manifest.path("teamTemplates")) {

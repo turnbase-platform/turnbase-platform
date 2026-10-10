@@ -128,7 +128,6 @@ class BundleValidationService {
             gameId,
             versionId,
             row.version(),
-            bundle.manifest(),
             bundle.manifestText(),
             bundle.gdkApiVersion(),
             bundle.archive(),

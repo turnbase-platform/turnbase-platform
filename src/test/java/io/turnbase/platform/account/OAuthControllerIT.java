@@ -2,7 +2,6 @@ package io.turnbase.platform.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
@@ -25,6 +24,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code oauth-rest-api.md} — the full round trip against a real application boot and Postgres, a
@@ -35,7 +35,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  */
 class OAuthControllerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final HttpClient httpClient =
       HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
 

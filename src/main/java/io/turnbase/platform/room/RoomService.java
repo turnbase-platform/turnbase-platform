@@ -1,6 +1,5 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.GameFrontendProperties;
 import io.turnbase.platform.common.LifecycleLog;
@@ -19,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 /**
  * {@code room-rest-api.md} — the five membership endpoints, orchestrating {@link RoomRepository}'s

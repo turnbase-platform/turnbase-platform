@@ -9,7 +9,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.grpc.gamehost.v1.ActionInput;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.game.GameInputService;
@@ -19,10 +18,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 class GameActionControllerTest {
 
-  private final ObjectMapper mapper = new ObjectMapper();
+  private final JsonMapper mapper = JsonMapper.builder().build();
   private final RoomRepository repository = mock(RoomRepository.class);
   private final GameInputService inputs = mock(GameInputService.class);
   private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);

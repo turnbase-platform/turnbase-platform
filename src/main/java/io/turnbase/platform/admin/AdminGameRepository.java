@@ -1,6 +1,5 @@
 package io.turnbase.platform.admin;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.notification.NotificationPersistedEvent;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -13,6 +12,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Direct SQL against {@code game}, {@code game_review}, {@code app_user} and {@code notification} —
@@ -29,11 +29,11 @@ class AdminGameRepository {
   private static final String TYPE_GAME_REJECTED = "GAME_REJECTED";
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final ApplicationEventPublisher eventPublisher;
 
   AdminGameRepository(
-      JdbcClient jdbcClient, ObjectMapper objectMapper, ApplicationEventPublisher eventPublisher) {
+      JdbcClient jdbcClient, JsonMapper objectMapper, ApplicationEventPublisher eventPublisher) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
     this.eventPublisher = eventPublisher;

@@ -1,6 +1,5 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.ForbiddenException;
 import io.turnbase.platform.common.NotFoundException;
@@ -15,6 +14,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-invitation-rest-api.md} §§2-4 and {@code data-model-notifications.md} §2 ({@code
@@ -29,11 +29,11 @@ class RoomInvitationRepository {
   private static final String TYPE_ROOM_INVITATION = "ROOM_INVITATION";
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final ApplicationEventPublisher eventPublisher;
 
   RoomInvitationRepository(
-      JdbcClient jdbcClient, ObjectMapper objectMapper, ApplicationEventPublisher eventPublisher) {
+      JdbcClient jdbcClient, JsonMapper objectMapper, ApplicationEventPublisher eventPublisher) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
     this.eventPublisher = eventPublisher;

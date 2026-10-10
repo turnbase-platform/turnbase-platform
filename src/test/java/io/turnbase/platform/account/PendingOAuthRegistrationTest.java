@@ -10,7 +10,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.turnbase.platform.common.RateLimitMetrics;
 import io.turnbase.platform.session.AuthProperties;
@@ -20,6 +19,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import tools.jackson.databind.json.JsonMapper;
 
 /** {@code oauth-rest-api.md} §2 — the Redis-backed pending-registration bridge. */
 class PendingOAuthRegistrationTest {
@@ -28,7 +28,7 @@ class PendingOAuthRegistrationTest {
   private final ValueOperations<String, String> valueOps = mock(ValueOperations.class);
 
   private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
-  private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RateLimitMetrics metrics = new RateLimitMetrics(new SimpleMeterRegistry());
   private final AuthProperties authProperties =
       new AuthProperties(

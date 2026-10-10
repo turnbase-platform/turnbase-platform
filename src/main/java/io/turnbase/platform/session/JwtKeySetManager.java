@@ -1,6 +1,5 @@
 package io.turnbase.platform.session;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The mutable half of the key set {@link JwtKeySetConfig} resolves at startup —
@@ -34,7 +34,7 @@ public class JwtKeySetManager {
   private static final int SECRET_BYTES = 32;
 
   private final AtomicReference<JwtKeySet> current;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final Path localKeyFile;
   private final boolean persistToFile;
 
@@ -42,7 +42,7 @@ public class JwtKeySetManager {
       JwtKeySet initial,
       AuthProperties properties,
       Environment environment,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       Path localKeyFile) {
     this.current = new AtomicReference<>(initial);
     this.objectMapper = objectMapper;
@@ -125,7 +125,7 @@ public class JwtKeySetManager {
         JwtKeySet initial,
         AuthProperties properties,
         Environment environment,
-        ObjectMapper objectMapper) {
+        JsonMapper objectMapper) {
       return new JwtKeySetManager(
           initial, properties, environment, objectMapper, JwtKeySetConfig.LOCAL_KEY_FILE);
     }

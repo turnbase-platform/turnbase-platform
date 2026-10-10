@@ -10,7 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.turnbase.grpc.gamehost.v1.BroadcastEffect;
@@ -28,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /** {@code websocket.md} § {@code GAME_EVENT}: every effect address is validated at fan-out. */
 class EffectFanOutTest {
@@ -37,7 +37,7 @@ class EffectFanOutTest {
   private final GameLogStore logStore = mock(GameLogStore.class);
   private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
   private final EffectFanOut fanOut =
-      new EffectFanOut(template, rosters, meters, new ObjectMapper(), logStore);
+      new EffectFanOut(template, rosters, meters, JsonMapper.builder().build(), logStore);
 
   private final UUID sessionId = UUID.randomUUID();
   private final UUID alice = UUID.randomUUID();

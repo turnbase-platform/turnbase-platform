@@ -1,6 +1,5 @@
 package io.turnbase.platform.social;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.ConflictException;
 import io.turnbase.platform.common.ForbiddenException;
@@ -21,6 +20,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code data-model-social.md} §§1-3 (`friendship`, `friend_request`) and {@code
@@ -39,11 +39,11 @@ class SocialRepository {
   private static final String TYPE_FRIEND_ADDED = "FRIEND_ADDED";
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final ApplicationEventPublisher eventPublisher;
 
   SocialRepository(
-      JdbcClient jdbcClient, ObjectMapper objectMapper, ApplicationEventPublisher eventPublisher) {
+      JdbcClient jdbcClient, JsonMapper objectMapper, ApplicationEventPublisher eventPublisher) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
     this.eventPublisher = eventPublisher;

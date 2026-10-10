@@ -1,7 +1,5 @@
 package io.turnbase.platform.account;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.common.RateLimitMetrics;
 import io.turnbase.platform.session.AuthProperties;
 import java.time.Duration;
@@ -10,6 +8,8 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code oauth-rest-api.md} §2 — the Redis-backed bridge between {@code /auth/callback} and the
@@ -24,13 +24,13 @@ class PendingOAuthRegistration {
   private static final String REDIS_KEY_PREFIX = "oauth:pending:";
 
   private final StringRedisTemplate redis;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
   private final RateLimitMetrics metrics;
   private final Duration ttl;
 
   PendingOAuthRegistration(
       StringRedisTemplate redis,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       RateLimitMetrics metrics,
       AuthProperties authProperties) {
     this.redis = redis;
@@ -93,7 +93,7 @@ class PendingOAuthRegistration {
   private String serialize(Record record) {
     try {
       return objectMapper.writeValueAsString(record);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("could not serialize an oauth pending record", e);
     }
   }
@@ -101,7 +101,7 @@ class PendingOAuthRegistration {
   private Record deserialize(String json) {
     try {
       return objectMapper.readValue(json, Record.class);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("corrupt oauth pending record in redis", e);
     }
   }

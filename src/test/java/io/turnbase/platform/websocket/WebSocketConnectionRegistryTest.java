@@ -8,13 +8,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.session.SessionRevokedEvent;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.MessageChannel;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The connection cap ({@code rate-limiting.md} § Tier 6), the active-connections gauge, and closing
@@ -25,7 +25,7 @@ class WebSocketConnectionRegistryTest {
   private final MessageChannel clientOutboundChannel = mock(MessageChannel.class);
   private final WebSocketConnectionRegistry registry =
       new WebSocketConnectionRegistry(
-          clientOutboundChannel, new ObjectMapper(), new SimpleMeterRegistry());
+          clientOutboundChannel, JsonMapper.builder().build(), new SimpleMeterRegistry());
 
   {
     when(clientOutboundChannel.send(any())).thenReturn(true);

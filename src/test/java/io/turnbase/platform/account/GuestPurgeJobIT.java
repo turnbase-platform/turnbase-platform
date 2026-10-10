@@ -2,7 +2,6 @@ package io.turnbase.platform.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import io.turnbase.platform.session.SessionRevokedEvent;
@@ -24,6 +23,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code IMP-M1-05}'s two-phase purge ({@code data-model-accounts.md} §1, FR-GUEST-005, {@code
@@ -34,7 +34,7 @@ import org.springframework.web.client.RestTemplate;
  */
 class GuestPurgeJobIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private ConfigurableApplicationContext context;

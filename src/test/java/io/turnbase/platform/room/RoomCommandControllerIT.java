@@ -2,7 +2,6 @@ package io.turnbase.platform.room;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -49,6 +48,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code room-websocket.md}'s Client→Server Command Catalogue, end to end on real STOMP clients:
@@ -60,7 +60,7 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
  */
 class RoomCommandControllerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private @Nullable ConfigurableApplicationContext context;

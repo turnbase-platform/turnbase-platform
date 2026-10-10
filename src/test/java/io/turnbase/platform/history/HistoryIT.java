@@ -2,7 +2,6 @@ package io.turnbase.platform.history;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import io.turnbase.platform.game.GameOutcomeRecorder;
@@ -28,6 +27,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code IMP-M5-01}: the recording transaction ({@code flows/06} §B–C) and {@code GET
@@ -35,7 +35,7 @@ import org.springframework.web.client.RestTemplate;
  */
 class HistoryIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private ConfigurableApplicationContext context;

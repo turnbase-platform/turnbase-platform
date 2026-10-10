@@ -1,7 +1,5 @@
 package io.turnbase.platform.game;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.turnbase.grpc.gamehost.v1.GameHostServiceGrpc;
@@ -10,7 +8,6 @@ import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.grpc.gamehost.v1.ResyncRequest;
 import io.turnbase.grpc.gamehost.v1.ResyncResponse;
 import io.turnbase.grpc.gamehost.v1.ViewerRole;
-import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,6 +17,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The read-only catch-up path ({@code websocket.md} § Catch-up: the sync flow): ask the routed Game
@@ -48,7 +48,7 @@ public class GameSyncService {
   private final StringRedisTemplate redis;
   private final OrchestrationProperties properties;
   private final GameLogStore logStore;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
   GameSyncService(
       HostRegistry registry,
@@ -56,7 +56,7 @@ public class GameSyncService {
       StringRedisTemplate redis,
       OrchestrationProperties properties,
       GameLogStore logStore,
-      ObjectMapper objectMapper) {
+      JsonMapper objectMapper) {
     this.registry = registry;
     this.channels = channels;
     this.redis = redis;
@@ -115,7 +115,7 @@ public class GameSyncService {
     try {
       JsonNode view = objectMapper.readTree(response.getView().toByteArray());
       return view == null || view.isNull() ? objectMapper.createObjectNode() : view;
-    } catch (IOException e) {
+    } catch (JacksonException e) {
       throw new ResyncFailedException("onResync returned a view that is not JSON");
     }
   }

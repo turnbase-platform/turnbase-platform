@@ -2,7 +2,6 @@ package io.turnbase.platform.upload;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import java.net.URI;
 import java.sql.Timestamp;
@@ -19,6 +18,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code bundle-format.md} §7.2's sweep duties 1, 3 and 4 — duty 2 (the lease-expiry fix for a
@@ -42,7 +42,7 @@ class UploadSlotCleanupJobIT extends PostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     jdbcClient = JdbcClient.create(dataSource);
-    repository = new GameVersionRepository(jdbcClient, new ObjectMapper());
+    repository = new GameVersionRepository(jdbcClient, JsonMapper.builder().build());
 
     ArtifactStoreProperties properties =
         new ArtifactStoreProperties(

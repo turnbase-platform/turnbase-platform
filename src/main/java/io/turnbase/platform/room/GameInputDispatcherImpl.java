@@ -1,7 +1,5 @@
 package io.turnbase.platform.room;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.grpc.gamehost.v1.PlayerLeftInput;
 import io.turnbase.grpc.gamehost.v1.PlayerLeftReason;
 import io.turnbase.grpc.gamehost.v1.PlayerRef;
@@ -11,6 +9,8 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The real {@link GameInputDispatcher}: turns a {@code player_left} outbox payload into {@code
@@ -24,10 +24,10 @@ class GameInputDispatcherImpl implements GameInputDispatcher {
 
   private final GameInputService inputs;
   private final RoomRepository repository;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
   GameInputDispatcherImpl(
-      GameInputService inputs, RoomRepository repository, ObjectMapper objectMapper) {
+      GameInputService inputs, RoomRepository repository, JsonMapper objectMapper) {
     this.inputs = inputs;
     this.repository = repository;
     this.objectMapper = objectMapper;

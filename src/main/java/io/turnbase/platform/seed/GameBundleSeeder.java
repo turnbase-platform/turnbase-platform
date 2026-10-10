@@ -19,6 +19,7 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code local-environment.md} §6: every {@code <gameId>.zip} in {@code turnbase.seed.bundles-dir}
@@ -124,7 +125,7 @@ class GameBundleSeeder {
     try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zip))) {
       for (var entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
         if (entry.getName().equals("manifest.json")) {
-          var manifest = new com.fasterxml.jackson.databind.ObjectMapper().readTree(in);
+          var manifest = JsonMapper.builder().build().readTree(in);
           return manifest.path("version").asText();
         }
       }

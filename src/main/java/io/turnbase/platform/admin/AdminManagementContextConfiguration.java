@@ -1,12 +1,12 @@
 package io.turnbase.platform.admin;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.actuate.autoconfigure.web.ManagementContextConfiguration;
 import org.springframework.boot.actuate.autoconfigure.web.ManagementContextType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Registers the admin REST surface as beans of the management (actuator) child context rather than
@@ -33,7 +33,7 @@ class AdminManagementContextConfiguration {
 
   @Bean
   AdminBasicAuthInterceptor adminBasicAuthInterceptor(
-      AdminProperties adminProperties, ObjectMapper objectMapper) {
+      AdminProperties adminProperties, JsonMapper objectMapper) {
     return new AdminBasicAuthInterceptor(adminProperties, objectMapper);
   }
 

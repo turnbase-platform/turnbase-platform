@@ -1,7 +1,5 @@
 package io.turnbase.platform.upload;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.bundle.VersionOrdering;
 import io.turnbase.platform.common.CheckError;
 import java.sql.Timestamp;
@@ -14,6 +12,8 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Direct SQL against {@code game} and {@code game_version} — both owned by the not-yet-built {@code
@@ -26,9 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
 class GameVersionRepository {
 
   private final JdbcClient jdbcClient;
-  private final ObjectMapper objectMapper;
+  private final JsonMapper objectMapper;
 
-  GameVersionRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+  GameVersionRepository(JdbcClient jdbcClient, JsonMapper objectMapper) {
     this.jdbcClient = jdbcClient;
     this.objectMapper = objectMapper;
   }

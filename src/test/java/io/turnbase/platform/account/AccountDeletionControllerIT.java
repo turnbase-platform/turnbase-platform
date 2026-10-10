@@ -2,7 +2,6 @@ package io.turnbase.platform.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import io.turnbase.platform.session.SessionRevokedEvent;
@@ -27,6 +26,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code IMP-M1-08}'s own Done-when clause, end to end against a real application boot and
@@ -36,7 +36,7 @@ import org.springframework.web.client.RestTemplate;
  */
 class AccountDeletionControllerIT extends PostgresIntegrationTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final JsonMapper objectMapper = JsonMapper.builder().build();
   private final RestTemplate restTemplate = new RestTemplate(new JdkClientHttpRequestFactory());
 
   private ConfigurableApplicationContext context;

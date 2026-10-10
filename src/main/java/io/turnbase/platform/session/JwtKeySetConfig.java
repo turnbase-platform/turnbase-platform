@@ -1,6 +1,5 @@
 package io.turnbase.platform.session;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,6 +11,8 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * secrets-and-configuration.md §3.1: {@code local} generates a key and persists it so a restart
@@ -30,14 +31,14 @@ public class JwtKeySetConfig {
 
   @Bean
   public JwtKeySet jwtKeySet(
-      AuthProperties properties, Environment environment, ObjectMapper objectMapper) {
+      AuthProperties properties, Environment environment, JsonMapper objectMapper) {
     return resolve(properties, environment, objectMapper, LOCAL_KEY_FILE);
   }
 
   static JwtKeySet resolve(
       AuthProperties properties,
       Environment environment,
-      ObjectMapper objectMapper,
+      JsonMapper objectMapper,
       Path localKeyFile) {
     if (properties.jwtKeySetRequired()) {
       return requireSupplied(properties.jwtKeySet(), objectMapper);
@@ -48,7 +49,7 @@ public class JwtKeySetConfig {
     return loadOrGenerateLocal(objectMapper, localKeyFile);
   }
 
-  private static JwtKeySet requireSupplied(@Nullable String supplied, ObjectMapper objectMapper) {
+  private static JwtKeySet requireSupplied(@Nullable String supplied, JsonMapper objectMapper) {
     if (supplied == null || supplied.isBlank()) {
       throw new IllegalStateException(
           "turnbase.auth.jwt-key-set-required is true but TURNBASE_JWT_KEY_SET is not set"
@@ -57,7 +58,7 @@ public class JwtKeySetConfig {
     return parse(supplied, objectMapper);
   }
 
-  private static JwtKeySet loadOrGenerateLocal(ObjectMapper objectMapper, Path localKeyFile) {
+  private static JwtKeySet loadOrGenerateLocal(JsonMapper objectMapper, Path localKeyFile) {
     try {
       if (Files.exists(localKeyFile)) {
         return parse(Files.readString(localKeyFile), objectMapper);
@@ -69,15 +70,15 @@ public class JwtKeySetConfig {
       }
       Files.writeString(localKeyFile, objectMapper.writeValueAsString(generated));
       return generated;
-    } catch (IOException e) {
+    } catch (IOException | JacksonException e) {
       throw new IllegalStateException("Could not read or write " + localKeyFile, e);
     }
   }
 
-  private static JwtKeySet parse(String json, ObjectMapper objectMapper) {
+  private static JwtKeySet parse(String json, JsonMapper objectMapper) {
     try {
       return objectMapper.readValue(json, JwtKeySet.class);
-    } catch (IOException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("TURNBASE_JWT_KEY_SET is not valid JSON", e);
     }
   }
