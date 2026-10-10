@@ -4,6 +4,7 @@ import io.turnbase.platform.common.ForbiddenException;
 import io.turnbase.platform.session.SessionRevokedEvent;
 import java.util.List;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -21,14 +22,17 @@ class AccountDeletionService {
   private final ProfileRepository profileRepository;
   private final AccountErasureRepository erasureRepository;
   private final ApplicationEventPublisher eventPublisher;
+  private final ReauthVerifier reauthVerifier;
 
   AccountDeletionService(
       ProfileRepository profileRepository,
       AccountErasureRepository erasureRepository,
-      ApplicationEventPublisher eventPublisher) {
+      ApplicationEventPublisher eventPublisher,
+      ReauthVerifier reauthVerifier) {
     this.profileRepository = profileRepository;
     this.erasureRepository = erasureRepository;
     this.eventPublisher = eventPublisher;
+    this.reauthVerifier = reauthVerifier;
   }
 
   /**
@@ -40,11 +44,13 @@ class AccountDeletionService {
    * transaction has committed — this repo's commit-before-publish rule, same ordering as {@code
    * session.SessionService}.
    */
-  void deleteAccount(UUID userId) {
+  void deleteAccount(UUID userId, @Nullable String currentPassword) {
     ProfileRepository.AccountState state = profileRepository.findAccountState(userId);
     if (!KIND_REGISTERED.equals(state.kind())) {
       throw new ForbiddenException("Guest accounts cannot be deleted this way.");
     }
+
+    reauthVerifier.require(userId, currentPassword);
 
     String subjectToken = UUID.randomUUID().toString();
     List<UUID> revokedSessionIds = erasureRepository.erase(userId, subjectToken);

@@ -41,6 +41,7 @@ public class ProfileService {
   private final AccountProperties accountProperties;
   private final RelationshipQueries relationshipQueries;
   private final AuthMethodRepository authMethodRepository;
+  private final ReauthVerifier reauthVerifier;
 
   ProfileService(
       ProfileRepository profileRepository,
@@ -49,7 +50,8 @@ public class ProfileService {
       PasswordEncoder passwordEncoder,
       AccountProperties accountProperties,
       RelationshipQueries relationshipQueries,
-      AuthMethodRepository authMethodRepository) {
+      AuthMethodRepository authMethodRepository,
+      ReauthVerifier reauthVerifier) {
     this.profileRepository = profileRepository;
     this.usernamePolicy = usernamePolicy;
     this.credentialPolicy = credentialPolicy;
@@ -57,6 +59,7 @@ public class ProfileService {
     this.accountProperties = accountProperties;
     this.relationshipQueries = relationshipQueries;
     this.authMethodRepository = authMethodRepository;
+    this.reauthVerifier = reauthVerifier;
   }
 
   /**
@@ -151,6 +154,7 @@ public class ProfileService {
         throw new BusinessRuleException(
             "Email is managed by your OAuth provider and cannot be changed.");
       }
+      reauthVerifier.require(userId, request.currentPassword());
       validatedEmail = credentialPolicy.validateEmail(request.email());
       requireWindowElapsed("email", state.emailChangedAt());
     }

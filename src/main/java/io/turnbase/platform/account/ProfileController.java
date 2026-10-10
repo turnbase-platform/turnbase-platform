@@ -81,9 +81,12 @@ class ProfileController {
 
   /** {@code rest-conventions.md} § Authentication (`IMP-GATE-33`): FR-ACCT-004…008. */
   @DeleteMapping("/me")
-  ResponseEntity<Void> deleteAccount(HttpServletRequest servletRequest) {
+  ResponseEntity<Void> deleteAccount(
+      @RequestBody(required = false) @Nullable DeleteAccountRequest request,
+      HttpServletRequest servletRequest) {
     AuthenticatedUser principal = principalOf(servletRequest);
-    accountDeletionService.deleteAccount(principal.userId());
+    accountDeletionService.deleteAccount(
+        principal.userId(), request == null ? null : request.currentPassword());
     return ResponseEntity.noContent()
         .header(HttpHeaders.SET_COOKIE, clearedSessionCookie().toString())
         .build();

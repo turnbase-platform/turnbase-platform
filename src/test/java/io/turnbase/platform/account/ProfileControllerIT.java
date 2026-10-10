@@ -190,6 +190,41 @@ class ProfileControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void anEmailChangeNeedsTheCurrentPassword() throws Exception {
+    Registered user = registerUser();
+    String newEmail = "new-" + UUID.randomUUID() + "@example.com";
+
+    ResponseEntity<String> missing =
+        patchWithCookie("/api/users/me", user.cookie(), "{\"email\":\"%s\"}".formatted(newEmail));
+    ResponseEntity<String> wrong =
+        patchWithCookie(
+            "/api/users/me",
+            user.cookie(),
+            "{\"email\":\"%s\",\"currentPassword\":\"not my password\"}".formatted(newEmail));
+
+    assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+    assertThat(wrong.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+    assertThat(emailOf(user)).isNotEqualTo(newEmail);
+
+    ResponseEntity<String> right =
+        patchWithCookie(
+            "/api/users/me",
+            user.cookie(),
+            "{\"email\":\"%s\",\"currentPassword\":\"correct horse battery\"}".formatted(newEmail));
+
+    assertThat(right.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(emailOf(user)).isEqualTo(newEmail);
+  }
+
+  private String emailOf(Registered user) {
+    return jdbcClient
+        .sql("select email from app_user where user_id = :id")
+        .param("id", user.userId())
+        .query(String.class)
+        .single();
+  }
+
+  @Test
   void aSecondUsernameChangeWithinTheWindowIsRejected() throws Exception {
     Registered user = registerUser();
     patchWithCookie(

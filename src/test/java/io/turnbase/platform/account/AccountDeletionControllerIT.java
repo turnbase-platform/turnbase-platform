@@ -222,6 +222,21 @@ class AccountDeletionControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void deletionWithoutOrWithTheWrongPasswordIsRefusedAndErasesNothing() throws Exception {
+    Registered user = registerUser();
+
+    ResponseEntity<String> missing = deleteWithCookie(user.cookie(), null);
+    ResponseEntity<String> wrong =
+        deleteWithCookie(user.cookie(), "{\"currentPassword\":\"not my password\"}");
+
+    assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+    assertThat(wrong.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+    Integer methods = count("user_auth_method", user.userId());
+    assertThat(methods).isEqualTo(1);
+    assertThat(deleteWithCookie(user.cookie()).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
   void aGuestCannotDeleteThisWay() throws Exception {
     ResponseEntity<String> guestResponse = post("/api/auth/guest");
     String cookie = sessionCookieHeader(guestResponse);
@@ -391,9 +406,14 @@ class AccountDeletionControllerIT extends PostgresIntegrationTest {
   }
 
   private ResponseEntity<String> deleteWithCookie(String cookie) {
+    return deleteWithCookie(cookie, "{\"currentPassword\":\"correct horse battery\"}");
+  }
+
+  private ResponseEntity<String> deleteWithCookie(String cookie, @Nullable String body) {
     HttpHeaders headers = new HttpHeaders();
     headers.add(HttpHeaders.COOKIE, cookie);
-    HttpEntity<Void> request = new HttpEntity<>(headers);
+    headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+    HttpEntity<String> request = new HttpEntity<>(body, headers);
     return restTemplate.exchange(
         baseUrl + "/api/users/me", HttpMethod.DELETE, request, String.class);
   }
