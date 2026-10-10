@@ -129,6 +129,11 @@
       netty-nio-client against 4.2 is for IMP-M11-04's S3 integration tests to confirm (ADR-0016 R8).
     -->
     <netty.version>4.2.17.Final</netty.version>
+    <!--
+      IMP-M11-07 (ADR-0016 R14): Boot 4.1.1 manages Tomcat 11.0.24, which the Trivy image gate
+      rejects (CVE-2026-65182, CVE-2026-65905, CVE-2026-68525, all CRITICAL, fixed in 11.0.25).
+    -->
+    <tomcat.version>11.0.25</tomcat.version>
 
     <!--
       IMP-M3-13: turnbase-bundle-validator (the upload pipeline's archive reader, manifest
