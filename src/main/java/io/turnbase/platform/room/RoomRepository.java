@@ -1,6 +1,7 @@
 package io.turnbase.platform.room;
 
 import io.turnbase.platform.common.BusinessRuleException;
+import io.turnbase.platform.common.LikePattern;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.game.GameSessionService;
 import java.sql.ResultSet;
@@ -1820,8 +1821,10 @@ class RoomRepository {
     params.put("spectatorCapacity", spectatorCapacity);
 
     if (filter.search() != null && !filter.search().isBlank()) {
-      sql.append(" and (lower(g.title) like :search or lower(hu.username) like :search)\n");
-      params.put("search", "%" + filter.search().toLowerCase(java.util.Locale.ROOT) + "%");
+      sql.append(
+          " and (lower(g.title) like :search escape '\\'"
+              + " or lower(hu.username) like :search escape '\\')\n");
+      params.put("search", LikePattern.containsLowerCase(filter.search()));
     }
     if (filter.statuses() != null && !filter.statuses().isEmpty()) {
       sql.append(" and r.state in (:statuses)\n");

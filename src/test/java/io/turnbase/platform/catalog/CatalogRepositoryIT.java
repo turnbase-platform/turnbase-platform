@@ -139,6 +139,26 @@ class CatalogRepositoryIT extends PostgresIntegrationTest {
     assertThat(rows).extracting(CatalogRowResponse::gameId).containsExactly(gameA, gameB);
   }
 
+  @Test
+  void searchTreatsPercentAndUnderscoreAsLiterals() {
+    UUID owner = insertUser();
+    activeGame(owner, "VERIFIED", true, "Plain Game");
+    activeGame(owner, "VERIFIED", true, "100% Fun");
+    activeGame(owner, "VERIFIED", true, "snake_case");
+    activeGame(owner, "VERIFIED", true, "snakeXcase");
+
+    assertThat(searchTitles("%")).containsExactly("100% Fun");
+    assertThat(searchTitles("_")).containsExactly("snake_case");
+    assertThat(searchTitles("e_c")).containsExactly("snake_case");
+    assertThat(searchTitles("\\")).isEmpty();
+  }
+
+  private List<String> searchTitles(String search) {
+    CatalogListFilter filter =
+        new CatalogListFilter(search, null, null, null, null, Sort.unsorted(), 25, 0);
+    return repository.listGames(null, filter).stream().map(CatalogRowResponse::title).toList();
+  }
+
   private List<String> listTitles(@Nullable UUID viewerId) {
     CatalogListFilter filter =
         new CatalogListFilter(null, null, null, null, null, Sort.unsorted(), 25, 0);

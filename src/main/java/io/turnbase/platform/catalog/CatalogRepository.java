@@ -1,10 +1,10 @@
 package io.turnbase.platform.catalog;
 
+import io.turnbase.platform.common.LikePattern;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -151,12 +151,12 @@ class CatalogRepository {
     if (filter.search() != null && !filter.search().isBlank()) {
       sql.append(
           """
-           and ( lower(g.title) like :search
-              or lower(coalesce(u.username, 'turnbase')) like :search
+           and ( lower(g.title) like :search escape '\\'
+              or lower(coalesce(u.username, 'turnbase')) like :search escape '\\'
               or exists (select 1 from game_tag gt where gt.game_id = g.game_id
-                         and lower(gt.tag) like :search) )
+                         and lower(gt.tag) like :search escape '\\') )
           """);
-      params.put("search", "%" + filter.search().toLowerCase(Locale.ROOT) + "%");
+      params.put("search", LikePattern.containsLowerCase(filter.search()));
     }
     if (filter.minPlayers() != null) {
       sql.append(" and gv.max_players >= :minPlayers\n");
