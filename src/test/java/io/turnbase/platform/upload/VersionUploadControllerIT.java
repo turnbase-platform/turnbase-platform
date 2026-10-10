@@ -85,7 +85,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void versionFormatFailureIsSynchronous422() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "not-a-version", 1000);
 
@@ -97,7 +97,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void versionOrderingFailureIsSynchronous422() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     activateTrivialVersion(gameId, "1.5.0");
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "1.0.0", 1000);
@@ -109,7 +109,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void declaredSizeOverTheCapIsSynchronous422() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "1.0.0", 999_999_999_999L);
 
@@ -120,7 +120,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void aSecondSlotForAnOpenPendingVersionIsConflict() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     createSlot(gameId, dev.cookie(), "1.0.0", 1000);
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "1.0.0", 1000);
@@ -134,7 +134,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void confirmingBeforeTheObjectIsUploadedIsSynchronous422() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", 1000));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
 
@@ -147,7 +147,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void confirmingAfterTheSlotExpiresIsGone() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", 1000));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
     // Backdate the slot's own expiry rather than shortening turnbase.uploads.slot-ttl for the
@@ -182,7 +182,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void officialJvmBundleViaThePublicRouteFailsRuntimeTrust() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     byte[] bundle = TestBundles.validChessBundle("1.0.0");
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", bundle.length));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
@@ -200,7 +200,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void asyncFailuresSurfaceOnlyAsTheVersionResourceNeverAsAnHttpError() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     byte[] bundle = TestBundles.chessBundleMissingFrontendEntry("1.0.0");
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", bundle.length));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
@@ -222,7 +222,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void aFailedVersionNumberIsReclaimable() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     byte[] bad = TestBundles.chessBundleMissingFrontendEntry("1.0.0");
     Map<String, Object> slot = parse(createSlot(gameId, dev.cookie(), "1.0.0", bad.length));
     UUID uploadId = UUID.fromString(requiredString(slot, "uploadId"));
@@ -241,7 +241,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
   @Test
   void theSweepFreesAnAbandonedLeaseAndTheVersionNumberCanBeRetried() throws Exception {
     Registered dev = registerUser();
-    UUID gameId = seedOfficialGame();
+    UUID gameId = seedOwnedGame(dev.userId());
     UUID versionId = UUID.randomUUID();
     jdbcClient
         .sql(
@@ -271,6 +271,80 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> reclaimed = createSlot(gameId, dev.cookie(), "1.0.0", 1000);
     assertThat(reclaimed.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+  }
+
+  // ---------------------------------------------------------------- AUD-01: ownership
+
+  @Test
+  void ownerMayCreateSlotOnTheirOwnGame() throws Exception {
+    Registered owner = registerUser();
+    UUID gameId = seedOwnedGame(owner.userId());
+
+    assertThat(createSlot(gameId, owner.cookie(), "1.0.0", 1000).getStatusCode())
+        .isEqualTo(HttpStatus.CREATED);
+  }
+
+  @Test
+  void nonOwnerOfAListedGameGets403OnAllThreeRoutes() throws Exception {
+    Registered owner = registerUser();
+    Registered intruder = registerUser();
+    UUID gameId = seedOwnedGame(owner.userId());
+    jdbcClient
+        .sql("update game set listed = true where game_id = :id")
+        .param("id", gameId)
+        .update();
+    UUID uploadId =
+        UUID.fromString(
+            requiredString(parse(createSlot(gameId, owner.cookie(), "1.0.0", 1000)), "uploadId"));
+
+    assertThat(createSlot(gameId, intruder.cookie(), "2.0.0", 1000).getStatusCode())
+        .isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(confirm(gameId, uploadId, intruder.cookie()).getStatusCode())
+        .isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(
+            getWithCookie("/api/games/" + gameId + "/versions/" + uploadId, intruder.cookie())
+                .getStatusCode())
+        .isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  @Test
+  void nonOwnerOfAnUnlistedGameGets404OnAllThreeRoutes() throws Exception {
+    Registered owner = registerUser();
+    Registered intruder = registerUser();
+    UUID gameId = seedOwnedGame(owner.userId());
+    UUID uploadId =
+        UUID.fromString(
+            requiredString(parse(createSlot(gameId, owner.cookie(), "1.0.0", 1000)), "uploadId"));
+
+    assertThat(createSlot(gameId, intruder.cookie(), "2.0.0", 1000).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(confirm(gameId, uploadId, intruder.cookie()).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(
+            getWithCookie("/api/games/" + gameId + "/versions/" + uploadId, intruder.cookie())
+                .getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  /** The AUD-01 repro: a registered user pushing a version to the Official reference game. */
+  @Test
+  void officialGameIsRefusedToEveryPublicCallerAndCreatesNoSlot() throws Exception {
+    Registered anyone = registerUser();
+    UUID listedOfficial = seedOfficialGame(true);
+    UUID unlistedOfficial = seedOfficialGame(false);
+
+    assertThat(createSlot(listedOfficial, anyone.cookie(), "9.9.9", 1000).getStatusCode())
+        .isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(createSlot(unlistedOfficial, anyone.cookie(), "9.9.9", 1000).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(
+            jdbcClient
+                .sql("select count(*) from game_version where game_id in (:a, :b)")
+                .param("a", listedOfficial)
+                .param("b", unlistedOfficial)
+                .query(Long.class)
+                .single())
+        .isZero();
   }
 
   // ---------------------------------------------------------------- helpers
@@ -332,12 +406,24 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
     }
   }
 
-  private UUID seedOfficialGame() {
+  private UUID seedOwnedGame(UUID ownerId) {
     UUID gameId = UUID.randomUUID();
     jdbcClient
         .sql(
-            "insert into game (game_id, owner_user_id, title, short_description, badge, listed) values (:id, null, 'Untitled', 'placeholder', 'OFFICIAL', false)")
+            "insert into game (game_id, owner_user_id, title, short_description, badge, listed) values (:id, :owner, 'Untitled', 'placeholder', 'UNVERIFIED', false)")
         .param("id", gameId)
+        .param("owner", ownerId)
+        .update();
+    return gameId;
+  }
+
+  private UUID seedOfficialGame(boolean listed) {
+    UUID gameId = UUID.randomUUID();
+    jdbcClient
+        .sql(
+            "insert into game (game_id, owner_user_id, title, short_description, badge, listed) values (:id, null, 'Untitled', 'placeholder', 'OFFICIAL', :listed)")
+        .param("id", gameId)
+        .param("listed", listed)
         .update();
     return gameId;
   }

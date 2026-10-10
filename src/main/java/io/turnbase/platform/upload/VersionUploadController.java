@@ -1,6 +1,8 @@
 package io.turnbase.platform.upload;
 
+import io.turnbase.platform.common.AuthenticatedUser;
 import jakarta.validation.Valid;
+import java.security.Principal;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,8 +29,11 @@ class VersionUploadController {
   /** {@code file-uploads.md} step 1; {@code bundle-format.md} §3.2 Phase A. */
   @PostMapping("/api/games/{gameId}/versions")
   ResponseEntity<CreateVersionResponse> createSlot(
-      @PathVariable UUID gameId, @Valid @RequestBody CreateVersionRequest request) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(service.createSlot(gameId, request));
+      Principal principal,
+      @PathVariable UUID gameId,
+      @Valid @RequestBody CreateVersionRequest request) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(service.createSlotAsOwner(userIdOf(principal), gameId, request));
   }
 
   /**
@@ -36,14 +41,23 @@ class VersionUploadController {
    * asynchronous.
    */
   @PostMapping("/api/games/{gameId}/versions/{uploadId}/confirm")
-  ResponseEntity<Void> confirm(@PathVariable UUID gameId, @PathVariable UUID uploadId) {
-    service.confirm(gameId, uploadId, false);
+  ResponseEntity<Void> confirm(
+      Principal principal, @PathVariable UUID gameId, @PathVariable UUID uploadId) {
+    service.confirmAsOwner(userIdOf(principal), gameId, uploadId);
     return ResponseEntity.accepted().build();
   }
 
   /** {@code file-uploads.md} step 4; {@code bundle-format.md} §3.4 — always {@code 200}. */
   @GetMapping("/api/games/{gameId}/versions/{uploadId}")
-  ResponseEntity<VersionResource> get(@PathVariable UUID gameId, @PathVariable UUID uploadId) {
-    return ResponseEntity.ok(service.get(gameId, uploadId));
+  ResponseEntity<VersionResource> get(
+      Principal principal, @PathVariable UUID gameId, @PathVariable UUID uploadId) {
+    return ResponseEntity.ok(service.getAsOwner(userIdOf(principal), gameId, uploadId));
+  }
+
+  private static UUID userIdOf(Principal principal) {
+    if (principal instanceof AuthenticatedUser user) {
+      return user.userId();
+    }
+    throw new IllegalStateException("an unauthenticated request reached an owner-scoped route");
   }
 }

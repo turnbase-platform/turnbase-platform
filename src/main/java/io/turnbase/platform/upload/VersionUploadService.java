@@ -4,6 +4,7 @@ import io.turnbase.bundle.VersionOrdering;
 import io.turnbase.platform.common.BusinessRuleException;
 import io.turnbase.platform.common.CheckError;
 import io.turnbase.platform.common.ConflictException;
+import io.turnbase.platform.common.ForbiddenException;
 import io.turnbase.platform.common.GoneException;
 import io.turnbase.platform.common.NotFoundException;
 import io.turnbase.platform.common.ServiceUnavailableException;
@@ -50,7 +51,49 @@ public class VersionUploadService {
     this.bundleValidationService = bundleValidationService;
   }
 
-  /** Phase A: stages A1-A4, {@code bundle-format.md} §3.2. */
+  /**
+   * The public, session-authenticated route: {@code file-uploads.md} *Authorization* — the game's
+   * owner is the only caller. An Official game is ownerless and so refuses everyone here.
+   */
+  public CreateVersionResponse createSlotAsOwner(
+      UUID callerId, UUID gameId, CreateVersionRequest request) {
+    requireOwner(callerId, gameId);
+    return createSlot(gameId, request);
+  }
+
+  /** As {@link #createSlotAsOwner} for {@code POST .../confirm}. */
+  public void confirmAsOwner(UUID callerId, UUID gameId, UUID uploadId) {
+    requireOwner(callerId, gameId);
+    confirm(gameId, uploadId, false);
+  }
+
+  /** As {@link #createSlotAsOwner} for {@code GET .../{uploadId}}. */
+  public VersionResource getAsOwner(UUID callerId, UUID gameId, UUID uploadId) {
+    requireOwner(callerId, gameId);
+    return get(gameId, uploadId);
+  }
+
+  /**
+   * {@code rest-conventions.md} *Authorization and Ownership*: {@code game.owner_user_id =
+   * principal}; {@code 404} when the game is unlisted, else {@code 403}.
+   */
+  private void requireOwner(UUID callerId, UUID gameId) {
+    GameRow game =
+        repository.findGame(gameId).orElseThrow(() -> new NotFoundException("No such game."));
+    if (callerId.equals(game.ownerUserId())) {
+      return;
+    }
+    if (!game.listed()) {
+      throw new NotFoundException("No such game.");
+    }
+    throw new ForbiddenException("You do not own this game.");
+  }
+
+  /**
+   * Phase A: stages A1-A4, {@code bundle-format.md} §3.2. Performs no ownership check — the admin
+   * listener's own route calls this directly ({@code admin-rest-api.md} §4); the public route goes
+   * through {@link #createSlotAsOwner}.
+   */
   public CreateVersionResponse createSlot(UUID gameId, CreateVersionRequest request) {
     var unused =
         repository.findGame(gameId).orElseThrow(() -> new NotFoundException("No such game."));

@@ -38,7 +38,7 @@ class GameVersionRepository {
   Optional<GameRow> findGame(UUID gameId) {
     return jdbcClient
         .sql(
-            "select game_id, owner_user_id, badge, active_version_id from game where game_id = :gameId")
+            "select game_id, owner_user_id, badge, listed, active_version_id from game where game_id = :gameId")
         .param("gameId", gameId)
         .query(
             (rs, rowNum) ->
@@ -46,6 +46,7 @@ class GameVersionRepository {
                     rs.getObject("game_id", UUID.class),
                     rs.getObject("owner_user_id", UUID.class),
                     rs.getString("badge"),
+                    rs.getBoolean("listed"),
                     rs.getObject("active_version_id", UUID.class)))
         .optional();
   }
@@ -237,7 +238,7 @@ class GameVersionRepository {
     GameRow game =
         jdbcClient
             .sql(
-                "select game_id, owner_user_id, badge, active_version_id from game"
+                "select game_id, owner_user_id, badge, listed, active_version_id from game"
                     + " where game_id = :gameId for update")
             .param("gameId", request.gameId())
             .query(
@@ -246,6 +247,7 @@ class GameVersionRepository {
                         rs.getObject("game_id", UUID.class),
                         rs.getObject("owner_user_id", UUID.class),
                         rs.getString("badge"),
+                        rs.getBoolean("listed"),
                         rs.getObject("active_version_id", UUID.class)))
             .single();
 
