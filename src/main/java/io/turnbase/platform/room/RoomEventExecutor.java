@@ -1,10 +1,10 @@
 package io.turnbase.platform.room;
 
+import io.turnbase.platform.common.KeyedLocks;
 import io.turnbase.platform.common.LifecycleLog;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
@@ -54,7 +54,7 @@ class RoomEventExecutor {
 
   private static final Logger log = LoggerFactory.getLogger(RoomEventExecutor.class);
 
-  private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
+  private final KeyedLocks<UUID> locks = new KeyedLocks<>();
   private final RoomOwnershipService ownership;
   private final JdbcClient jdbcClient;
   private final SimpMessagingTemplate messagingTemplate;
@@ -132,6 +132,7 @@ class RoomEventExecutor {
       return result.value();
     } finally {
       lock.unlock();
+      locks.release(roomId);
     }
   }
 
@@ -156,20 +157,23 @@ class RoomEventExecutor {
       return op.get();
     } finally {
       lock.unlock();
+      locks.release(roomId);
     }
   }
 
   private ReentrantLock acquireLock(UUID roomId) {
-    ReentrantLock lock = locks.computeIfAbsent(roomId, id -> new ReentrantLock());
+    ReentrantLock lock = locks.retain(roomId);
     boolean acquired;
     try {
       acquired = lock.tryLock(LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+      locks.release(roomId);
       throw new RoomUnavailableRetryException(
           "Interrupted while waiting for the room lock.", RETRY_AFTER_MS);
     }
     if (!acquired) {
+      locks.release(roomId);
       // A lock-acquisition timeout is not proof of lost ownership (room-lifecycle.md §2.1) — fail
       // the command, publish nothing, and do not evict.
       throw new RoomUnavailableRetryException(

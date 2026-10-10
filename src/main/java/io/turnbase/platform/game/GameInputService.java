@@ -10,6 +10,7 @@ import io.turnbase.grpc.gamehost.v1.GameOutcome;
 import io.turnbase.grpc.gamehost.v1.ProcessInputRequest;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
+import io.turnbase.platform.common.KeyedLocks;
 import io.turnbase.platform.common.LifecycleLog;
 import java.time.Instant;
 import java.util.HashMap;
@@ -17,7 +18,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
@@ -74,7 +74,7 @@ public class GameInputService {
   private final SessionRosterSource rosters;
   private final SessionFailureListener sessionFailure;
   private final int retryLimit;
-  private final Map<UUID, ReentrantLock> submitLocks = new ConcurrentHashMap<>();
+  private final KeyedLocks<UUID> submitLocks = new KeyedLocks<>();
 
   GameInputService(
       HostRegistry registry,
@@ -116,7 +116,7 @@ public class GameInputService {
    * this pod, which is why a pod-local lock suffices here.
    */
   public Result submitAction(UUID sessionId, ActionInput action) {
-    ReentrantLock lock = submitLocks.computeIfAbsent(sessionId, id -> new ReentrantLock());
+    ReentrantLock lock = submitLocks.retain(sessionId);
     lock.lock();
     try {
       return processDetailed(
@@ -127,6 +127,7 @@ public class GameInputService {
               .build());
     } finally {
       lock.unlock();
+      submitLocks.release(sessionId);
     }
   }
 

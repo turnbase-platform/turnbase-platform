@@ -1,5 +1,8 @@
 package io.turnbase.platform.websocket;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
@@ -10,10 +13,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.stereotype.Component;
@@ -34,23 +36,56 @@ class WebSocketRateLimiter {
   private static final String LOCKOUT_OFFENSES_PREFIX = "rate:ws-lockout:offenses:";
   private static final Duration OFFENSE_DECAY = Duration.ofHours(1);
   private static final long MAX_DOUBLINGS = 40;
+  private static final Duration BUCKET_IDLE = Duration.ofHours(1);
   private static final Duration NOTIFY_THROTTLE = Duration.ofSeconds(1);
 
   private final WebSocketRateLimitProperties properties;
   private final StringRedisTemplate stringRedisTemplate;
   private final RateLimitMetrics metrics;
 
-  private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
-  private final Map<String, Deque<Instant>> violations = new ConcurrentHashMap<>();
-  private final Map<String, Instant> lastNotifiedAt = new ConcurrentHashMap<>();
+  /**
+   * IMP-M10-14: every per-key map is evicted when its key goes idle, so distinct-user and
+   * distinct-connection churn cannot grow the heap without limit. A bucket idle for an hour has
+   * long since refilled, so re-creating it full loses nothing; violations only matter inside {@code
+   * violationWindow}; a notice stamp only inside {@link #NOTIFY_THROTTLE}.
+   */
+  private final Cache<String, Bucket> buckets;
 
+  private final Cache<String, Deque<Instant>> violations;
+  private final Cache<String, Instant> lastNotifiedAt;
+
+  @Autowired
   WebSocketRateLimiter(
       WebSocketRateLimitProperties properties,
       StringRedisTemplate stringRedisTemplate,
       RateLimitMetrics metrics) {
+    this(properties, stringRedisTemplate, metrics, Ticker.systemTicker());
+  }
+
+  WebSocketRateLimiter(
+      WebSocketRateLimitProperties properties,
+      StringRedisTemplate stringRedisTemplate,
+      RateLimitMetrics metrics,
+      Ticker ticker) {
     this.properties = properties;
     this.stringRedisTemplate = stringRedisTemplate;
     this.metrics = metrics;
+    this.buckets = Caffeine.newBuilder().ticker(ticker).expireAfterAccess(BUCKET_IDLE).build();
+    this.violations =
+        Caffeine.newBuilder()
+            .ticker(ticker)
+            .expireAfterAccess(properties.violationWindow())
+            .build();
+    this.lastNotifiedAt =
+        Caffeine.newBuilder().ticker(ticker).expireAfterWrite(NOTIFY_THROTTLE).build();
+  }
+
+  /** Live entries across the three per-key maps, after pending evictions run. */
+  long trackedKeys() {
+    buckets.cleanUp();
+    violations.cleanUp();
+    lastNotifiedAt.cleanUp();
+    return buckets.estimatedSize() + violations.estimatedSize() + lastNotifiedAt.estimatedSize();
   }
 
   boolean isLockedOut(UUID userId) {
@@ -120,7 +155,7 @@ class WebSocketRateLimiter {
 
   private ConsumptionProbe consume(
       UUID userId, String bucketName, WebSocketRateLimitProperties.Bucket config) {
-    Bucket bucket = buckets.computeIfAbsent(userId + ":" + bucketName, key -> newBucket(config));
+    Bucket bucket = buckets.get(userId + ":" + bucketName, key -> newBucket(config));
     return bucket.tryConsumeAndReturnRemaining(1);
   }
 
@@ -149,8 +184,7 @@ class WebSocketRateLimiter {
   }
 
   private boolean recordViolationAndCheckSustained(String stompSessionId) {
-    Deque<Instant> timestamps =
-        violations.computeIfAbsent(stompSessionId, key -> new ArrayDeque<>());
+    Deque<Instant> timestamps = violations.get(stompSessionId, key -> new ArrayDeque<>());
     Instant now = Instant.now();
     Instant windowStart = now.minus(properties.violationWindow());
     synchronized (timestamps) {
@@ -169,7 +203,7 @@ class WebSocketRateLimiter {
   private boolean shouldNotify(String stompSessionId, String bucketName) {
     String key = stompSessionId + ":" + bucketName;
     Instant now = Instant.now();
-    Instant last = lastNotifiedAt.get(key);
+    Instant last = lastNotifiedAt.getIfPresent(key);
     if (last != null && last.plus(NOTIFY_THROTTLE).isAfter(now)) {
       return false;
     }

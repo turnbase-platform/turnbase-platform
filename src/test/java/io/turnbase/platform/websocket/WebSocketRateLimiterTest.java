@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.github.benmanes.caffeine.cache.Ticker;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.RateLimitMetrics;
@@ -123,6 +124,11 @@ class WebSocketRateLimiterTest {
 
   private WebSocketRateLimiter newLimiter(
       WebSocketRateLimitProperties.Bucket everyBucket, int violationsBeforeClose) {
+    return newLimiter(everyBucket, violationsBeforeClose, Ticker.systemTicker());
+  }
+
+  private WebSocketRateLimiter newLimiter(
+      WebSocketRateLimitProperties.Bucket everyBucket, int violationsBeforeClose, Ticker ticker) {
     WebSocketRateLimitProperties properties =
         new WebSocketRateLimitProperties(
             everyBucket,
@@ -136,11 +142,27 @@ class WebSocketRateLimiterTest {
             Duration.ofSeconds(10),
             new WebSocketRateLimitProperties.Lockout(
                 Duration.ofSeconds(30), Duration.ofMinutes(15)));
-    return new WebSocketRateLimiter(properties, stringRedisTemplate, metrics);
+    return new WebSocketRateLimiter(properties, stringRedisTemplate, metrics, ticker);
   }
 
   private static WebSocketRateLimitProperties.Bucket bucket(
       int capacity, int refillTokens, Duration refillPeriod) {
     return new WebSocketRateLimitProperties.Bucket(capacity, refillTokens, refillPeriod);
+  }
+
+  @Test
+  void idleKeysAreEvictedSoDistinctUserChurnDoesNotGrowTheMaps() {
+    long[] nanos = {0};
+    WebSocketRateLimiter limiter =
+        newLimiter(bucket(1, 1, Duration.ofHours(1)), 1_000, () -> nanos[0]);
+    for (int i = 0; i < 5_000; i++) {
+      AuthenticatedUser churn = new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID());
+      // Two frames per user: the second exceeds the 1-token bucket, so a violation is recorded.
+      limiter.checkFrame(churn, "s" + i, StompCommand.SEND, "/app/room.x.chat");
+      limiter.checkFrame(churn, "s" + i, StompCommand.SEND, "/app/room.x.chat");
+    }
+    assertThat(limiter.trackedKeys()).isGreaterThan(5_000);
+    nanos[0] += Duration.ofHours(2).toNanos();
+    assertThat(limiter.trackedKeys()).isZero();
   }
 }
