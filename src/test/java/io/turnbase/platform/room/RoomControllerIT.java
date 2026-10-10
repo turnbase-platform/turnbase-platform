@@ -843,6 +843,8 @@ class RoomControllerIT extends PostgresIntegrationTest {
             "/api/rooms/" + roomId + "/participants", third.cookie(), "{\"role\":\"PLAYER\"}");
 
     assertThat(thirdJoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+    // AUD-16: the denial names the real cause.
+    assertThat(thirdJoin.getBody()).contains("This room is full.");
   }
 
   @Test

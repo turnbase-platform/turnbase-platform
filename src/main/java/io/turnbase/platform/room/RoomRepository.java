@@ -267,7 +267,7 @@ class RoomRepository {
     if (role == ParticipantRole.PLAYER) {
       Optional<UUID> availableTeam = findAvailableTeam(roomId);
       if (availableTeam.isEmpty()) {
-        throw new BusinessRuleException("No player slot is available in this room.");
+        throw new BusinessRuleException("This room is full.");
       }
       teamId = availableTeam.get();
     } else {
