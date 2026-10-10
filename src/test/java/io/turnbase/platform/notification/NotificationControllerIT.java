@@ -158,7 +158,7 @@ class NotificationControllerIT extends PostgresIntegrationTest {
     ResponseEntity<String> response =
         patchWithCookie("/api/notifications/" + id, owner.cookie(), "{\"read\":false}");
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test

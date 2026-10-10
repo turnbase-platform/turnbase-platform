@@ -15,9 +15,9 @@ public enum ProblemType {
   NOT_FOUND("not-found", "Not Found", HttpStatus.NOT_FOUND),
   CONFLICT("conflict", "Conflict", HttpStatus.CONFLICT),
   GONE("gone", "Gone", HttpStatus.GONE),
-  PAYLOAD_TOO_LARGE("payload-too-large", "Payload Too Large", HttpStatus.PAYLOAD_TOO_LARGE),
+  PAYLOAD_TOO_LARGE("payload-too-large", "Payload Too Large", HttpStatus.CONTENT_TOO_LARGE),
   BUSINESS_RULE_VIOLATION(
-      "business-rule-violation", "Business Rule Violation", HttpStatus.UNPROCESSABLE_ENTITY),
+      "business-rule-violation", "Business Rule Violation", HttpStatus.UNPROCESSABLE_CONTENT),
   RATE_LIMIT_EXCEEDED("rate-limit-exceeded", "Too Many Requests", HttpStatus.TOO_MANY_REQUESTS),
   INTERNAL_ERROR("internal-error", "Internal Server Error", HttpStatus.INTERNAL_SERVER_ERROR),
   SERVICE_UNAVAILABLE("service-unavailable", "Service Unavailable", HttpStatus.SERVICE_UNAVAILABLE),

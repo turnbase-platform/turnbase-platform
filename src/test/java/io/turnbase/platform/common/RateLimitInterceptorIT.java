@@ -150,7 +150,7 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
                 .getStatusCode())
         .isEqualTo(HttpStatus.CONFLICT);
     assertThat(deleteWithCookie("/api/users/me/auth-methods/PASSWORD", cookie).getStatusCode())
-        .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     assertThat(postWithCookie("/api/users/me/auth-methods/google", cookie, null).getStatusCode())
         .isEqualTo(HttpStatus.NOT_FOUND);
 

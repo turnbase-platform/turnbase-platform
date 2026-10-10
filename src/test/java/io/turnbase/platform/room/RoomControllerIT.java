@@ -824,7 +824,7 @@ class RoomControllerIT extends PostgresIntegrationTest {
             disconnected.cookie(),
             "{\"role\":\"PLAYER\"}");
 
-    assertThat(rejoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(rejoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test
@@ -841,7 +841,7 @@ class RoomControllerIT extends PostgresIntegrationTest {
         postWithCookie(
             "/api/rooms/" + roomId + "/participants", third.cookie(), "{\"role\":\"PLAYER\"}");
 
-    assertThat(thirdJoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(thirdJoin.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test

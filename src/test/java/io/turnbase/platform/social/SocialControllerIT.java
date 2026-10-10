@@ -213,7 +213,7 @@ class SocialControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = send(a, a.username());
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test
@@ -249,7 +249,7 @@ class SocialControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = send(a, d.username());
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test
@@ -260,7 +260,7 @@ class SocialControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = send(a, b.username());
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     String detail = String.valueOf(parse(response).get("detail"));
     assertThat(detail.toLowerCase(java.util.Locale.ROOT)).doesNotContain("block");
   }

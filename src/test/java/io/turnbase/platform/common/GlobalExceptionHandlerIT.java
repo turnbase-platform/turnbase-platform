@@ -129,7 +129,7 @@ class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
   void businessRuleViolationCarriesItsCheckErrorsArray() throws Exception {
     ResponseEntity<String> response = post("/business-rule", null, MediaType.APPLICATION_JSON);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     Map<String, Object> body = parse(response);
     assertThat(body.get("type")).isEqualTo(PROBLEM_BASE + "business-rule-violation");
     @SuppressWarnings("unchecked")
@@ -236,7 +236,7 @@ class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = post("/echo", oversizedBody, MediaType.TEXT_PLAIN);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONTENT_TOO_LARGE);
     Map<String, Object> body = parse(response);
     assertThat(body.get("type")).isEqualTo(PROBLEM_BASE + "payload-too-large");
   }

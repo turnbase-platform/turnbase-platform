@@ -89,7 +89,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "not-a-version", 1000);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     Map<String, Object> body = parse(response);
     assertThat(checksOf(body)).contains("version.format");
   }
@@ -102,7 +102,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "1.0.0", 1000);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     assertThat(checksOf(parse(response))).contains("version.ordering");
   }
 
@@ -113,7 +113,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = createSlot(gameId, dev.cookie(), "1.0.0", 999_999_999_999L);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     assertThat(checksOf(parse(response))).contains("bundle.declaredSize");
   }
 
@@ -140,7 +140,7 @@ class VersionUploadControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = confirm(gameId, uploadId, dev.cookie());
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     assertThat(checksOf(parse(response))).contains("bundle.storedSize");
   }
 

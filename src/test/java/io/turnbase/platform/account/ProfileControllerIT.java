@@ -199,7 +199,7 @@ class ProfileControllerIT extends PostgresIntegrationTest {
         patchWithCookie(
             "/api/users/me", user.cookie(), "{\"username\":\"%s\"}".formatted(uniqueUsername()));
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test
@@ -226,7 +226,7 @@ class ProfileControllerIT extends PostgresIntegrationTest {
             {"currentPassword":"wrong password","newPassword":"new password 1","confirmNewPassword":"new password 1"}
             """);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test

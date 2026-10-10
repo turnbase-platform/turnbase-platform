@@ -133,7 +133,7 @@ class RoomInvitationControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = invite(roomId, host.cookie(), stranger.username());
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test
@@ -143,7 +143,7 @@ class RoomInvitationControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = invite(roomId, host.cookie(), host.username());
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   @Test
@@ -249,7 +249,7 @@ class RoomInvitationControllerIT extends PostgresIntegrationTest {
         postWithCookie(
             "/api/rooms/" + roomId + "/participants", friend.cookie(), "{\"role\":\"PLAYER\"}");
 
-    assertThat(joinResponse.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(joinResponse.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     Long invitationRows =
         jdbcClient
             .sql("select count(*) from room_invitation where invitation_id = :id")

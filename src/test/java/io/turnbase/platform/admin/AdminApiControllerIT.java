@@ -213,7 +213,7 @@ class AdminApiControllerIT extends PostgresIntegrationTest {
 
     ResponseEntity<String> response = adminPost("/admin/games/" + gameId + "/reject", "{}");
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
   }
 
   // ---------------------------------------------------------------- NFR-AUD-001: audit record
