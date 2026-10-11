@@ -32,6 +32,22 @@ spec:
           env:
             - name: TURNBASE_ARTIFACT_STORE_BUCKET
               value: {{ .Values.minio.bucket | quote }}
+            # IMP-M10-21: the scoped credential to create, read from the platform's Secret so
+            # the MinIO server (which envFrom's the root Secret above) never holds it.
+            - name: TURNBASE_ARTIFACT_STORE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-platform
+                  key: TURNBASE_ARTIFACT_STORE_ACCESS_KEY
+            - name: TURNBASE_ARTIFACT_STORE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-platform
+                  key: TURNBASE_ARTIFACT_STORE_SECRET_KEY
+          volumeMounts:
+            - name: policy
+              mountPath: /policy
+              readOnly: true
           # --ignore-existing makes this idempotent across every helm upgrade. `mc anonymous
           # set none` is explicit — local-environment.md §5: a publicly listable bundle bucket
           # exposes every unpublished game version.
@@ -45,3 +61,10 @@ spec:
               done
               mc mb --ignore-existing "local/$TURNBASE_ARTIFACT_STORE_BUCKET"
               mc anonymous set none "local/$TURNBASE_ARTIFACT_STORE_BUCKET"
+              mc admin policy create local turnbase-app /policy/app-policy.json
+              mc admin user add local "$TURNBASE_ARTIFACT_STORE_ACCESS_KEY" "$TURNBASE_ARTIFACT_STORE_SECRET_KEY"
+              mc admin policy attach local turnbase-app --user "$TURNBASE_ARTIFACT_STORE_ACCESS_KEY"
+      volumes:
+        - name: policy
+          configMap:
+            name: {{ .Release.Name }}-minio-policy

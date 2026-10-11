@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-minio-policy
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  # IMP-M10-21: the only rights the platform's service credential holds — object read/write/delete
+  # and listing on the bundle bucket, nothing else. Mirrors deploy/compose/minio/app-policy.json.
+  app-policy.json: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+          "Resource": ["arn:aws:s3:::{{ .Values.minio.bucket }}"]
+        },
+        {
+          "Effect": "Allow",
+          "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          "Resource": ["arn:aws:s3:::{{ .Values.minio.bucket }}/*"]
+        }
+      ]
+    }

@@ -90,6 +90,10 @@ minio:
   mcImage: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
   rootUser: ""
   rootPassword: ""
+  # The scoped service credential (IMP-M10-21), provisioned by the minio-init Job and limited to
+  # `bucket` by the policy in templates/minio-policy-configmap.yaml. Must differ from the root pair.
+  appAccessKey: ""
+  appSecretKey: ""
   bucket: turnbase-bundles
   storage:
     size: 5Gi
