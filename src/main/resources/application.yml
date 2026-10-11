@@ -39,11 +39,11 @@ management:
     health:
       probes:
         enabled: true
-    # FR-OBS-004: the level must be adjustable at runtime without a restart. This is a write
-    # endpoint (POST /actuator/loggers/{name}), exposed only on this management port, same
-    # posture as the admin API (rest-conventions.md, observability.md §3).
+    # FR-OBS-004 / IMP-M10-20: the management listener is unauthenticated (network-restricted
+    # only), so the write operation (POST /actuator/loggers/{name}) is disabled — reads stay.
+    # A level change goes through configuration (LOGGING_LEVEL_ROOT, rolled out) instead.
     loggers:
-      access: unrestricted
+      access: read-only
   endpoints:
     web:
       exposure:
