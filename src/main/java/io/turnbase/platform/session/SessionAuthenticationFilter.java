@@ -1,7 +1,7 @@
 package io.turnbase.platform.session;
 
 import io.turnbase.platform.common.AuthenticatedUser;
-import io.turnbase.platform.common.SessionCookie;
+import io.turnbase.platform.common.SessionCookies;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -46,9 +46,11 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
   static final String INVALID_REASON = SessionService.INVALID_REASON;
 
   private final SessionService sessionService;
+  private final String cookieName;
 
-  SessionAuthenticationFilter(SessionService sessionService) {
+  SessionAuthenticationFilter(SessionService sessionService, SessionCookies sessionCookies) {
     this.sessionService = sessionService;
+    this.cookieName = sessionCookies.name();
   }
 
   @Override
@@ -71,13 +73,13 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
     }
   }
 
-  private static @Nullable String cookieValue(HttpServletRequest request) {
+  private @Nullable String cookieValue(HttpServletRequest request) {
     Cookie[] cookies = request.getCookies();
     if (cookies == null) {
       return null;
     }
     for (Cookie cookie : cookies) {
-      if (SessionCookie.NAME.equals(cookie.getName())) {
+      if (cookieName.equals(cookie.getName())) {
         return cookie.getValue();
       }
     }

@@ -5,7 +5,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.turnbase.platform.common.AuthenticatedUser;
+import io.turnbase.platform.common.PlatformOriginProperties;
 import io.turnbase.platform.common.SessionCookie;
+import io.turnbase.platform.common.SessionCookies;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
@@ -28,8 +30,33 @@ import org.springframework.mock.web.MockHttpServletResponse;
 class SessionAuthenticationFilterTest {
 
   private final SessionService sessionService = mock(SessionService.class);
+  private final SessionCookies plainCookies =
+      new SessionCookies(new PlatformOriginProperties("http://turnbase.localhost:8080"));
   private final SessionAuthenticationFilter filter =
-      new SessionAuthenticationFilter(sessionService);
+      new SessionAuthenticationFilter(sessionService, plainCookies);
+
+  @Test
+  void underTlsOnlyTheHostPrefixedCookieIsRead() throws Exception {
+    SessionCookies tls = new SessionCookies(new PlatformOriginProperties("https://turnbase.io"));
+    SessionAuthenticationFilter tlsFilter = new SessionAuthenticationFilter(sessionService, tls);
+    MockHttpServletRequest plainName = requestWithCookie("tok");
+    MockHttpServletRequest hostName = new MockHttpServletRequest();
+    hostName.setCookies(new Cookie("__Host-turnbase_session", "tok"));
+    when(sessionService.resolve("tok"))
+        .thenReturn(new SessionService.Resolution.Invalid("invalid"));
+
+    CapturingChain chain = new CapturingChain();
+    tlsFilter.doFilter(plainName, new MockHttpServletResponse(), chain);
+    assertThat(
+            chain.seenRequest.getAttribute(
+                SessionAuthenticationFilter.AUTH_FAILURE_REASON_ATTRIBUTE))
+        .isNull();
+    tlsFilter.doFilter(hostName, new MockHttpServletResponse(), chain);
+    assertThat(
+            chain.seenRequest.getAttribute(
+                SessionAuthenticationFilter.AUTH_FAILURE_REASON_ATTRIBUTE))
+        .isEqualTo("invalid");
+  }
 
   @Test
   void aRequestWithNoCookiePassesThroughWithNoPrincipalAndNoFailureReason() throws Exception {

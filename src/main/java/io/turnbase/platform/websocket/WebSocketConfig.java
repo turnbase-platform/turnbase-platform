@@ -1,5 +1,6 @@
 package io.turnbase.platform.websocket;
 
+import io.turnbase.platform.common.SessionCookies;
 import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -35,6 +36,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
   private final WebSocketChannelInterceptor channelInterceptor;
   private final WebSocketTraceInterceptor traceInterceptor;
   private final JsonMapper jsonMapper;
+  private final SessionCookies sessionCookies;
 
   /**
    * {@code @Lazy}: this configurer is itself a dependency of {@code
@@ -48,7 +50,9 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
   WebSocketConfig(
       @Lazy WebSocketChannelInterceptor channelInterceptor,
       WebSocketTraceInterceptor traceInterceptor,
-      JsonMapper jsonMapper) {
+      JsonMapper jsonMapper,
+      SessionCookies sessionCookies) {
+    this.sessionCookies = sessionCookies;
     this.jsonMapper = jsonMapper;
     this.traceInterceptor = traceInterceptor;
     this.channelInterceptor = channelInterceptor;
@@ -56,7 +60,9 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   @Override
   public void registerStompEndpoints(StompEndpointRegistry registry) {
-    registry.addEndpoint("/ws").addInterceptors(new SessionCookieHandshakeInterceptor());
+    registry
+        .addEndpoint("/ws")
+        .addInterceptors(new SessionCookieHandshakeInterceptor(sessionCookies));
   }
 
   @Override

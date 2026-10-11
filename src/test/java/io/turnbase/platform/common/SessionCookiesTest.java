@@ -15,7 +15,7 @@ class SessionCookiesTest {
         new SessionCookies(new PlatformOriginProperties("https://turnbase.io"));
 
     assertThat(cookies.issue("tok", LATER).toString())
-        .contains("turnbase_session=tok")
+        .contains("__Host-turnbase_session=tok")
         .contains("HttpOnly")
         .contains("Secure")
         .contains("SameSite=Strict")
@@ -32,5 +32,18 @@ class SessionCookiesTest {
         .contains("HttpOnly")
         .doesNotContain("Secure");
     assertThat(cookies.clear().toString()).doesNotContain("Secure");
+  }
+
+  @Test
+  void theCookieNameFollowsTheOriginAndAHostPrefixedCookieHasNoDomainAndRootPath() {
+    SessionCookies tls = new SessionCookies(new PlatformOriginProperties("https://turnbase.io"));
+    SessionCookies plain =
+        new SessionCookies(new PlatformOriginProperties("http://turnbase.localhost:8080"));
+
+    assertThat(tls.name()).isEqualTo("__Host-turnbase_session");
+    assertThat(tls.issue("tok", LATER).toString()).doesNotContain("Domain");
+    assertThat(tls.clear().toString()).startsWith("__Host-turnbase_session=;");
+    assertThat(plain.name()).isEqualTo("turnbase_session");
+    assertThat(plain.issue("tok", LATER).toString()).startsWith("turnbase_session=tok");
   }
 }

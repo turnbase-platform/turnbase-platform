@@ -1,6 +1,6 @@
 package io.turnbase.platform.websocket;
 
-import io.turnbase.platform.common.SessionCookie;
+import io.turnbase.platform.common.SessionCookies;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
@@ -24,6 +24,12 @@ class SessionCookieHandshakeInterceptor implements HandshakeInterceptor {
 
   static final String SESSION_TOKEN_ATTRIBUTE = "turnbase.sessionToken";
 
+  private final String cookieName;
+
+  SessionCookieHandshakeInterceptor(SessionCookies sessionCookies) {
+    this.cookieName = sessionCookies.name();
+  }
+
   @Override
   public boolean beforeHandshake(
       ServerHttpRequest request,
@@ -46,13 +52,13 @@ class SessionCookieHandshakeInterceptor implements HandshakeInterceptor {
       WebSocketHandler wsHandler,
       @Nullable Exception exception) {}
 
-  private static @Nullable String cookieValue(HttpServletRequest request) {
+  private @Nullable String cookieValue(HttpServletRequest request) {
     Cookie[] cookies = request.getCookies();
     if (cookies == null) {
       return null;
     }
     for (Cookie cookie : cookies) {
-      if (SessionCookie.NAME.equals(cookie.getName())) {
+      if (cookieName.equals(cookie.getName())) {
         return cookie.getValue();
       }
     }
