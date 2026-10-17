@@ -2,6 +2,7 @@ package io.turnbase.platform.game;
 
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * {@code local-environment.md} §7.8 — the monolith's side of the liveness contract. {@code
@@ -11,7 +12,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "turnbase.orchestration")
 public record OrchestrationProperties(
-    Duration heartbeatInterval, Duration leaseTtl, Duration dispatchDeadline) {
+    Duration heartbeatInterval,
+    Duration leaseTtl,
+    Duration dispatchDeadline,
+    @DefaultValue("40s") Duration hostWait,
+    @DefaultValue("60s") Duration quarantineTtl) {
 
   public OrchestrationProperties {
     if (leaseTtl.compareTo(heartbeatInterval.multipliedBy(2)) < 0) {

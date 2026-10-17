@@ -45,6 +45,22 @@ class RoomService {
   private final GameFrontendProperties frontend;
   private final SessionTerminator terminator;
   private final AlertPublisher alertPublisher;
+  private final RoomStartStatusPublisher startStatus;
+
+  /**
+   * The text for the host's unicast {@code GAME_START_FAILED}: what happened and what to do about
+   * it. Written here, never taken from the failure — that can be text from game code.
+   */
+  private static String startFailureMessage(
+      GameSessionService.GameSessionCreationException.Reason reason) {
+    return switch (reason) {
+      case NO_HOST_AVAILABLE ->
+          "No game server is available right now. It may still be starting; try again in a minute.";
+      case HOST_UNRESPONSIVE ->
+          "The game server did not respond and has been set aside. Try again in a minute.";
+      case SESSION_CREATION_FAILED -> "The game could not be set up. Try again.";
+    };
+  }
 
   RoomService(
       RoomRepository repository,
@@ -55,7 +71,8 @@ class RoomService {
       GameSessionService gameSessions,
       GameFrontendProperties frontend,
       SessionTerminator terminator,
-      AlertPublisher alertPublisher) {
+      AlertPublisher alertPublisher,
+      RoomStartStatusPublisher startStatus) {
     this.repository = repository;
     this.ownership = ownership;
     this.events = events;
@@ -65,6 +82,7 @@ class RoomService {
     this.frontend = frontend;
     this.terminator = terminator;
     this.alertPublisher = alertPublisher;
+    this.startStatus = startStatus;
   }
 
   /** {@code room-rest-api.md} §2. */
@@ -521,12 +539,16 @@ class RoomService {
         roomId,
         () -> {
           repository.checkStartConditions(roomId, hostUserId);
+          startStatus.starting(roomId);
           try {
-            gameSessions.create(repository.sessionCommand(roomId, sessionId));
+            gameSessions.create(
+                repository.sessionCommand(roomId, sessionId),
+                phase -> startStatus.phase(roomId, phase));
           } catch (GameSessionService.GameSessionCreationException e) {
+            startStatus.failed(roomId, e.reason().name());
             throw new RoomCommandException(
                 "GAME_START_FAILED",
-                "The game could not be started. Try again.",
+                startFailureMessage(e.reason()),
                 Map.of("reason", e.reason().name()));
           }
           String gameFrontendUrl = gameFrontendUrl(roomId, sessionId);

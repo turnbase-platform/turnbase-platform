@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
@@ -122,6 +121,20 @@ class HostRegistry {
     redis.opsForSet().remove(HOSTS, instanceId);
   }
 
+  /**
+   * Takes an instance out of selection for {@code quarantine-ttl}: a host that held a {@code
+   * CreateSession} past its deadline is alive (lease, heartbeat, health) but cannot boot a guest —
+   * the lease alone cannot tell. The key expires on its own, so a host that was only slow is routed
+   * to again.
+   */
+  void quarantine(String instanceId) {
+    redis.opsForValue().set(quarantineKey(instanceId), "1", properties.quarantineTtl());
+  }
+
+  boolean isQuarantined(String instanceId) {
+    return Boolean.TRUE.equals(redis.hasKey(quarantineKey(instanceId)));
+  }
+
   /** The dial address, always re-read — never copied into {@code routing:}. */
   Optional<String> addressOf(String instanceId) {
     return Optional.ofNullable((String) redis.opsForHash().get(hostKey(instanceId), "address"));
@@ -132,16 +145,21 @@ class HostRegistry {
   }
 
   /**
-   * §11's deterministic rule: live lease, not draining, lists {@code jvm}; prefer a warm host, then
-   * lowest {@code activeSessions}, then lexical {@code instanceId}. A member whose {@code host:}
-   * entry has expired is dropped from {@code hosts} as it is met.
+   * §11's deterministic rule: live lease, not draining, not quarantined, lists {@code jvm}; prefer
+   * a warm host, then lowest {@code activeSessions}, then lexical {@code instanceId}. A member
+   * whose {@code host:} entry has expired is dropped from {@code hosts} as it is met.
    */
   Optional<String> selectHost(String gameId, String gameVersion) {
-    return selectHost(gameId, gameVersion, null);
+    return selectHost(gameId, gameVersion, Set.of());
   }
 
   /** As {@link #selectHost(String, String)}, never choosing {@code excluded} (a failed host). */
-  Optional<String> selectHost(String gameId, String gameVersion, @Nullable String excluded) {
+  Optional<String> selectHost(String gameId, String gameVersion, String excluded) {
+    return selectHost(gameId, gameVersion, Set.of(excluded));
+  }
+
+  /** As above, for several failed hosts. */
+  Optional<String> selectHost(String gameId, String gameVersion, Set<String> excluded) {
     Set<String> members = redis.opsForSet().members(HOSTS);
     if (members == null) {
       return Optional.empty();
@@ -149,7 +167,7 @@ class HostRegistry {
     String contextKey = gameId + ":" + gameVersion;
     List<Candidate> candidates = new ArrayList<>();
     for (String instanceId : members) {
-      if (instanceId.equals(excluded)) {
+      if (excluded.contains(instanceId)) {
         continue;
       }
       Map<Object, Object> entry = redis.opsForHash().entries(hostKey(instanceId));
@@ -157,7 +175,9 @@ class HostRegistry {
         redis.opsForSet().remove(HOSTS, instanceId);
         continue;
       }
-      if (!isLive(instanceId) || "true".equals(entry.get("draining"))) {
+      if (!isLive(instanceId)
+          || "true".equals(entry.get("draining"))
+          || isQuarantined(instanceId)) {
         continue;
       }
       if (!List.of(String.valueOf(entry.get("runtimeTypes")).split(",")).contains("jvm")) {
@@ -187,6 +207,10 @@ class HostRegistry {
 
   private static String leaseKey(String instanceId) {
     return "hostlease:" + instanceId;
+  }
+
+  private static String quarantineKey(String instanceId) {
+    return "hostquarantine:" + instanceId;
   }
 
   private static String contextsKey(String instanceId) {

@@ -183,6 +183,9 @@ services:
   # No `build:` block — see the header note. Build turnbase/game-host:dev separately first.
   gamehost:
     image: turnbase/game-host:dev
+    # The Game Host exits (code 70) when a guest boot wedges (ADR-0018); only a supervisor can
+    # bring it back. `unless-stopped`, so `docker compose stop` still stops it.
+    restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy

@@ -96,6 +96,8 @@ turnbase:
     heartbeat-interval: ${TURNBASE_ORCHESTRATION_HEARTBEAT_INTERVAL:5s}
     lease-ttl: ${TURNBASE_ORCHESTRATION_LEASE_TTL:15s}
     dispatch-deadline: ${TURNBASE_ORCHESTRATION_DISPATCH_DEADLINE:35s}
+    host-wait: ${TURNBASE_ORCHESTRATION_HOST_WAIT:40s}
+    quarantine-ttl: ${TURNBASE_ORCHESTRATION_QUARANTINE_TTL:60s}
   jobs:
     deadline-sweep:
       interval: ${TURNBASE_JOBS_DEADLINE_SWEEP_INTERVAL:5s}

@@ -73,6 +73,7 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
         SpringApplication.run(
             TurnBaseApplication.class,
             "--server.port=0",
+            "--turnbase.orchestration.host-wait=0s",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
             "--spring.datasource.username=" + POSTGRES.getUsername(),
