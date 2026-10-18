@@ -181,6 +181,16 @@ turnbase:
       registration:
         capacity: ${TURNBASE_RATE_LIMIT_MINTING_REGISTRATION_CAPACITY:3}
         window: ${TURNBASE_RATE_LIMIT_MINTING_REGISTRATION_WINDOW:1h}
+    # rate-limiting.md § Per-mechanism switches: a mechanism acts only when `enabled` above and its
+    # own switch are both true. Any false needs the test, e2e or loadtest profile
+    # (RateLimitEnabledProfileCheck); the loadtest profile turns them off, application-loadtest.yml.
+    switches:
+      auth-lockout: ${TURNBASE_RATE_LIMIT_SWITCHES_AUTH_LOCKOUT:true}
+      api: ${TURNBASE_RATE_LIMIT_SWITCHES_API:true}
+      upload: ${TURNBASE_RATE_LIMIT_SWITCHES_UPLOAD:true}
+      public: ${TURNBASE_RATE_LIMIT_SWITCHES_PUBLIC:true}
+      guest-minting: ${TURNBASE_RATE_LIMIT_SWITCHES_GUEST_MINTING:true}
+      registration-minting: ${TURNBASE_RATE_LIMIT_SWITCHES_REGISTRATION_MINTING:true}
     # IMP-M2-02: Tier 6 (rate-limiting.md § Tier 6), pod-local — a separate properties class from
     # the tiers above, per common.RateLimitProperties's own note that this group is not its concern.
     # capacity is the burst limit; refill-tokens per refill-period is the sustained rate.
@@ -215,6 +225,15 @@ turnbase:
       lockout:
         initial: ${TURNBASE_RATE_LIMIT_WS_LOCKOUT_INITIAL:30s}
         max: ${TURNBASE_RATE_LIMIT_WS_LOCKOUT_MAX:15m}
+      switches:
+        connection: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_CONNECTION:true}
+        snapshot: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_SNAPSHOT:true}
+        action: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_ACTION:true}
+        chat: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_CHAT:true}
+        command: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_COMMAND:true}
+        subscribe: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_SUBSCRIBE:true}
+        violation-lockout: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_VIOLATION_LOCKOUT:true}
+        max-connections-per-user: ${TURNBASE_RATE_LIMIT_WS_SWITCHES_MAX_CONNECTIONS_PER_USER:true}
   security:
     trusted-proxies: ${TURNBASE_SECURITY_TRUSTED_PROXIES:10.0.0.0/8,172.16.0.0/12}
   platform:

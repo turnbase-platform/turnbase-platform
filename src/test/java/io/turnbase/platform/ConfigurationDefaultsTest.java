@@ -17,6 +17,7 @@ import io.turnbase.platform.room.RoomProperties;
 import io.turnbase.platform.session.AuthProperties;
 import io.turnbase.platform.social.SocialProperties;
 import io.turnbase.platform.upload.UploadProperties;
+import io.turnbase.platform.websocket.WebSocketRateLimitProperties;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -94,6 +95,24 @@ class ConfigurationDefaultsTest {
 
           RateLimitProperties rateLimit = context.getBean(RateLimitProperties.class);
           assertThat(rateLimit.enabled()).isTrue();
+          RateLimitProperties.Switches switches = rateLimit.switches();
+          assertThat(switches.authLockout()).isTrue();
+          assertThat(switches.api()).isTrue();
+          assertThat(switches.upload()).isTrue();
+          assertThat(switches.publicTier()).isTrue();
+          assertThat(switches.guestMinting()).isTrue();
+          assertThat(switches.registrationMinting()).isTrue();
+
+          WebSocketRateLimitProperties.Switches wsSwitches =
+              context.getBean(WebSocketRateLimitProperties.class).switches();
+          assertThat(wsSwitches.connection()).isTrue();
+          assertThat(wsSwitches.snapshot()).isTrue();
+          assertThat(wsSwitches.action()).isTrue();
+          assertThat(wsSwitches.chat()).isTrue();
+          assertThat(wsSwitches.command()).isTrue();
+          assertThat(wsSwitches.subscribe()).isTrue();
+          assertThat(wsSwitches.violationLockout()).isTrue();
+          assertThat(wsSwitches.maxConnectionsPerUser()).isTrue();
 
           SecurityProperties security = context.getBean(SecurityProperties.class);
           assertThat(security.trustedProxies()).containsExactly("10.0.0.0/8", "172.16.0.0/12");
@@ -114,6 +133,35 @@ class ConfigurationDefaultsTest {
         });
   }
 
+  @Test
+  void loadtestProfileTurnsEverySwitchOffExceptTheConnectionCap() {
+    contextRunner
+        .withPropertyValues("spring.profiles.active=local,loadtest")
+        .run(
+            context -> {
+              RateLimitProperties rateLimit = context.getBean(RateLimitProperties.class);
+              assertThat(rateLimit.enabled()).isTrue();
+              RateLimitProperties.Switches switches = rateLimit.switches();
+              assertThat(switches.authLockout()).isFalse();
+              assertThat(switches.api()).isFalse();
+              assertThat(switches.upload()).isFalse();
+              assertThat(switches.publicTier()).isFalse();
+              assertThat(switches.guestMinting()).isFalse();
+              assertThat(switches.registrationMinting()).isFalse();
+
+              WebSocketRateLimitProperties.Switches ws =
+                  context.getBean(WebSocketRateLimitProperties.class).switches();
+              assertThat(ws.connection()).isFalse();
+              assertThat(ws.snapshot()).isFalse();
+              assertThat(ws.action()).isFalse();
+              assertThat(ws.chat()).isFalse();
+              assertThat(ws.command()).isFalse();
+              assertThat(ws.subscribe()).isFalse();
+              assertThat(ws.violationLockout()).isFalse();
+              assertThat(ws.maxConnectionsPerUser()).isTrue();
+            });
+  }
+
   @Configuration
   @EnableConfigurationProperties({
     RoomProperties.class,
@@ -126,6 +174,7 @@ class ConfigurationDefaultsTest {
     UploadProperties.class,
     HttpProperties.class,
     RateLimitProperties.class,
+    WebSocketRateLimitProperties.class,
     SecurityProperties.class,
     PlatformOriginProperties.class,
     GameFrontendProperties.class,

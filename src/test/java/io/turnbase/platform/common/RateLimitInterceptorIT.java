@@ -1,6 +1,7 @@
 package io.turnbase.platform.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
@@ -60,6 +61,7 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
   void stopApplication() {
     if (context != null) {
       context.close();
+      context = null;
     }
   }
 
@@ -286,7 +288,7 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
   }
 
   @Test
-  void rateLimitingCanBeDisabledOnlyUnderTestOrE2eProfile() {
+  void rateLimitingCanBeDisabledOnlyUnderTestE2eOrLoadtestProfile() {
     bootApplication(
         "--spring.profiles.active=test",
         "--turnbase.rate-limit.enabled=false",
@@ -296,6 +298,161 @@ class RateLimitInterceptorIT extends PostgresIntegrationTest {
     for (int i = 0; i < 5; i++) {
       assertThat(guest().getStatusCode()).isEqualTo(HttpStatus.CREATED);
     }
+    stopApplication();
+
+    bootApplication(
+        "--spring.profiles.active=loadtest",
+        "--turnbase.rate-limit.enabled=false",
+        "--turnbase.rate-limit.minting.guest.capacity=1",
+        "--turnbase.rate-limit.minting.guest.window=1h");
+    for (int i = 0; i < 5; i++) {
+      assertThat(guest().getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    }
+    stopApplication();
+
+    assertThatThrownBy(
+            () ->
+                bootApplication(
+                    "--spring.profiles.active=local", "--turnbase.rate-limit.switches.api=false"))
+        .hasStackTraceContaining("turnbase.rate-limit.switches.api")
+        .hasStackTraceContaining("only honoured under the test, e2e or loadtest profile");
+  }
+
+  @Test
+  void disabledApiTierAdmitsMoreThanItsCapacity() {
+    bootApplication(
+        "--spring.profiles.active=test",
+        "--turnbase.rate-limit.switches.api=false",
+        "--turnbase.rate-limit.api.capacity=2",
+        "--turnbase.rate-limit.api.window=1h",
+        "--turnbase.rate-limit.minting.guest.capacity=1000");
+
+    String cookie = sessionCookieHeader(guest());
+
+    for (int i = 0; i < 6; i++) {
+      ResponseEntity<String> response = getWithCookie("/api/auth/session", cookie);
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+      assertThat(response.getHeaders().getFirst("X-RateLimit-Limit")).isNull();
+    }
+    assertThat(redisKeyCount("*rate:api:*")).isZero();
+  }
+
+  @Test
+  void disabledUploadTierDoesNotFallThroughToTheApiBucket() {
+    bootApplication(
+        "--spring.profiles.active=test",
+        "--turnbase.rate-limit.switches.upload=false",
+        "--turnbase.rate-limit.api.capacity=2",
+        "--turnbase.rate-limit.api.window=1h",
+        "--turnbase.rate-limit.upload.capacity=1",
+        "--turnbase.rate-limit.upload.window=1h",
+        "--turnbase.rate-limit.minting.guest.capacity=1000");
+
+    String cookie = sessionCookieHeader(guest());
+
+    // The route may answer 4xx for other reasons, but never 429, and neither bucket is touched.
+    for (int i = 0; i < 6; i++) {
+      ResponseEntity<String> response =
+          postWithCookie("/api/games/some-game/versions", cookie, "{}");
+      assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+    }
+    assertThat(redisKeyCount("*rate:upload:*")).isZero();
+    assertThat(redisKeyCount("*rate:api:*")).isZero();
+  }
+
+  @Test
+  void disabledPublicTierAdmitsMoreThanItsCapacity() {
+    bootApplication(
+        "--spring.profiles.active=test",
+        "--turnbase.rate-limit.switches.public=false",
+        "--turnbase.rate-limit.public.capacity=2",
+        "--turnbase.rate-limit.public.window=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1000",
+        "--turnbase.rate-limit.auth.failures-before-lockout=1000");
+
+    String username = uniqueUsername();
+    register(username, uniqueEmail(), "correct horse battery", "correct horse battery");
+
+    for (int i = 0; i < 6; i++) {
+      assertThat(get("/api/users/" + username).getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+    assertThat(redisKeyCount("*rate:public:*")).isZero();
+  }
+
+  @Test
+  void disabledAuthLockoutNeverLocksOutRepeatedBadLogins() {
+    bootApplication(
+        "--spring.profiles.active=test",
+        "--turnbase.rate-limit.switches.auth-lockout=false",
+        "--turnbase.rate-limit.auth.failures-before-lockout=2",
+        "--turnbase.rate-limit.auth.initial-lockout=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1000");
+
+    String username = uniqueUsername();
+    register(username, uniqueEmail(), "correct horse battery", "correct horse battery");
+
+    for (int i = 0; i < 6; i++) {
+      assertThat(login(username, "wrong password").getStatusCode())
+          .isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+    assertThat(login(username, "correct horse battery").getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(redisKeyCount("rate:auth:*")).isZero();
+  }
+
+  @Test
+  void disabledGuestMintingDoesNotAffectRegistrationMinting() {
+    bootApplication(
+        "--spring.profiles.active=test",
+        "--turnbase.rate-limit.switches.guest-minting=false",
+        "--turnbase.rate-limit.minting.guest.capacity=1",
+        "--turnbase.rate-limit.minting.guest.window=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1",
+        "--turnbase.rate-limit.minting.registration.window=1h");
+
+    for (int i = 0; i < 4; i++) {
+      assertThat(guest().getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    }
+    assertThat(
+            register(
+                    uniqueUsername(),
+                    uniqueEmail(),
+                    "correct horse battery",
+                    "correct horse battery")
+                .getStatusCode())
+        .isEqualTo(HttpStatus.CREATED);
+    assertThat(
+            register(
+                    uniqueUsername(),
+                    uniqueEmail(),
+                    "correct horse battery",
+                    "correct horse battery")
+                .getStatusCode())
+        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+  }
+
+  @Test
+  void disabledRegistrationMintingDoesNotAffectGuestMinting() {
+    bootApplication(
+        "--spring.profiles.active=test",
+        "--turnbase.rate-limit.switches.registration-minting=false",
+        "--turnbase.rate-limit.minting.guest.capacity=1",
+        "--turnbase.rate-limit.minting.guest.window=1h",
+        "--turnbase.rate-limit.minting.registration.capacity=1",
+        "--turnbase.rate-limit.minting.registration.window=1h",
+        "--turnbase.rate-limit.auth.failures-before-lockout=1000");
+
+    for (int i = 0; i < 4; i++) {
+      assertThat(
+              register(
+                      uniqueUsername(),
+                      uniqueEmail(),
+                      "correct horse battery",
+                      "correct horse battery")
+                  .getStatusCode())
+          .isEqualTo(HttpStatus.CREATED);
+    }
+    assertThat(guest().getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    assertThat(guest().getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
   }
 
   // ---- boot and HTTP helpers ----

@@ -156,7 +156,11 @@ class WebSocketChannelInterceptor implements ChannelInterceptor {
       throw new WebSocketAuthenticationException(
           "Too many rate-limit violations. Please try again later.");
     }
-    if (!registry.tryRegister(stompSessionId, user, properties.maxConnectionsPerUser())) {
+    int connectionCap =
+        rateLimiter.connectionCapEnforced()
+            ? properties.maxConnectionsPerUser()
+            : Integer.MAX_VALUE;
+    if (!registry.tryRegister(stompSessionId, user, connectionCap)) {
       throw new WebSocketAuthenticationException(
           "Too many concurrent connections for this account.");
     }

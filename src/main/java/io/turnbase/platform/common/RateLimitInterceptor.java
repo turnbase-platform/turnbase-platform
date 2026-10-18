@@ -147,11 +147,11 @@ class RateLimitInterceptor implements HandlerInterceptor {
     String method = request.getMethod();
     String path = pathOf(request);
 
-    if (isTier1(method, path)) {
+    if (properties.switches().authLockout() && isTier1(method, path)) {
       admitAuthAttempt(request);
     }
     try {
-      if (isTier5(method, path)) {
+      if (isTier5(method, path) && mintingEnabled(path)) {
         consumeMintingToken(request, path);
       }
 
@@ -243,6 +243,13 @@ class RateLimitInterceptor implements HandlerInterceptor {
 
   // ---- Tier 5 — account minting (IP, success-counting) ----
 
+  /** The guest and registration paths are switched independently ({@code rate-limiting.md}). */
+  private boolean mintingEnabled(String path) {
+    return GUEST_PATH.equals(path)
+        ? properties.switches().guestMinting()
+        : properties.switches().registrationMinting();
+  }
+
   private void consumeMintingToken(HttpServletRequest request, String path) {
     boolean registration = !GUEST_PATH.equals(path);
     RateLimitProperties.Bucket config =
@@ -270,6 +277,9 @@ class RateLimitInterceptor implements HandlerInterceptor {
       return null;
     }
     if (isPublicRead(method, path) || isOAuthRedirect(method, path)) {
+      if (!properties.switches().publicTier()) {
+        return null;
+      }
       return new Classification(
           "rate:public:" + ipResolver.resolve(request), properties.publicTier(), false);
     }
@@ -278,9 +288,14 @@ class RateLimitInterceptor implements HandlerInterceptor {
       return null;
     }
     if (isUploadVersionCreate(method, path)) {
-      return new Classification("rate:upload:" + user.userId(), properties.upload(), false);
+      // A disabled upload tier admits the request: it must not fall through to the api bucket.
+      return properties.switches().upload()
+          ? new Classification("rate:upload:" + user.userId(), properties.upload(), false)
+          : null;
     }
-    return new Classification("rate:api:" + user.userId(), properties.api(), true);
+    return properties.switches().api()
+        ? new Classification("rate:api:" + user.userId(), properties.api(), true)
+        : null;
   }
 
   private void consumeGeneralBucket(

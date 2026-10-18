@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -11,6 +12,7 @@ import com.github.benmanes.caffeine.cache.Ticker;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.RateLimitMetrics;
+import io.turnbase.platform.common.RateLimitProperties;
 import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,7 @@ class WebSocketRateLimiterTest {
   private final ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
 
   private final RateLimitMetrics metrics = new RateLimitMetrics(new SimpleMeterRegistry());
+  private final RateLimitProperties masterOn = master(true);
   private final AuthenticatedUser user =
       new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID());
 
@@ -65,8 +68,9 @@ class WebSocketRateLimiterTest {
             20,
             Duration.ofSeconds(10),
             new WebSocketRateLimitProperties.Lockout(
-                Duration.ofSeconds(30), Duration.ofMinutes(15)));
-    var limiter = new WebSocketRateLimiter(properties, stringRedisTemplate, metrics);
+                Duration.ofSeconds(30), Duration.ofMinutes(15)),
+            WebSocketRateLimitProperties.Switches.allEnabled());
+    var limiter = new WebSocketRateLimiter(masterOn, properties, stringRedisTemplate, metrics);
 
     for (int i = 0; i < 5; i++) {
       var decision = limiter.checkFrame(user, "s1", StompCommand.UNSUBSCRIBE, null);
@@ -129,6 +133,20 @@ class WebSocketRateLimiterTest {
 
   private WebSocketRateLimiter newLimiter(
       WebSocketRateLimitProperties.Bucket everyBucket, int violationsBeforeClose, Ticker ticker) {
+    return newLimiter(
+        masterOn,
+        everyBucket,
+        violationsBeforeClose,
+        WebSocketRateLimitProperties.Switches.allEnabled(),
+        ticker);
+  }
+
+  private WebSocketRateLimiter newLimiter(
+      RateLimitProperties master,
+      WebSocketRateLimitProperties.Bucket everyBucket,
+      int violationsBeforeClose,
+      WebSocketRateLimitProperties.Switches switches,
+      Ticker ticker) {
     WebSocketRateLimitProperties properties =
         new WebSocketRateLimitProperties(
             everyBucket,
@@ -141,13 +159,165 @@ class WebSocketRateLimiterTest {
             violationsBeforeClose,
             Duration.ofSeconds(10),
             new WebSocketRateLimitProperties.Lockout(
-                Duration.ofSeconds(30), Duration.ofMinutes(15)));
-    return new WebSocketRateLimiter(properties, stringRedisTemplate, metrics, ticker);
+                Duration.ofSeconds(30), Duration.ofMinutes(15)),
+            switches);
+    return new WebSocketRateLimiter(master, properties, stringRedisTemplate, metrics, ticker);
+  }
+
+  private static RateLimitProperties master(boolean enabled) {
+    return new RateLimitProperties(
+        enabled,
+        new RateLimitProperties.Auth(5, Duration.ofSeconds(30)),
+        new RateLimitProperties.Bucket(100, Duration.ofSeconds(10)),
+        new RateLimitProperties.Bucket(10, Duration.ofHours(1)),
+        new RateLimitProperties.Bucket(200, Duration.ofMinutes(1)),
+        new RateLimitProperties.Minting(
+            new RateLimitProperties.Bucket(5, Duration.ofHours(1)),
+            new RateLimitProperties.Bucket(3, Duration.ofHours(1))),
+        RateLimitProperties.Switches.allEnabled());
+  }
+
+  /** All-enabled switches with the named ones turned off. */
+  private static WebSocketRateLimitProperties.Switches without(String... names) {
+    var off = java.util.Set.of(names);
+    return new WebSocketRateLimitProperties.Switches(
+        !off.contains("connection"),
+        !off.contains("snapshot"),
+        !off.contains("action"),
+        !off.contains("chat"),
+        !off.contains("command"),
+        !off.contains("subscribe"),
+        !off.contains("violationLockout"),
+        !off.contains("maxConnectionsPerUser"));
   }
 
   private static WebSocketRateLimitProperties.Bucket bucket(
       int capacity, int refillTokens, Duration refillPeriod) {
     return new WebSocketRateLimitProperties.Bucket(capacity, refillTokens, refillPeriod);
+  }
+
+  @Test
+  void disabledMasterSwitchAllowsEveryFrame() {
+    var limiter =
+        newLimiter(
+            master(false),
+            bucket(1, 1, Duration.ofHours(1)),
+            1,
+            WebSocketRateLimitProperties.Switches.allEnabled(),
+            Ticker.systemTicker());
+    when(valueOperations.get(anyString())).thenReturn(String.valueOf(Long.MAX_VALUE));
+
+    for (int i = 0; i < 10; i++) {
+      var decision = limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/room.x.chat");
+      assertThat(decision).isInstanceOf(WebSocketRateLimiter.FrameDecision.Allow.class);
+    }
+    assertThat(limiter.isLockedOut(user.userId())).isFalse();
+    assertThat(limiter.connectionCapEnforced()).isFalse();
+  }
+
+  @Test
+  void disabledConnectionBucketAllowsFramesThatWouldExhaustIt() {
+    var limiter =
+        newLimiter(
+            masterOn,
+            bucket(1, 1, Duration.ofHours(1)),
+            20,
+            without("connection"),
+            Ticker.systemTicker());
+
+    // Unclassified frames touch only the connection bucket.
+    for (int i = 0; i < 5; i++) {
+      var decision = limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/unclassified");
+      assertThat(decision).isInstanceOf(WebSocketRateLimiter.FrameDecision.Allow.class);
+    }
+  }
+
+  @Test
+  void disabledClassBucketAllowsItsFramesButNotOthers() {
+    var limiter =
+        newLimiter(
+            masterOn,
+            bucket(1, 1, Duration.ofHours(1)),
+            20,
+            without("chat"),
+            Ticker.systemTicker());
+    // The connection bucket (capacity 1) would stop the second frame, so give it room first.
+    var roomy = bucket(100, 100, Duration.ofSeconds(1));
+    var props =
+        new WebSocketRateLimitProperties(
+            roomy,
+            roomy,
+            roomy,
+            bucket(1, 1, Duration.ofHours(1)),
+            bucket(1, 1, Duration.ofHours(1)),
+            roomy,
+            4,
+            20,
+            Duration.ofSeconds(10),
+            new WebSocketRateLimitProperties.Lockout(
+                Duration.ofSeconds(30), Duration.ofMinutes(15)),
+            without("chat"));
+    limiter = new WebSocketRateLimiter(masterOn, props, stringRedisTemplate, metrics);
+
+    for (int i = 0; i < 5; i++) {
+      var chat = limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/room.x.chat");
+      assertThat(chat).isInstanceOf(WebSocketRateLimiter.FrameDecision.Allow.class);
+    }
+    limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/room.x.member");
+    var command = limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/room.x.member");
+    assertThat(command).isInstanceOf(WebSocketRateLimiter.FrameDecision.Drop.class);
+  }
+
+  @Test
+  void disabledViolationLockoutDropsButNeverForceClosesOrWritesALockout() {
+    var limiter =
+        newLimiter(
+            masterOn,
+            bucket(1, 1, Duration.ofHours(1)),
+            1,
+            without("violationLockout"),
+            Ticker.systemTicker());
+
+    for (int i = 0; i < 10; i++) {
+      var decision = limiter.checkFrame(user, "s1", StompCommand.SEND, "/app/room.x.chat");
+      if (i > 0) {
+        assertThat(decision).isInstanceOf(WebSocketRateLimiter.FrameDecision.Drop.class);
+      }
+    }
+    verify(valueOperations, never()).set(anyString(), anyString(), any(Duration.class));
+    verify(valueOperations, never()).increment(anyString());
+  }
+
+  @Test
+  void disabledViolationLockoutMakesIsLockedOutFalseDespiteAStoredKey() {
+    var limiter =
+        newLimiter(
+            masterOn,
+            bucket(10, 10, Duration.ofSeconds(1)),
+            20,
+            without("violationLockout"),
+            Ticker.systemTicker());
+    when(valueOperations.get("rate:ws-lockout:until:" + user.userId()))
+        .thenReturn(String.valueOf(System.currentTimeMillis() + 60_000));
+
+    assertThat(limiter.isLockedOut(user.userId())).isFalse();
+  }
+
+  @Test
+  void connectionCapIsEnforcedOnlyWhenMasterAndItsOwnSwitchAreOn() {
+    var on =
+        newLimiter(
+            masterOn, bucket(1, 1, Duration.ofHours(1)), 20, without(), Ticker.systemTicker());
+    var off =
+        newLimiter(
+            masterOn,
+            bucket(1, 1, Duration.ofHours(1)),
+            20,
+            without("maxConnectionsPerUser"),
+            Ticker.systemTicker());
+
+    assertThat(on.connectionCapEnforced()).isTrue();
+    assertThat(off.connectionCapEnforced()).isFalse();
   }
 
   @Test

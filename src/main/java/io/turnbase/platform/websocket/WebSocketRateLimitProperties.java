@@ -2,6 +2,7 @@ package io.turnbase.platform.websocket;
 
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * {@code rate-limiting.md} § Tier 6, {@code turnbase.rate-limit.ws.*} — deliberately its own
@@ -11,9 +12,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * Refill.greedy(...))} shape Bucket4j expects, spelled out as two fields rather than parsed from a
  * single {@code "10/1s"} string.
  *
- * <p>Governed by {@code common.RateLimitProperties#enabled()} — Tier 6 shares that single top-level
- * kill switch rather than carrying a second one, per {@code rate-limiting.md} § Configuration's
- * rule that the escape hatch is one flag, gated to the {@code test}/{@code e2e} profiles.
+ * <p>Two-level rule ({@code rate-limiting.md} § Per-mechanism switches): a mechanism acts only when
+ * {@code common.RateLimitProperties#enabled()} — the master switch Tier 6 shares with Tiers 1-5 —
+ * <em>and</em> its own {@link Switches} flag are both {@code true}. Either may be {@code false}
+ * only under the {@code test}, {@code e2e} or {@code loadtest} profile.
  */
 @ConfigurationProperties(prefix = "turnbase.rate-limit.ws")
 public record WebSocketRateLimitProperties(
@@ -26,7 +28,26 @@ public record WebSocketRateLimitProperties(
     int maxConnectionsPerUser,
     int violationsBeforeClose,
     Duration violationWindow,
-    Lockout lockout) {
+    Lockout lockout,
+    @DefaultValue Switches switches) {
+
+  /**
+   * One flag per Tier 6 mechanism, each defaulting to {@code true} so a missing key fails closed.
+   */
+  public record Switches(
+      @DefaultValue("true") boolean connection,
+      @DefaultValue("true") boolean snapshot,
+      @DefaultValue("true") boolean action,
+      @DefaultValue("true") boolean chat,
+      @DefaultValue("true") boolean command,
+      @DefaultValue("true") boolean subscribe,
+      @DefaultValue("true") boolean violationLockout,
+      @DefaultValue("true") boolean maxConnectionsPerUser) {
+
+    public static Switches allEnabled() {
+      return new Switches(true, true, true, true, true, true, true, true);
+    }
+  }
 
   public record Bucket(int capacity, int refillTokens, Duration refillPeriod) {}
 

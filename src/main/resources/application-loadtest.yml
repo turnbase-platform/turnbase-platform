@@ -1,0 +1,21 @@
+# The loadtest profile (local-environment.md §7.6, load-testing.md §4 A1a): every rate-limit switch
+# off except the per-user WebSocket connection cap, with the master switch left on. Never active by
+# default; the load-test Helm overlay sets SPRING_PROFILES_ACTIVE=local,loadtest.
+turnbase:
+  rate-limit:
+    switches:
+      auth-lockout: false
+      api: false
+      upload: false
+      public: false
+      guest-minting: false
+      registration-minting: false
+    ws:
+      switches:
+        connection: false
+        snapshot: false
+        action: false
+        chat: false
+        command: false
+        subscribe: false
+        violation-lockout: false

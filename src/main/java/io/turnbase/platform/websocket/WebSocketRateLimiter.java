@@ -9,6 +9,7 @@ import io.github.bucket4j.ConsumptionProbe;
 import io.github.bucket4j.Refill;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.common.RateLimitMetrics;
+import io.turnbase.platform.common.RateLimitProperties;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -39,6 +40,7 @@ class WebSocketRateLimiter {
   private static final Duration BUCKET_IDLE = Duration.ofHours(1);
   private static final Duration NOTIFY_THROTTLE = Duration.ofSeconds(1);
 
+  private final RateLimitProperties masterProperties;
   private final WebSocketRateLimitProperties properties;
   private final StringRedisTemplate stringRedisTemplate;
   private final RateLimitMetrics metrics;
@@ -56,17 +58,20 @@ class WebSocketRateLimiter {
 
   @Autowired
   WebSocketRateLimiter(
+      RateLimitProperties masterProperties,
       WebSocketRateLimitProperties properties,
       StringRedisTemplate stringRedisTemplate,
       RateLimitMetrics metrics) {
-    this(properties, stringRedisTemplate, metrics, Ticker.systemTicker());
+    this(masterProperties, properties, stringRedisTemplate, metrics, Ticker.systemTicker());
   }
 
   WebSocketRateLimiter(
+      RateLimitProperties masterProperties,
       WebSocketRateLimitProperties properties,
       StringRedisTemplate stringRedisTemplate,
       RateLimitMetrics metrics,
       Ticker ticker) {
+    this.masterProperties = masterProperties;
     this.properties = properties;
     this.stringRedisTemplate = stringRedisTemplate;
     this.metrics = metrics;
@@ -88,7 +93,22 @@ class WebSocketRateLimiter {
     return buckets.estimatedSize() + violations.estimatedSize() + lastNotifiedAt.estimatedSize();
   }
 
+  /**
+   * Whether the per-user connection cap applies: the master switch and {@code
+   * ws.switches.max-connections-per-user} are both on.
+   */
+  boolean connectionCapEnforced() {
+    return masterProperties.enabled() && properties.switches().maxConnectionsPerUser();
+  }
+
+  private boolean lockoutEnabled() {
+    return masterProperties.enabled() && properties.switches().violationLockout();
+  }
+
   boolean isLockedOut(UUID userId) {
+    if (!lockoutEnabled()) {
+      return false;
+    }
     String lockedUntil =
         metrics.record(() -> stringRedisTemplate.opsForValue().get(LOCKOUT_UNTIL_PREFIX + userId));
     if (lockedUntil == null) {
@@ -103,13 +123,18 @@ class WebSocketRateLimiter {
       String stompSessionId,
       @Nullable StompCommand command,
       @Nullable String destination) {
-    ConsumptionProbe connectionProbe =
-        consume(user.userId(), "connection", properties.connection());
-    if (!connectionProbe.isConsumed()) {
-      return onViolation(user, stompSessionId, "connection", connectionProbe);
+    if (!masterProperties.enabled()) {
+      return new FrameDecision.Allow();
+    }
+    if (properties.switches().connection()) {
+      ConsumptionProbe connectionProbe =
+          consume(user.userId(), "connection", properties.connection());
+      if (!connectionProbe.isConsumed()) {
+        return onViolation(user, stompSessionId, "connection", connectionProbe);
+      }
     }
     String bucketName = classify(command, destination);
-    if (bucketName == null) {
+    if (bucketName == null || !bucketEnabled(bucketName)) {
       return new FrameDecision.Allow();
     }
     ConsumptionProbe classProbe = consume(user.userId(), bucketName, bucketConfig(bucketName));
@@ -140,6 +165,18 @@ class WebSocketRateLimiter {
       return "action";
     }
     return null;
+  }
+
+  private boolean bucketEnabled(String bucketName) {
+    WebSocketRateLimitProperties.Switches switches = properties.switches();
+    return switch (bucketName) {
+      case "subscribe" -> switches.subscribe();
+      case "chat" -> switches.chat();
+      case "command" -> switches.command();
+      case "snapshot" -> switches.snapshot();
+      case "action" -> switches.action();
+      default -> throw new IllegalArgumentException("unknown Tier 6 bucket " + bucketName);
+    };
   }
 
   private WebSocketRateLimitProperties.Bucket bucketConfig(String bucketName) {
@@ -175,7 +212,8 @@ class WebSocketRateLimiter {
   private FrameDecision onViolation(
       AuthenticatedUser user, String stompSessionId, String bucketName, ConsumptionProbe probe) {
     long retryAfterMs = Math.ceilDiv(probe.getNanosToWaitForRefill(), 1_000_000L);
-    if (recordViolationAndCheckSustained(stompSessionId)) {
+    // A disabled violation lockout neither counts the violation nor closes the connection.
+    if (lockoutEnabled() && recordViolationAndCheckSustained(stompSessionId)) {
       writeLockout(user.userId());
       return new FrameDecision.ForceClose("RATE_LIMIT_ABUSE");
     }
