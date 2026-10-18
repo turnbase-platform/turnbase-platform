@@ -79,6 +79,8 @@ postgres:
   ownerPassword: ""
   appUser: turnbase_app
   appPassword: ""
+  # Container resources; the load-test overlay (load-testing.md A1) pins requests == limits.
+  resources: {}
   storage:
     size: 2Gi
     storageClassName: ""
@@ -86,6 +88,8 @@ postgres:
 redis:
   image: redis:7-alpine
   password: ""
+  # As postgres.resources.
+  resources: {}
   storage:
     size: 1Gi
     storageClassName: ""

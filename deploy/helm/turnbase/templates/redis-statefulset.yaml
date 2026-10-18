@@ -34,6 +34,8 @@ spec:
           ports:
             - name: redis
               containerPort: 6379
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
           envFrom:
             - secretRef:
                 name: {{ .Release.Name }}-redis

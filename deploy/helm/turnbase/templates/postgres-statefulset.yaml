@@ -24,6 +24,8 @@ spec:
           ports:
             - name: postgres
               containerPort: 5432
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
           envFrom:
             - secretRef:
                 name: {{ .Release.Name }}-postgres
