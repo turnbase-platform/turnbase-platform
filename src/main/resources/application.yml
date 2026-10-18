@@ -61,6 +61,15 @@ management:
       # FR-MET-007's scrape config (observability.md §2) distinguishes the two jobs by
       # target, but a shared Grafana dashboard querying both series needs the label too.
       application: ${spring.application.name}
+    # observability.md §2 Exposure / platform-operations.md FR-MET-001: the latency quantiles
+    # and HighLatencyP95 need buckets; on by default, not only under load tests.
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      minimum-expected-value:
+        http.server.requests: 5ms
+      maximum-expected-value:
+        http.server.requests: 30s
   # observability.md §4/§7.9: the Micrometer Tracing bridge's own endpoint/sampling config.
   # Sampling is kept in agreement with the OpenTelemetry Java agent's
   # OTEL_TRACES_SAMPLER_ARG (Dockerfile) — the agent's variable is the one that decides where
