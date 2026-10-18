@@ -34,17 +34,26 @@ spec:
     spec:
       containers:
         - name: prometheus
-          # No custom scrape config: the actual FR-MET-* scrape targets and rule files are
-          # IMP-M0-10's job — the image's own default (self-scrape only) is enough to prove the
-          # container runs and Grafana can query it (matches deploy/compose's own posture).
           image: {{ .Values.observability.prometheus.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            {{- if .Values.observability.prometheus.remoteWriteReceiver }}
+            - --web.enable-remote-write-receiver
+            {{- end }}
           ports:
             - name: http
               containerPort: 9090
           volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
             - name: data
               mountPath: /prometheus
       volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-prometheus
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-prometheus-data

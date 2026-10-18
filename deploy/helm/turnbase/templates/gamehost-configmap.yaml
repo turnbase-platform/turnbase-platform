@@ -10,3 +10,10 @@ data:
   # <service-name>:<port> — local-environment.md §7.8 (IMP-GATE-09). platform is this chart's
   # own Platform Monolith Service.
   TURNBASE_GAMEHOST_ORCHESTRATION_ADDRESS: "{{ .Release.Name }}-platform:{{ .Values.platform.containerPort }}"
+  # The image defaults to the compose hostname `redis` and `minio`; this chart's Services carry
+  # the release name. Mirrors platform-configmap.yaml (the password and the scoped artifact
+  # credential are in gamehost-secret.yaml).
+  SPRING_DATA_REDIS_HOST: "{{ .Release.Name }}-redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  TURNBASE_ARTIFACT_STORE_ENDPOINT: "http://{{ .Release.Name }}-minio:9000"
+  TURNBASE_ARTIFACT_STORE_BUCKET: {{ .Values.minio.bucket | quote }}

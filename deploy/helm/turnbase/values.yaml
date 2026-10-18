@@ -40,6 +40,9 @@ platform:
   containerPort: 8080
   managementPort: 8081
   resources: {}
+  # Extra container env entries ({name, value} or {name, valueFrom}); they win over the ConfigMap.
+  # The load-test overlay (load-testing.md A1) uses it for SPRING_PROFILES_ACTIVE.
+  extraEnv: []
   # local-environment.md §6 (IMP-GATE-71, IMP-M3-10): directory of `<gameId>.zip` official-game
   # bundles the seeder uploads under the `local` profile. Empty = none mounted, no games seeded.
   # A hostPath, so it only means something on the single-node Docker Desktop cluster; set it in
@@ -65,6 +68,8 @@ gamehost:
   grpcPort: 9090
   managementPort: 8081
   resources: {}
+  # As platform.extraEnv.
+  extraEnv: []
 
 postgres:
   image: postgres:16-alpine
@@ -119,6 +124,8 @@ observability:
   enabled: true
   prometheus:
     image: prom/prometheus:v3.14.0
+    # Accept pushed samples at /api/v1/write (load-testing.md A1: k6 remote write). Off by default.
+    remoteWriteReceiver: false
     storage:
       size: 2Gi
       storageClassName: ""

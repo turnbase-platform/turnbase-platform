@@ -1,0 +1,22 @@
+{{- if .Values.observability.enabled }}
+# observability.md "Exposure": the scrape targets are the management ports, never the public ones.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-prometheus
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: platform
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['{{ .Release.Name }}-platform:{{ .Values.platform.managementPort }}']
+      - job_name: gamehost
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['{{ .Release.Name }}-gamehost:{{ .Values.gamehost.managementPort }}']
+{{- end }}

@@ -45,6 +45,11 @@ spec:
                 name: {{ .Release.Name }}-platform
             - secretRef:
                 name: {{ .Release.Name }}-platform
+          {{- with .Values.platform.extraEnv }}
+          # Container env wins over envFrom: the override hook (load-testing.md A1).
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           # local-environment.md §3: the monolith must be reachable and serving before any Game
           # Host has registered, and readiness must never report the Game Host (§3 "The
           # monolith's readiness must not depend on the Game Host") — nothing here names it.

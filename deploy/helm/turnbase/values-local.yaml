@@ -16,3 +16,10 @@ gamehost:
 frontend:
   image:
     pullPolicy: Never
+
+# Docker Desktop's ingress-nginx listens on 80, not on the compose profile's 8080
+# (local-environment.md §4), so the browser origins carry no port. The platform and the Frontend
+# read both from here (values.yaml).
+origins:
+  platform: http://turnbase.localhost
+  gameFrontendTemplate: "http://{gameId}.games.localhost"

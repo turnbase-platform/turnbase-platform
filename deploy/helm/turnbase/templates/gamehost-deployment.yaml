@@ -32,6 +32,19 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-gamehost
+            - secretRef:
+                name: {{ .Release.Name }}-gamehost
+          env:
+            # orchestration-gamehost-protocol.md "Addressing the Game Host pods": the pod IP, which
+            # the Platform can dial directly. No port: the Game Host completes it with grpc.port
+            # (local-environment.md §7.8).
+            - name: TURNBASE_GAMEHOST_ADVERTISED_ADDRESS
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- with .Values.gamehost.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
