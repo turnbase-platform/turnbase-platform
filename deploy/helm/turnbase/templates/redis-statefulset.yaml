@@ -31,6 +31,9 @@ spec:
             - "yes"
             - "--requirepass"
             - "$(TURNBASE_REDIS_PASSWORD)"
+            {{- with .Values.redis.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: redis
               containerPort: 6379

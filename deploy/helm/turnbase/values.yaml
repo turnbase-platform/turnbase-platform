@@ -81,6 +81,9 @@ postgres:
   appPassword: ""
   # Container resources; the load-test overlay (load-testing.md A1) pins requests == limits.
   resources: {}
+  # Extra arguments for the image's entrypoint, e.g. ["-c", "log_checkpoints=on"]. Empty in production;
+  # the load-test overlay uses it to load pg_stat_statements.
+  extraArgs: []
   storage:
     size: 2Gi
     storageClassName: ""
@@ -90,6 +93,8 @@ redis:
   password: ""
   # As postgres.resources.
   resources: {}
+  # Appended to redis-server's arguments after the required ones (noeviction, appendonly, requirepass).
+  extraArgs: []
   storage:
     size: 1Gi
     storageClassName: ""

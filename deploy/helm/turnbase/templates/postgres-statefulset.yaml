@@ -21,6 +21,11 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
+          {{- with .Values.postgres.extraArgs }}
+          # Arguments for the image's entrypoint (`-c name=value` server settings); empty by default.
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: postgres
               containerPort: 5432
