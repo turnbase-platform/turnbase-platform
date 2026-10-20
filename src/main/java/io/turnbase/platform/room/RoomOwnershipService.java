@@ -2,6 +2,7 @@ package io.turnbase.platform.room;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -11,7 +12,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.availability.AvailabilityChangeEvent;
+import org.springframework.boot.availability.LivenessState;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -50,6 +54,9 @@ class RoomOwnershipService {
   private static final int RETRY_ATTEMPTS = 3;
 
   private static final Duration RETRY_DELAY = Duration.ofMillis(100);
+
+  /** Keys per {@code MGET} in {@link #recheckOwnership()}: 20,000 rooms are 40 round trips. */
+  private static final int RECHECK_BATCH = 500;
 
   /** {@code room-lifecycle.md} §1.2, verbatim. Returns {@code [0|1|2, ownerPodId, epoch]}. */
   private static final RedisScript<List> CLAIM_SCRIPT =
@@ -141,30 +148,26 @@ class RoomOwnershipService {
   }
 
   /**
-   * {@code room-lifecycle.md} §1.1/§1.5 layers 2–3, run on {@code lease.renewInterval}: renew this
-   * instance's liveness lease with {@code SET ... XX}, and independently re-verify {@code
-   * room:{roomId}:pod} for every locally-owned room. A {@code SET ... XX} failure is a proven lease
-   * lapse (never a mere renewal-failure guess — see {@link #renewLease()}) and is unconditionally
-   * fatal for the whole instance; a single room's key naming someone else is a narrower, per-room
-   * loss that does not affect the others.
+   * Both halves in sequence — what the two scheduled tasks do, for a caller (a test) that wants
+   * them deterministically on its own thread. The scheduler never calls this: the renewal and the
+   * re-check run on separate threads ({@link RoomOwnershipSchedulingConfig}) so a slow re-check
+   * cannot delay the renewal.
    */
   void renewAndRecheck() {
+    renewLease();
+    recheckOwnership();
+  }
+
+  /**
+   * {@code room-lifecycle.md} §1.1/§1.5 layer 3, run on {@code lease.renewInterval}: renew this
+   * instance's liveness lease with one {@code SET ... XX}. The command count does not depend on how
+   * many rooms are owned. A {@code XX} failure is a proven lease lapse (never a mere
+   * renewal-failure guess) and is unconditionally fatal for the whole instance.
+   */
+  void renewLease() {
     if (evicted) {
       return;
     }
-    if (!renewLease()) {
-      selfEvictInstance();
-      return;
-    }
-    for (UUID roomId : owned.keySet()) {
-      String ownerNow = metrics.record(() -> redis.opsForValue().get(roomKey(roomId)));
-      if (!pod.id().equals(ownerNow)) {
-        evictRoom(roomId, "ownership re-check found a different owner");
-      }
-    }
-  }
-
-  private boolean renewLease() {
     Boolean renewed =
         metrics.record(
             () ->
@@ -172,13 +175,46 @@ class RoomOwnershipService {
                     .opsForValue()
                     .setIfPresent(
                         livenessKey(), Instant.now().toString(), properties.lease().ttl()));
-    return Boolean.TRUE.equals(renewed);
+    if (!Boolean.TRUE.equals(renewed)) {
+      selfEvictInstance();
+    }
+  }
+
+  /**
+   * {@code room-lifecycle.md} §1.5 layer 3's second half, on its own task: re-verify {@code
+   * room:{roomId}:pod} for every locally-owned room with batched {@code MGET}, and evict per room
+   * on a mismatch. A single room's key naming someone else is a narrower, per-room loss that does
+   * not affect the others.
+   */
+  void recheckOwnership() {
+    if (evicted) {
+      return;
+    }
+    List<UUID> roomIds = List.copyOf(owned.keySet());
+    for (int from = 0; from < roomIds.size(); from += RECHECK_BATCH) {
+      List<UUID> batch = roomIds.subList(from, Math.min(from + RECHECK_BATCH, roomIds.size()));
+      List<String> keys = new ArrayList<>(batch.size());
+      for (UUID roomId : batch) {
+        keys.add(roomKey(roomId));
+      }
+      List<@Nullable String> owners = metrics.record(() -> redis.opsForValue().multiGet(keys));
+      if (owners == null) {
+        continue;
+      }
+      for (int i = 0; i < batch.size(); i++) {
+        if (!pod.id().equals(owners.get(i))) {
+          evictRoom(batch.get(i), "ownership re-check found a different owner");
+        }
+      }
+    }
   }
 
   /**
    * §1.5 layer 3: unconditionally fatal. Drops every owned room locally and stops renewing — {@code
    * livenessKey()} is never recreated, so this instance can never again pass another's claim
-   * script's liveness check.
+   * script's liveness check. It also publishes {@link LivenessState#BROKEN}: Kubernetes restarts
+   * the container, and the new incarnation (a new {@code podId}) adopts the rooms through the claim
+   * path (§1.4). Without that the process would stay up, owning nothing and refusing every claim.
    */
   private void selfEvictInstance() {
     evicted = true;
@@ -186,12 +222,27 @@ class RoomOwnershipService {
     for (UUID roomId : List.copyOf(owned.keySet())) {
       evictRoom(roomId, "instance self-eviction");
     }
+    AvailabilityChangeEvent.publish(events, this, LivenessState.BROKEN);
   }
 
   private void evictRoom(UUID roomId, String reason) {
     if (owned.remove(roomId) != null) {
       events.publishEvent(new RoomOwnershipLostEvent(roomId, reason));
     }
+  }
+
+  /**
+   * A closed room is never produced for again, so it leaves the set that the re-check walks. Not an
+   * eviction: nothing was lost, and no {@link RoomOwnershipLostEvent} severs sockets.
+   */
+  @EventListener
+  void onRoomClosed(RoomClosedEvent event) {
+    owned.remove(event.roomId());
+  }
+
+  /** Registers a room as owned. Also the seam a test uses to fill {@link #owned} in bulk. */
+  void registerOwned(UUID roomId, long epoch, long version) {
+    owned.put(roomId, new OwnedRoom(epoch, new AtomicLong(version)));
   }
 
   /**
@@ -206,7 +257,7 @@ class RoomOwnershipService {
                 redis.execute(CLAIM_SCRIPT, List.of(roomKey(roomId), epochKey(roomId)), pod.id()));
     String result = String.valueOf(reply.get(0));
     if (ALREADY_MINE.equals(result)) {
-      return new ClaimOutcome.AlreadyMine(toLong(reply.get(2)));
+      return alreadyMine(roomId, toLong(reply.get(2)));
     }
     if (REDIRECT.equals(result)) {
       return new ClaimOutcome.Redirect((String) reply.get(1));
@@ -215,6 +266,30 @@ class RoomOwnershipService {
       throw new IllegalStateException("claim script returned unexpected result " + result);
     }
     return adopt(roomId, toLong(reply.get(2)));
+  }
+
+  /**
+   * Redis names this incarnation as the owner. {@code podId} is per incarnation (§1.1), so a room
+   * missing from {@link #owned} here was dropped by this same process: a failed CAS, or a re-check
+   * that has since been overtaken. Register it again with its current epoch and the version the
+   * database holds (§1.4 step 2), or the next mutation finds nothing to produce from. After a
+   * whole-instance self-eviction nothing is registered: the lease is gone for good and the
+   * container is restarting.
+   */
+  private ClaimOutcome alreadyMine(UUID roomId, long epoch) {
+    if (evicted) {
+      return new ClaimOutcome.Superseded();
+    }
+    if (!owned.containsKey(roomId)) {
+      Optional<Long> version =
+          jdbcClient
+              .sql("SELECT version FROM room WHERE room_id = :roomId")
+              .param("roomId", roomId)
+              .query(Long.class)
+              .optional();
+      version.ifPresent(v -> owned.putIfAbsent(roomId, new OwnedRoom(epoch, new AtomicLong(v))));
+    }
+    return new ClaimOutcome.AlreadyMine(epoch);
   }
 
   /**
@@ -297,7 +372,7 @@ class RoomOwnershipService {
     if (epoch > 1) {
       openMassGraceReservations(roomId);
     }
-    owned.put(roomId, new OwnedRoom(epoch, new AtomicLong(version.get())));
+    registerOwned(roomId, epoch, version.get());
     return new ClaimOutcome.Adopted(epoch, version.get());
   }
 
@@ -368,7 +443,7 @@ class RoomOwnershipService {
   long nextVersion(UUID roomId) {
     OwnedRoom state = owned.get(roomId);
     if (state == null) {
-      throw new IllegalStateException("room " + roomId + " is not owned by this instance");
+      throw new NotOwnedException(roomId);
     }
     return state.version().incrementAndGet();
   }
@@ -395,6 +470,13 @@ class RoomOwnershipService {
 
   private static String epochKey(UUID roomId) {
     return "room:" + roomId + ":epoch";
+  }
+
+  /** The room left {@link #owned} between the caller's {@link #epochOf} and its use of this. */
+  static final class NotOwnedException extends RuntimeException {
+    NotOwnedException(UUID roomId) {
+      super("room " + roomId + " is not owned by this instance", null, false, false);
+    }
   }
 
   private record OwnedRoom(long epoch, AtomicLong version) {}

@@ -142,6 +142,33 @@ class RoomEventExecutorIT extends PostgresIntegrationTest {
     assertThat(ownership.epochOf(roomId)).isEmpty();
   }
 
+  /**
+   * IMP-M16-07: {@code epochOf} passes under the lock, an eviction then runs (here, inside the
+   * mutation, standing in for the re-check task on its own thread), and {@code nextVersion} finds
+   * the room gone. That must be the retry directive, not an {@code IllegalStateException}.
+   */
+  @Test
+  void anEvictionBetweenTheEpochLookupAndTheVersionAssignmentIsARetryNotAServerError() {
+    context = boot();
+    RoomEventExecutor executor = context.getBean(RoomEventExecutor.class);
+    RoomOwnershipService ownership = context.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(context);
+    ownership.claim(roomId);
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    roomId,
+                    () -> {
+                      ownership.evictAfterFailedCas(roomId);
+                      return new RoomEventExecutor.MutationOutcome<>(
+                          "applied", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of()));
+                    }))
+        .isInstanceOf(RoomUnavailableRetryException.class);
+
+    assertThat(roomVersion(context, roomId)).isEqualTo(0L);
+  }
+
   @Test
   void executingAgainstARoomThisInstanceHasNotClaimedFailsWithoutMutating() {
     context = boot();

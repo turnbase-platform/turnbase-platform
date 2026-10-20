@@ -20,6 +20,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -2506,6 +2508,7 @@ class RoomRepository {
           .sql("delete from room_invitation where room_id = :roomId")
           .param("roomId", roomId)
           .update();
+      afterCloseCommitted(roomId);
     }
     if (sessionId != null) {
       // ADR-0010: the owed teardown is a row keyed by sessionId, never a room-level flag, and any
@@ -2526,6 +2529,25 @@ class RoomRepository {
           .update();
     }
     return new DetachOutcome(true);
+  }
+
+  /**
+   * Runs once the closing transaction has committed, so a rollback leaves the room owned. Without a
+   * transaction (unit tests call {@link #detachSession} bare, and {@code registerSynchronization}
+   * throws then) it runs immediately.
+   */
+  private void afterCloseCommitted(UUID roomId) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      events.publishEvent(new RoomClosedEvent(roomId));
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            events.publishEvent(new RoomClosedEvent(roomId));
+          }
+        });
   }
 
   /** {@code true} iff this call actually performed the detach (step 2's idempotency check). */

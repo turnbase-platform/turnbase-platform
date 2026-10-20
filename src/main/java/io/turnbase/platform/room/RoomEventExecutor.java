@@ -97,7 +97,7 @@ class RoomEventExecutor {
                   if (outcome.event() == null) {
                     return new Committed<>(outcome.value(), null, 0);
                   }
-                  long version = ownership.nextVersion(roomId);
+                  long version = nextVersionOrRetry(roomId);
                   int updated =
                       jdbcClient
                           .sql(
@@ -158,6 +158,20 @@ class RoomEventExecutor {
     } finally {
       lock.unlock();
       locks.release(roomId);
+    }
+  }
+
+  /**
+   * {@code epochOf} passed under the lock, but an eviction (the re-check task, another mutation's
+   * failed CAS) can run between it and here. That is the same "lost ownership" the caller already
+   * handles, not an {@code IllegalStateException} and an HTTP 500.
+   */
+  private long nextVersionOrRetry(UUID roomId) {
+    try {
+      return ownership.nextVersion(roomId);
+    } catch (RoomOwnershipService.NotOwnedException e) {
+      throw new RoomUnavailableRetryException(
+          "Lost ownership of room " + roomId + " mid-mutation.", RETRY_AFTER_MS);
     }
   }
 

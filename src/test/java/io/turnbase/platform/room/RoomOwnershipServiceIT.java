@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -11,9 +13,12 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.availability.ApplicationAvailability;
+import org.springframework.boot.availability.LivenessState;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * {@code IMP-M2-03}'s own Done-when: the claim script is atomic and is also the failure detector,
@@ -165,6 +170,130 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
     ownershipA.renewAndRecheck();
     StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
     assertThat(redis.opsForValue().get("pod:" + podA.id() + ":alive")).isNull();
+  }
+
+  /** IMP-M16-07: §1.5 layer 3 stays fatal, realised as a restart by Kubernetes. */
+  @Test
+  void aSelfEvictionPublishesBrokenLiveness() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    ApplicationAvailability availability = instanceA.getBean(ApplicationAvailability.class);
+    assertThat(availability.getLivenessState()).isEqualTo(LivenessState.CORRECT);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+
+    deleteLivenessKey(instanceA, instanceA.getBean(PodIdentity.class).id());
+    ownershipA.renewLease();
+
+    assertThat(availability.getLivenessState()).isEqualTo(LivenessState.BROKEN);
+    assertThat(ownershipA.epochOf(roomId)).isEmpty();
+  }
+
+  @Test
+  void aRoomThatReachesClosedLeavesTheOwnedSetOnceItsTransactionCommits() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomRepository repository = instanceA.getBean(RoomRepository.class);
+    TransactionTemplate transaction =
+        new TransactionTemplate(
+            instanceA.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+    UUID rolledBack = insertRoom(instanceA);
+    UUID committed = insertRoom(instanceA);
+    UUID bare = insertRoom(instanceA);
+    UUID stillOpen = insertRoom(instanceA);
+    for (UUID roomId : new UUID[] {rolledBack, committed, bare, stillOpen}) {
+      ownershipA.claim(roomId);
+    }
+
+    transaction.executeWithoutResult(
+        status -> {
+          repository.detachSession(rolledBack, null, "NO_PLAYERS_REMAINING", "CLOSED");
+          assertThat(ownershipA.epochOf(rolledBack)).isPresent(); // not before the commit
+          status.setRollbackOnly();
+        });
+    assertThat(ownershipA.epochOf(rolledBack)).isPresent();
+
+    transaction.executeWithoutResult(
+        status -> repository.detachSession(committed, null, "NO_PLAYERS_REMAINING", "CLOSED"));
+    assertThat(ownershipA.epochOf(committed)).isEmpty();
+
+    // Without a transaction (unit tests call detachSession bare) the callback runs immediately.
+    repository.detachSession(bare, null, "NO_PLAYERS_REMAINING", "CLOSED");
+    assertThat(ownershipA.epochOf(bare)).isEmpty();
+
+    assertThat(ownershipA.epochOf(stillOpen)).isPresent();
+  }
+
+  @Test
+  void leaseRenewalDoesNotWalkTheOwnedRooms() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+    // A room whose key names someone else: only the re-check may notice, never the renewal.
+    redis.opsForValue().set("room:" + roomId + ":pod", "some-other-pod");
+
+    ownershipA.renewLease();
+
+    assertThat(ownershipA.epochOf(roomId)).isPresent();
+    ownershipA.recheckOwnership();
+    assertThat(ownershipA.epochOf(roomId)).isEmpty();
+  }
+
+  @Test
+  void aRecheckPassOver20000OwnedRoomsTakesUnderTwoSeconds() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
+    String podId = instanceA.getBean(PodIdentity.class).id();
+    Map<String, String> keys = new HashMap<>();
+    UUID stolen = UUID.randomUUID();
+    UUID missing = UUID.randomUUID();
+    for (int i = 0; i < 20_000; i++) {
+      UUID roomId = UUID.randomUUID();
+      ownershipA.registerOwned(roomId, 1, 0);
+      keys.put("room:" + roomId + ":pod", podId);
+      if (keys.size() == 1_000) {
+        redis.opsForValue().multiSet(keys);
+        keys.clear();
+      }
+    }
+    ownershipA.registerOwned(stolen, 1, 0);
+    redis.opsForValue().set("room:" + stolen + ":pod", "some-other-pod");
+    ownershipA.registerOwned(missing, 1, 0); // its key was flushed
+
+    long startNanos = System.nanoTime();
+    ownershipA.recheckOwnership();
+    Duration took = Duration.ofNanos(System.nanoTime() - startNanos);
+
+    assertThat(took).isLessThan(Duration.ofSeconds(2));
+    assertThat(ownershipA.epochOf(stolen)).isEmpty();
+    assertThat(ownershipA.epochOf(missing)).isEmpty();
+  }
+
+  @Test
+  void alreadyMineRepopulatesTheOwnedSetAndAMutationThenSucceeds() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomEventExecutor executor = instanceA.getBean(RoomEventExecutor.class);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+    ownershipA.evictAfterFailedCas(roomId); // Redis still names this incarnation
+    assertThat(ownershipA.epochOf(roomId)).isEmpty();
+
+    RoomOwnershipService.ClaimOutcome outcome = ownershipA.claim(roomId);
+
+    assertThat(outcome).isInstanceOf(RoomOwnershipService.ClaimOutcome.AlreadyMine.class);
+    assertThat(ownershipA.epochOf(roomId)).contains(1L);
+    String result =
+        executor.execute(
+            roomId,
+            () ->
+                new RoomEventExecutor.MutationOutcome<>(
+                    "applied", new RoomEventExecutor.RoomEvent("TEST_EVENT", Map.of())));
+    assertThat(result).isEqualTo("applied");
+    assertThat(roomRow(instanceA, roomId).get("version")).isEqualTo(1L);
   }
 
   @Test
