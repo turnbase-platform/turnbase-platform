@@ -574,7 +574,7 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
     if (line == null) {
       return 0;
     }
-    return Long.parseLong(line.replaceFirst(".*calls=(\\d+).*", "$1"));
+    return Long.parseLong(line.replaceFirst("^calls=(\\d+),.*", "$1"));
   }
 
   static void resetRedisStats(StringRedisTemplate redis) {

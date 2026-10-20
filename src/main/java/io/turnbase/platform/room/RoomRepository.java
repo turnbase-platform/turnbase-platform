@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -2944,45 +2945,68 @@ class RoomRepository {
   }
 
   /**
-   * Duty (b)'s health check: a session is orphaned unless a non-closed room still names it as
-   * {@code active_session_id} (`room-lifecycle.md` §5.2 — "whose room no longer exists or is
-   * closed").
+   * Duty (b)'s health check, one query per page of sessions: of {@code sessionIds}, those still
+   * named as {@code active_session_id} by a non-closed room. The rest are orphaned (`room-
+   * lifecycle.md` §5.2 — "whose room no longer exists or is closed").
    */
-  boolean sessionBelongsToOpenRoom(UUID sessionId) {
-    Boolean exists =
+  Set<UUID> sessionsOfOpenRooms(Collection<UUID> sessionIds) {
+    if (sessionIds.isEmpty()) {
+      return Set.of();
+    }
+    return Set.copyOf(
         jdbcClient
             .sql(
-                "select exists(select 1 from room"
-                    + " where active_session_id = :sessionId and state <> 'CLOSED')")
-            .param("sessionId", sessionId)
-            .query(Boolean.class)
-            .single();
-    return Boolean.TRUE.equals(exists);
+                "select active_session_id from room"
+                    + " where active_session_id in (:sessionIds) and state <> 'CLOSED'")
+            .param("sessionIds", sessionIds)
+            .query(UUID.class)
+            .list());
   }
 
-  /** {@code data-model.md} §4.3's first-observation insert, guarded so a repeat is a no-op. */
-  void flagOrphanedSessionIfAbsent(UUID sessionId) {
+  /** {@code data-model.md} §4.3: the first-observation time of each flagged session in the page. */
+  Map<UUID, Instant> orphanedSessionFirstObservedAt(Collection<UUID> sessionIds) {
+    if (sessionIds.isEmpty()) {
+      return Map.of();
+    }
+    Map<UUID, Instant> observed = new HashMap<>();
     jdbcClient
         .sql(
-            "insert into orphaned_session_flag (session_id) values (:sessionId)"
-                + " on conflict (session_id) do nothing")
-        .param("sessionId", sessionId)
-        .update();
+            "select session_id, first_observed_at from orphaned_session_flag"
+                + " where session_id in (:sessionIds)")
+        .param("sessionIds", sessionIds)
+        .query(
+            rs -> {
+              observed.put(
+                  rs.getObject("session_id", UUID.class),
+                  rs.getTimestamp("first_observed_at").toInstant());
+            });
+    return observed;
   }
 
-  Optional<Instant> orphanedSessionFirstObservedAt(UUID sessionId) {
-    return jdbcClient
-        .sql("select first_observed_at from orphaned_session_flag where session_id = :sessionId")
-        .param("sessionId", sessionId)
-        .query(Timestamp.class)
-        .optional()
-        .map(Timestamp::toInstant);
+  /** {@code data-model.md} §4.3's first-observation insert, one statement, a repeat is a no-op. */
+  void flagOrphanedSessionsIfAbsent(Collection<UUID> sessionIds) {
+    if (sessionIds.isEmpty()) {
+      return;
+    }
+    StringBuilder sql = new StringBuilder("insert into orphaned_session_flag (session_id) values ");
+    Map<String, Object> params = new HashMap<>();
+    int i = 0;
+    for (UUID sessionId : sessionIds) {
+      sql.append(i == 0 ? "" : ", ").append("(:s").append(i).append(')');
+      params.put("s" + i, sessionId);
+      i++;
+    }
+    sql.append(" on conflict (session_id) do nothing");
+    jdbcClient.sql(sql.toString()).params(params).update();
   }
 
-  void clearOrphanedSessionFlag(UUID sessionId) {
+  void clearOrphanedSessionFlags(Collection<UUID> sessionIds) {
+    if (sessionIds.isEmpty()) {
+      return;
+    }
     jdbcClient
-        .sql("delete from orphaned_session_flag where session_id = :sessionId")
-        .param("sessionId", sessionId)
+        .sql("delete from orphaned_session_flag where session_id in (:sessionIds)")
+        .param("sessionIds", sessionIds)
         .update();
   }
 
@@ -3041,6 +3065,22 @@ class RoomRepository {
             "update room set reconcile_flagged_at = now()"
                 + " where room_id = :roomId and reconcile_flagged_at is null")
         .param("roomId", roomId)
+        .update();
+  }
+
+  /**
+   * Duty (c)'s healthy rooms, one statement for a page of them: the flag is cleared where it is set
+   * and nowhere else, so a healthy tick writes no rows.
+   */
+  void clearRoomReconcileFlags(Collection<UUID> roomIds) {
+    if (roomIds.isEmpty()) {
+      return;
+    }
+    jdbcClient
+        .sql(
+            "update room set reconcile_flagged_at = null"
+                + " where room_id in (:roomIds) and reconcile_flagged_at is not null")
+        .param("roomIds", roomIds)
         .update();
   }
 

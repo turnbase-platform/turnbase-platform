@@ -1,15 +1,17 @@
 package io.turnbase.platform.room;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import io.turnbase.platform.common.JobsProperties;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -17,6 +19,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -55,6 +58,12 @@ class ReconciliationJob {
           "gamelog:");
 
   private static final int TEARDOWN_BATCH = 100;
+
+  /** Keys per {@code SCAN} page in duty (b)'s keyspace pass. */
+  private static final int SCAN_COUNT = 500;
+
+  /** Sessions per Postgres query batch in duty (b), and rooms per batch in duty (c). */
+  private static final int SESSION_BATCH = 500;
 
   /** Keys per {@code SCAN} page and rooms per Postgres existence query in the room-key sweep. */
   private static final int ROOM_KEY_BATCH = 500;
@@ -159,65 +168,104 @@ class ReconciliationJob {
   // (10m default) vastly exceeds the 60s tick interval.
   // ---------------------------------------------------------------------
 
-  private void reconcileOrphanedSessionArtifacts(boolean massLoss) {
-    Set<String> sessionIds = new LinkedHashSet<>();
-    for (String prefix : SESSION_KEY_PREFIXES) {
-      Set<String> keys = metrics.recordRedis(() -> redis.keys(prefix + "*"));
-      if (keys == null) {
-        continue;
-      }
-      for (String key : keys) {
-        sessionIds.add(key.substring(prefix.length()));
-      }
-    }
-
+  /**
+   * One {@code SCAN} pass over the whole keyspace (never {@code KEYS}, never one pass per family),
+   * each key classified by its prefix here, and one batch of Postgres queries per {@link
+   * #SESSION_BATCH} sessions rather than one per session (IMP-M16-09, load-testing finding 15).
+   */
+  void reconcileOrphanedSessionArtifacts(boolean massLoss) {
     Duration orphanAge = jobsProperties.reconcile().orphanAge();
-    long candidateCount = 0;
-    long repaired = 0;
-    for (String raw : sessionIds) {
-      UUID sessionId;
-      try {
-        sessionId = UUID.fromString(raw);
-      } catch (IllegalArgumentException e) {
-        continue; // not one of ours
-      }
-      if (repository.sessionBelongsToOpenRoom(sessionId)) {
-        repository.clearOrphanedSessionFlag(sessionId);
-        continue;
-      }
-      candidateCount++;
-      Optional<Instant> firstObserved = repository.orphanedSessionFirstObservedAt(sessionId);
-      if (firstObserved.isEmpty()) {
-        repository.flagOrphanedSessionIfAbsent(sessionId);
-        metrics.recordRepair("b", "detected");
-        continue;
-      }
-      if (Duration.between(firstObserved.get(), Instant.now()).compareTo(orphanAge) < 0) {
-        metrics.recordRepair("b", "detected");
-        continue;
-      }
-      deleteSessionKeyFamily(sessionId);
-      repository.clearOrphanedSessionFlag(sessionId);
-      repaired++;
-      metrics.recordRepair("b", "repaired");
-      if (!massLoss) {
-        log.warn("reconciliation duty (b): deleted orphaned session key family {}", sessionId);
+    Set<UUID> seen = new HashSet<>();
+    Set<UUID> page = new LinkedHashSet<>();
+    long[] counts = new long[2]; // {candidates, repaired}
+    ScanOptions options = ScanOptions.scanOptions().count(SCAN_COUNT).build();
+    try (Cursor<String> cursor = metrics.recordRedis(() -> redis.scan(options))) {
+      while (cursor.hasNext()) {
+        UUID sessionId = sessionIdOf(cursor.next());
+        if (sessionId == null || !seen.add(sessionId)) {
+          continue;
+        }
+        page.add(sessionId);
+        if (page.size() >= SESSION_BATCH) {
+          reconcileSessionPage(page, orphanAge, massLoss, counts);
+          page.clear();
+        }
       }
     }
-    metrics.setCandidates("b", candidateCount);
-    if (massLoss && repaired > 0) {
+    reconcileSessionPage(page, orphanAge, massLoss, counts);
+    metrics.setCandidates("b", counts[0]);
+    if (massLoss && counts[1] > 0) {
       log.error(
           "reconciliation duty (b): {} orphaned session key families repaired as one mass-loss"
               + " event",
-          repaired);
+          counts[1]);
     }
   }
 
-  private void deleteSessionKeyFamily(UUID sessionId) {
-    for (String prefix : SESSION_KEY_PREFIXES) {
-      String key = prefix + sessionId;
-      metrics.recordRedis(() -> redis.delete(key));
+  /** The session id of a {@code <family>:<uuid>} key of {@link #SESSION_KEY_PREFIXES}, or null. */
+  private static @Nullable UUID sessionIdOf(String key) {
+    int colon = key.indexOf(':');
+    if (colon < 0 || !SESSION_KEY_PREFIXES.contains(key.substring(0, colon + 1))) {
+      return null;
     }
+    try {
+      return UUID.fromString(key.substring(colon + 1));
+    } catch (IllegalArgumentException e) {
+      return null; // not one of ours
+    }
+  }
+
+  private void reconcileSessionPage(
+      Set<UUID> page, Duration orphanAge, boolean massLoss, long[] counts) {
+    if (page.isEmpty()) {
+      return;
+    }
+    Set<UUID> live = repository.sessionsOfOpenRooms(page);
+    Map<UUID, Instant> flagged = repository.orphanedSessionFirstObservedAt(page);
+    List<UUID> toFlag = new ArrayList<>();
+    List<UUID> toDelete = new ArrayList<>();
+    List<UUID> toClear = new ArrayList<>();
+    for (UUID sessionId : page) {
+      Instant firstObserved = flagged.get(sessionId);
+      if (live.contains(sessionId)) {
+        if (firstObserved != null) {
+          toClear.add(sessionId);
+        }
+        continue;
+      }
+      counts[0]++;
+      if (firstObserved == null) {
+        toFlag.add(sessionId);
+        metrics.recordRepair("b", "detected");
+      } else if (Duration.between(firstObserved, Instant.now()).compareTo(orphanAge) < 0) {
+        metrics.recordRepair("b", "detected");
+      } else {
+        toDelete.add(sessionId);
+      }
+    }
+    repository.flagOrphanedSessionsIfAbsent(toFlag);
+    if (!toDelete.isEmpty()) {
+      deleteSessionKeyFamilies(toDelete);
+      toClear.addAll(toDelete);
+      for (UUID sessionId : toDelete) {
+        counts[1]++;
+        metrics.recordRepair("b", "repaired");
+        if (!massLoss) {
+          log.warn("reconciliation duty (b): deleted orphaned session key family {}", sessionId);
+        }
+      }
+    }
+    repository.clearOrphanedSessionFlags(toClear);
+  }
+
+  private void deleteSessionKeyFamilies(List<UUID> sessionIds) {
+    List<String> keys = new ArrayList<>(sessionIds.size() * SESSION_KEY_PREFIXES.size());
+    for (UUID sessionId : sessionIds) {
+      for (String prefix : SESSION_KEY_PREFIXES) {
+        keys.add(prefix + sessionId);
+      }
+    }
+    metrics.recordRedis(() -> redis.delete(keys));
   }
 
   // ---------------------------------------------------------------------
@@ -226,16 +274,21 @@ class ReconciliationJob {
 
   private void reconcileInProgressWithoutSession(boolean suppressed, boolean massLoss) {
     List<RoomRepository.RoomSessionPair> candidates = new ArrayList<>();
-    for (RoomRepository.RoomSessionPair pair : repository.inProgressRoomsWithSession()) {
+    List<RoomRepository.RoomSessionPair> inProgress = repository.inProgressRoomsWithSession();
+    for (int from = 0; from < inProgress.size(); from += SESSION_BATCH) {
+      List<RoomRepository.RoomSessionPair> page =
+          inProgress.subList(from, Math.min(from + SESSION_BATCH, inProgress.size()));
       // room-lifecycle.md §5.2: "No Game Host probe. The session record is the source of truth."
-      boolean sessionRecordPresent =
-          Boolean.TRUE.equals(
-              metrics.recordRedis(() -> redis.hasKey("session:" + pair.sessionId())));
-      if (sessionRecordPresent) {
-        repository.clearRoomReconcileFlag(pair.roomId());
-      } else {
-        candidates.add(pair);
+      List<Boolean> present = sessionRecordsPresent(page);
+      List<UUID> healthy = new ArrayList<>();
+      for (int i = 0; i < page.size(); i++) {
+        if (present.get(i)) {
+          healthy.add(page.get(i).roomId());
+        } else {
+          candidates.add(page.get(i));
+        }
       }
+      repository.clearRoomReconcileFlags(healthy);
     }
     metrics.setCandidates("c", candidates.size());
     metrics.setInProgressWithoutSession(candidates.size());
@@ -258,6 +311,29 @@ class ReconciliationJob {
             pair.sessionId());
       }
     }
+  }
+
+  /** One pipelined {@code EXISTS} round trip for a page of {@code session:<id>} records. */
+  @SuppressWarnings("NullAway") // executePipelined requires the callback to return null
+  private List<Boolean> sessionRecordsPresent(List<RoomRepository.RoomSessionPair> page) {
+    List<Object> replies =
+        metrics.recordRedis(
+            () ->
+                redis.executePipelined(
+                    (RedisCallback<Object>)
+                        connection -> {
+                          for (RoomRepository.RoomSessionPair pair : page) {
+                            connection
+                                .keyCommands()
+                                .exists(("session:" + pair.sessionId()).getBytes(UTF_8));
+                          }
+                          return null;
+                        }));
+    List<Boolean> present = new ArrayList<>(page.size());
+    for (Object reply : replies) {
+      present.add(Boolean.TRUE.equals(reply) || (reply instanceof Number n && n.longValue() > 0));
+    }
+    return present;
   }
 
   // ---------------------------------------------------------------------

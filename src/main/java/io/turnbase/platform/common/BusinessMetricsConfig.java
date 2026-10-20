@@ -20,6 +20,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 @EnableScheduling
 class BusinessMetricsConfig {
 
+  /** Index-backed by {@code room_open_state_idx} (IMP-M16-09 checks the plan). */
+  static final String ROOMS_ACTIVE_SQL = "SELECT count(*) FROM room WHERE state <> 'CLOSED'";
+
+  /** Index-backed by {@code room_active_session_idx} (IMP-M16-09 checks the plan). */
+  static final String GAME_SESSIONS_ACTIVE_SQL =
+      "SELECT count(*) FROM room WHERE active_session_id IS NOT NULL";
+
   private final JdbcTemplate jdbcTemplate;
   private final AtomicLong roomsActive = new AtomicLong();
   private final AtomicLong gameSessionsActive = new AtomicLong();
@@ -39,8 +46,8 @@ class BusinessMetricsConfig {
 
   @Scheduled(fixedRate = 30, timeUnit = TimeUnit.SECONDS)
   void refresh() {
-    roomsActive.set(count("SELECT count(*) FROM room WHERE state <> 'CLOSED'"));
-    gameSessionsActive.set(count("SELECT count(*) FROM room WHERE active_session_id IS NOT NULL"));
+    roomsActive.set(count(ROOMS_ACTIVE_SQL));
+    gameSessionsActive.set(count(GAME_SESSIONS_ACTIVE_SQL));
     usersRegistered.set(count("SELECT count(*) FROM app_user WHERE deleted_at IS NULL"));
     // friend_request has no status column (observability.md §2.1, IMP-GATE-20) — a row's mere
     // existence means pending; accepting or declining one deletes it.

@@ -4,19 +4,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.sql.Connection;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -104,6 +116,220 @@ class ReconciliationJobIT extends PostgresIntegrationTest {
     }
     assertThat(redis.hasKey("room:not-a-uuid:pod")).isTrue();
     assertThat(RoomOwnershipServiceIT.redisCommandCalls(redis, "keys")).isZero();
+  }
+
+  @Test
+  void dutyBWalksTheKeyspaceOnceWithScanAndCleansExactlyTheStaleKeys_IMP_M16_09() {
+    context = boot("0s");
+    ReconciliationJob job = context.getBean(ReconciliationJob.class);
+    StringRedisTemplate redis = context.getBean(StringRedisTemplate.class);
+    JdbcClient jdbc = context.getBean(JdbcClient.class);
+    cleanSlate(context);
+    Map<String, String> keys = new HashMap<>();
+    List<UUID> stale = new ArrayList<>();
+    for (int i = 0; i < 5_000; i++) {
+      UUID sessionId = UUID.randomUUID();
+      stale.add(sessionId);
+      keys.put("session:" + sessionId, "x");
+      keys.put("routing:" + sessionId, "x");
+    }
+    List<UUID> live = new ArrayList<>();
+    UUID gameId = insertGame(jdbc);
+    for (int i = 0; i < 100; i++) {
+      UUID sessionId = UUID.randomUUID();
+      live.add(sessionId);
+      UUID roomId = insertRoomOfGame(jdbc, gameId, "IN_PROGRESS");
+      setActiveSession(context, roomId, sessionId);
+      keys.put("session:" + sessionId, "x");
+      keys.put("gamelog:" + sessionId, "x");
+    }
+    keys.put("session:not-a-uuid", "left alone");
+    keys.put("room:" + UUID.randomUUID() + ":pod", "left alone");
+    keys.put("unrelated", "left alone");
+    mset(redis, keys);
+
+    // What one full SCAN iteration costs on this keyspace, measured by a plain walk.
+    RoomOwnershipServiceIT.resetRedisStats(redis);
+    try (var cursor = redis.scan(ScanOptions.scanOptions().count(500).build())) {
+      cursor.forEachRemaining(key -> {});
+    }
+    long onePass = RoomOwnershipServiceIT.redisCommandCalls(redis, "scan");
+    assertThat(onePass).isGreaterThan(10);
+
+    RoomOwnershipServiceIT.resetRedisStats(redis);
+    job.reconcileOrphanedSessionArtifacts(false);
+    assertThat(RoomOwnershipServiceIT.redisCommandCalls(redis, "keys")).isZero();
+    assertThat(RoomOwnershipServiceIT.redisCommandCalls(redis, "scan")).isBetween(1L, onePass + 2);
+    assertThat(redis.hasKey("session:" + stale.get(0))).isTrue(); // first observation only
+    assertThat(orphanedSessionFlagCount(jdbc)).isEqualTo(5_000);
+
+    RoomOwnershipServiceIT.resetRedisStats(redis);
+    job.reconcileOrphanedSessionArtifacts(false);
+    assertThat(RoomOwnershipServiceIT.redisCommandCalls(redis, "keys")).isZero();
+    assertThat(RoomOwnershipServiceIT.redisCommandCalls(redis, "scan")).isBetween(1L, onePass + 2);
+    for (UUID sessionId : stale) {
+      assertThat(redis.hasKey("session:" + sessionId)).isFalse();
+      assertThat(redis.hasKey("routing:" + sessionId)).isFalse();
+    }
+    for (UUID sessionId : live) {
+      assertThat(redis.hasKey("session:" + sessionId)).isTrue();
+      assertThat(redis.hasKey("gamelog:" + sessionId)).isTrue();
+    }
+    assertThat(redis.hasKey("session:not-a-uuid")).isTrue();
+    assertThat(redis.hasKey("unrelated")).isTrue();
+    assertThat(orphanedSessionFlagCount(jdbc)).isZero();
+  }
+
+  @Test
+  void aTickIssuesTheSameNumberOfStatementsWhateverTheNumberOfSessions_IMP_M16_09() {
+    context = boot("0s", StatementCounter.class);
+    ReconciliationJob job = context.getBean(ReconciliationJob.class);
+    StatementCounter counter = context.getBean(StatementCounter.class);
+    cleanSlate(context);
+
+    seedSessions(context, 20, 20);
+    long smallFirst = counter.count(job::run);
+    long smallSecond = counter.count(job::run);
+
+    seedSessions(context, 200, 200);
+    long largeFirst = counter.count(job::run);
+    long largeSecond = counter.count(job::run);
+
+    assertThat(smallFirst).isBetween(4L, 40L);
+    assertThat(smallSecond).isBetween(4L, 40L);
+    assertThat(largeFirst).isEqualTo(smallFirst);
+    assertThat(largeSecond).isEqualTo(smallSecond);
+  }
+
+  /**
+   * {@code orphans} sessions with Redis keys and no room, and {@code healthy} In Progress rooms
+   * whose session record is present, half of them carrying a stale reconcile flag and a stale
+   * orphan flag.
+   */
+  private static void seedSessions(
+      ConfigurableApplicationContext context, int orphans, int healthy) {
+    JdbcClient jdbc = context.getBean(JdbcClient.class);
+    StringRedisTemplate redis = context.getBean(StringRedisTemplate.class);
+    UUID gameId = insertGame(jdbc);
+    Map<String, String> keys = new HashMap<>();
+    for (int i = 0; i < orphans; i++) {
+      keys.put("session:" + UUID.randomUUID(), "x");
+    }
+    for (int i = 0; i < healthy; i++) {
+      UUID sessionId = UUID.randomUUID();
+      UUID roomId = insertRoomOfGame(jdbc, gameId, "IN_PROGRESS");
+      setActiveSession(context, roomId, sessionId);
+      keys.put("session:" + sessionId, "x");
+      if (i % 2 == 0) {
+        jdbc.sql("update room set reconcile_flagged_at = now() where room_id = :roomId")
+            .param("roomId", roomId)
+            .update();
+        jdbc.sql("insert into orphaned_session_flag (session_id) values (:sessionId)")
+            .param("sessionId", sessionId)
+            .update();
+      }
+    }
+    mset(redis, keys);
+  }
+
+  /** The containers outlive each test's context: start from the keys and flags of nobody. */
+  private static void cleanSlate(ConfigurableApplicationContext context) {
+    StringRedisTemplate redis = context.getBean(StringRedisTemplate.class);
+    redis.execute(
+        (RedisCallback<String>)
+            connection -> {
+              connection.serverCommands().flushAll();
+              return "OK";
+            });
+    context.getBean(JdbcClient.class).sql("delete from orphaned_session_flag").update();
+    context
+        .getBean(JdbcClient.class)
+        .sql("update room set state = 'CLOSED', closed_at = now() where state <> 'CLOSED'")
+        .update();
+  }
+
+  private static void mset(StringRedisTemplate redis, Map<String, String> keys) {
+    List<String> names = new ArrayList<>(keys.keySet());
+    for (int from = 0; from < names.size(); from += 1_000) {
+      Map<String, String> chunk = new HashMap<>();
+      for (String name : names.subList(from, Math.min(from + 1_000, names.size()))) {
+        chunk.put(name, keys.get(name));
+      }
+      redis.opsForValue().multiSet(chunk);
+    }
+  }
+
+  private static long orphanedSessionFlagCount(JdbcClient jdbc) {
+    return jdbc.sql("select count(*) from orphaned_session_flag").query(Long.class).single();
+  }
+
+  /**
+   * Counts the statements the thread that calls {@link #count} prepares on the application's {@code
+   * DataSource}: a datasource-level counter, so a loop of per-session queries shows up as growth.
+   * Deliberately not annotated: it is passed to {@code SpringApplication} as a source, so no other
+   * test's component scan finds it.
+   */
+  static class StatementCounter {
+
+    private final AtomicLong statements = new AtomicLong();
+    private volatile @Nullable Thread counted;
+
+    @Bean
+    static BeanPostProcessor statementCountingDataSource(ObjectProvider<StatementCounter> counter) {
+      return new BeanPostProcessor() {
+        @Override
+        public @Nullable Object postProcessAfterInitialization(Object bean, String beanName) {
+          if (bean instanceof DataSource dataSource && !(bean instanceof Proxy)) {
+            return Proxy.newProxyInstance(
+                DataSource.class.getClassLoader(),
+                new Class<?>[] {DataSource.class},
+                (proxy, method, args) -> {
+                  Object result = invoke(dataSource, method, args);
+                  return result instanceof Connection connection
+                      ? countingConnection(connection, counter.getObject())
+                      : result;
+                });
+          }
+          return bean;
+        }
+      };
+    }
+
+    private static Connection countingConnection(Connection connection, StatementCounter counter) {
+      return (Connection)
+          Proxy.newProxyInstance(
+              Connection.class.getClassLoader(),
+              new Class<?>[] {Connection.class},
+              (proxy, method, args) -> {
+                if (method.getName().equals("prepareStatement")
+                    || method.getName().equals("prepareCall")
+                    || method.getName().equals("createStatement")) {
+                  if (Thread.currentThread() == counter.counted) {
+                    counter.statements.incrementAndGet();
+                  }
+                }
+                return invoke(connection, method, args);
+              });
+    }
+
+    private static Object invoke(Object target, Method method, Object[] args) throws Throwable {
+      try {
+        return method.invoke(target, args);
+      } catch (InvocationTargetException e) {
+        throw e.getCause();
+      }
+    }
+
+    long count(Runnable work) {
+      statements.set(0);
+      counted = Thread.currentThread();
+      try {
+        work.run();
+      } finally {
+        counted = null;
+      }
+      return statements.get();
+    }
   }
 
   @Test
@@ -235,39 +461,54 @@ class ReconciliationJobIT extends PostgresIntegrationTest {
   }
 
   private static ConfigurableApplicationContext boot(String startupSuppression) {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
-        "--server.port=0",
-        "--management.server.port=0",
-        "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
-        "--spring.datasource.username=" + POSTGRES.getUsername(),
-        "--spring.datasource.password=" + POSTGRES.getPassword(),
-        "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
-        "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
-        "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
-        "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
-        "--turnbase.admin.username=admin",
-        "--turnbase.admin.password=admin",
-        "--spring.data.redis.url=" + redisUrl(),
-        "--turnbase.room.lease.renew-interval=1h",
-        "--turnbase.room.idle-window=1s",
-        "--turnbase.jobs.deadline-sweep.interval=1h",
-        // Keeps the background sweep tick from racing this test's own manual job.run() calls.
-        "--turnbase.jobs.reconcile.interval=1h",
-        "--turnbase.jobs.reconcile.startup-suppression=" + startupSuppression,
-        "--turnbase.jobs.reconcile.orphan-age=0s");
+    return boot(startupSuppression, new Class<?>[0]);
   }
 
-  private static UUID insertRoom(ConfigurableApplicationContext context, String state) {
+  private static ConfigurableApplicationContext boot(
+      String startupSuppression, Class<?>... extraSources) {
+    List<Class<?>> sources = new ArrayList<>(List.of(TurnBaseApplication.class));
+    sources.addAll(List.of(extraSources));
+    return new SpringApplication(sources.toArray(Class<?>[]::new))
+        .run(
+            "--server.port=0",
+            "--management.server.port=0",
+            "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+            "--spring.datasource.username=" + POSTGRES.getUsername(),
+            "--spring.datasource.password=" + POSTGRES.getPassword(),
+            "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+            "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+            "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+            "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+            "--turnbase.admin.username=admin",
+            "--turnbase.admin.password=admin",
+            "--spring.data.redis.url=" + redisUrl(),
+            "--turnbase.room.lease.renew-interval=1h",
+            "--turnbase.room.idle-window=1s",
+            "--turnbase.jobs.deadline-sweep.interval=1h",
+            // Keeps the background sweep tick from racing this test's own manual job.run() calls.
+            "--turnbase.jobs.reconcile.interval=1h",
+            "--turnbase.jobs.reconcile.startup-suppression=" + startupSuppression,
+            "--turnbase.jobs.reconcile.orphan-age=0s");
+  }
+
+  private static UUID insertGame(JdbcClient jdbcClient) {
     UUID gameId = UUID.randomUUID();
-    UUID roomId = UUID.randomUUID();
-    JdbcClient jdbcClient = context.getBean(JdbcClient.class);
     jdbcClient
         .sql(
             "INSERT INTO game (game_id, title, short_description, badge, owner_user_id)"
                 + " VALUES (:gameId, 'Test Game', 'A game for testing.', 'OFFICIAL', NULL)")
         .param("gameId", gameId)
         .update();
+    return gameId;
+  }
+
+  private static UUID insertRoom(ConfigurableApplicationContext context, String state) {
+    JdbcClient jdbcClient = context.getBean(JdbcClient.class);
+    return insertRoomOfGame(jdbcClient, insertGame(jdbcClient), state);
+  }
+
+  private static UUID insertRoomOfGame(JdbcClient jdbcClient, UUID gameId, String state) {
+    UUID roomId = UUID.randomUUID();
     jdbcClient
         .sql(
             "INSERT INTO room (room_id, game_id, game_version, visibility, state)"
