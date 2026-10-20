@@ -225,6 +225,60 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void aClosedRoomsOwnershipKeysAreDeletedOnceItsTransactionCommits_IMP_M16_08() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomRepository repository = instanceA.getBean(RoomRepository.class);
+    StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
+    TransactionTemplate transaction =
+        new TransactionTemplate(
+            instanceA.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+    UUID rolledBack = insertRoom(instanceA);
+    UUID committed = insertRoom(instanceA);
+    UUID bare = insertRoom(instanceA);
+    UUID stillOpen = insertRoom(instanceA);
+    for (UUID roomId : new UUID[] {rolledBack, committed, bare, stillOpen}) {
+      ownershipA.claim(roomId);
+    }
+    resetRedisStats(redis);
+
+    transaction.executeWithoutResult(
+        status -> {
+          repository.detachSession(rolledBack, null, "NO_PLAYERS_REMAINING", "CLOSED");
+          status.setRollbackOnly();
+        });
+    assertThat(redis.hasKey("room:" + rolledBack + ":pod")).isTrue();
+    assertThat(redis.hasKey("room:" + rolledBack + ":epoch")).isTrue();
+
+    transaction.executeWithoutResult(
+        status -> repository.detachSession(committed, null, "NO_PLAYERS_REMAINING", "CLOSED"));
+    repository.detachSession(bare, null, "NO_PLAYERS_REMAINING", "CLOSED");
+    for (UUID closed : new UUID[] {committed, bare}) {
+      assertThat(redis.hasKey("room:" + closed + ":pod")).isFalse();
+      assertThat(redis.hasKey("room:" + closed + ":epoch")).isFalse();
+    }
+    assertThat(redis.hasKey("room:" + stillOpen + ":pod")).isTrue();
+    assertThat(redis.hasKey("room:" + stillOpen + ":epoch")).isTrue();
+    assertThat(redisCommandCalls(redis, "keys")).isZero();
+  }
+
+  @Test
+  void closingARoomLeavesAClaimKeyThatNamesAnotherInstanceAlone_IMP_M16_08() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomRepository repository = instanceA.getBean(RoomRepository.class);
+    StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+    redis.opsForValue().set("room:" + roomId + ":pod", "someone-else");
+
+    repository.detachSession(roomId, null, "NO_PLAYERS_REMAINING", "CLOSED");
+
+    assertThat(redis.opsForValue().get("room:" + roomId + ":pod")).isEqualTo("someone-else");
+    assertThat(redis.hasKey("room:" + roomId + ":epoch")).isTrue();
+  }
+
+  @Test
   void leaseRenewalDoesNotWalkTheOwnedRooms() {
     instanceA = boot();
     RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
@@ -508,5 +562,27 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
 
   private static void deleteLivenessKey(ConfigurableApplicationContext context, String podId) {
     context.getBean(StringRedisTemplate.class).delete("pod:" + podId + ":alive");
+  }
+
+  /** {@code calls=} of {@code INFO commandstats} for one command; 0 when it never ran. */
+  static long redisCommandCalls(StringRedisTemplate redis, String command) {
+    java.util.Properties stats =
+        redis.execute(
+            (org.springframework.data.redis.core.RedisCallback<java.util.Properties>)
+                c -> c.serverCommands().info("commandstats"));
+    String line = Objects.requireNonNull(stats).getProperty("cmdstat_" + command);
+    if (line == null) {
+      return 0;
+    }
+    return Long.parseLong(line.replaceFirst(".*calls=(\\d+).*", "$1"));
+  }
+
+  static void resetRedisStats(StringRedisTemplate redis) {
+    redis.execute(
+        (org.springframework.data.redis.core.RedisCallback<String>)
+            c -> {
+              c.serverCommands().resetConfigStats();
+              return "OK";
+            });
   }
 }

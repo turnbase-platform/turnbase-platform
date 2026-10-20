@@ -10,9 +10,11 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.context.ApplicationEventPublisher;
@@ -3086,6 +3088,22 @@ class RoomRepository {
         .param("deadOwners", deadOwnerInstanceIds)
         .query(UUID.class)
         .list();
+  }
+
+  /**
+   * The subset of {@code roomIds} that exist and are not {@code CLOSED}: one query per sweep batch
+   * (`room-lifecycle.md` §5.2, orphaned room keys).
+   */
+  Set<UUID> openRoomIds(Collection<UUID> roomIds) {
+    if (roomIds.isEmpty()) {
+      return Set.of();
+    }
+    return Set.copyOf(
+        jdbcClient
+            .sql("select room_id from room where room_id in (:roomIds) and state <> 'CLOSED'")
+            .param("roomIds", roomIds)
+            .query(UUID.class)
+            .list());
   }
 
   /** FR-JOB-009 / §5.3: rooms Closed past the retention window; participant/team/invite cascade. */

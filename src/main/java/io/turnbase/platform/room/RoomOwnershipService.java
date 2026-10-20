@@ -84,6 +84,23 @@ class RoomOwnershipService {
           """,
           Long.class);
 
+  /**
+   * {@code room-lifecycle.md} §1.3 as amended by {@code IMP-M16-08}: the keys of a closed room go
+   * with it. Compare-and-delete like {@link #RELEASE_SCRIPT}: the claim key is removed only if it
+   * names the caller (or is already gone), and the epoch key with it; a key naming another instance
+   * is left for the reconciliation sweep, since this instance has no say over it.
+   */
+  private static final RedisScript<Long> CLOSE_SCRIPT =
+      new DefaultRedisScript<>(
+          """
+          local cur = redis.call('GET', KEYS[1])
+          if cur == false or cur == ARGV[1] then
+            return redis.call('DEL', KEYS[1], KEYS[2])
+          end
+          return 0
+          """,
+          Long.class);
+
   private final StringRedisTemplate redis;
   private final JdbcClient jdbcClient;
   private final PodIdentity pod;
@@ -232,12 +249,23 @@ class RoomOwnershipService {
   }
 
   /**
-   * A closed room is never produced for again, so it leaves the set that the re-check walks. Not an
-   * eviction: nothing was lost, and no {@link RoomOwnershipLostEvent} severs sockets.
+   * A closed room is never produced for again (CLOSED is terminal), so it leaves the set that the
+   * re-check walks and its two ownership keys are deleted ({@code IMP-M16-08}). Not an eviction:
+   * nothing was lost, and no {@link RoomOwnershipLostEvent} severs sockets.
+   *
+   * <p>Runs after the closing transaction has committed, so a failure here must not surface as a
+   * failed close: the keys are then left to the reconciliation sweep ({@code §5.2}).
    */
   @EventListener
   void onRoomClosed(RoomClosedEvent event) {
-    owned.remove(event.roomId());
+    UUID roomId = event.roomId();
+    owned.remove(roomId);
+    try {
+      metrics.record(
+          () -> redis.execute(CLOSE_SCRIPT, List.of(roomKey(roomId), epochKey(roomId)), pod.id()));
+    } catch (RuntimeException e) {
+      log.warn("room {} closed but its Redis keys were not deleted: {}", roomId, e.toString());
+    }
   }
 
   /** Registers a room as owned. Also the seam a test uses to fill {@link #owned} in bulk. */

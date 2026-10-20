@@ -77,6 +77,14 @@ class ReconciliationMetrics {
         .increment();
   }
 
+  void recordRepair(String duty, String result, long count) {
+    Counter.builder("turnbase.reconcile.repairs.total")
+        .tag("duty", duty)
+        .tag("result", result)
+        .register(registry)
+        .increment(count);
+  }
+
   void setInProgressWithoutSession(long count) {
     inProgressWithoutSession.set(count);
   }

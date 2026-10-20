@@ -4,22 +4,27 @@ import io.turnbase.platform.common.JobsProperties;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 /**
  * {@code room-lifecycle.md} §5.2 (FR-JOB-007) — the 60s, single-instance reconciliation sweep,
- * scheduled by {@link ReconciliationSchedulingConfig}. Five duties, run in this order every tick;
- * an exception from any datastore call aborts the whole remaining run (§5.4 guard 1 — "an error is
+ * scheduled by {@link ReconciliationSchedulingConfig}. Six duties, run in this order every tick; an
+ * exception from any datastore call aborts the whole remaining run (§5.4 guard 1 — "an error is
  * never read as an absence").
  *
  * <p>{@code @SchedulerLock} gives FR-JOB-005/FR-JOB-007's "exactly one instance per interval," the
@@ -50,6 +55,11 @@ class ReconciliationJob {
           "gamelog:");
 
   private static final int TEARDOWN_BATCH = 100;
+
+  /** Keys per {@code SCAN} page and rooms per Postgres existence query in the room-key sweep. */
+  private static final int ROOM_KEY_BATCH = 500;
+
+  private static final int ROOM_KEY_PREFIX_LENGTH = "room:".length();
 
   private final RoomRepository repository;
   private final RoomOwnershipService ownership;
@@ -102,6 +112,7 @@ class ReconciliationJob {
       reconcileInProgressWithoutSession(suppressed, massLoss);
       reconcileIdleLobby(suppressed, massLoss);
       adoptUnownedRooms();
+      sweepClosedRoomKeys();
 
       if (massLoss) {
         ownership.ensureSentinel();
@@ -295,6 +306,78 @@ class ReconciliationJob {
         metrics.recordRepair("e", "adopted");
         log.warn("reconciliation duty (e): adopted unowned room {}", roomId);
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Duty (f) — ownership keys of closed rooms (IMP-M16-08). The close hook deletes them in the
+  // normal case; this collects what a crash, a Redis outage at close or a claim of an already
+  // closed room left behind. CLOSED is terminal, so no two-strike corroboration is needed: the
+  // database says so, and a room row is committed before anything can claim its id.
+  // ---------------------------------------------------------------------
+
+  /**
+   * {@code SCAN}s {@code room:*:pod} and {@code room:*:epoch} (never {@code KEYS}) and deletes the
+   * keys of rooms that are {@code CLOSED} or no longer exist, one existence query per batch.
+   */
+  void sweepClosedRoomKeys() {
+    long candidates = 0;
+    long deleted = 0;
+    for (String suffix : List.of(":pod", ":epoch")) {
+      ScanOptions options =
+          ScanOptions.scanOptions().match("room:*" + suffix).count(ROOM_KEY_BATCH).build();
+      Map<UUID, String> batch = new LinkedHashMap<>();
+      try (Cursor<String> cursor = metrics.recordRedis(() -> redis.scan(options))) {
+        while (cursor.hasNext()) {
+          String key = cursor.next();
+          UUID roomId = roomIdOf(key, suffix);
+          if (roomId != null) {
+            batch.put(roomId, key);
+          }
+          if (batch.size() >= ROOM_KEY_BATCH) {
+            long[] counts = deleteKeysOfClosedRooms(batch);
+            candidates += counts[0];
+            deleted += counts[1];
+            batch.clear();
+          }
+        }
+      }
+      long[] counts = deleteKeysOfClosedRooms(batch);
+      candidates += counts[0];
+      deleted += counts[1];
+    }
+    metrics.setCandidates("f", candidates);
+    if (deleted > 0) {
+      metrics.recordRepair("f", "repaired", deleted);
+      log.info("reconciliation duty (f): deleted {} ownership keys of closed rooms", deleted);
+    }
+  }
+
+  /** {@code [orphans found, keys deleted]} for one batch of {@code room id -> key}. */
+  private long[] deleteKeysOfClosedRooms(Map<UUID, String> batch) {
+    if (batch.isEmpty()) {
+      return new long[] {0, 0};
+    }
+    Set<UUID> open = repository.openRoomIds(batch.keySet());
+    List<String> orphaned = new ArrayList<>();
+    batch.forEach(
+        (roomId, key) -> {
+          if (!open.contains(roomId)) {
+            orphaned.add(key);
+          }
+        });
+    if (orphaned.isEmpty()) {
+      return new long[] {0, 0};
+    }
+    Long removed = metrics.recordRedis(() -> redis.delete(orphaned));
+    return new long[] {orphaned.size(), removed == null ? 0 : removed};
+  }
+
+  private static @Nullable UUID roomIdOf(String key, String suffix) {
+    try {
+      return UUID.fromString(key.substring(ROOM_KEY_PREFIX_LENGTH, key.length() - suffix.length()));
+    } catch (IllegalArgumentException | StringIndexOutOfBoundsException e) {
+      return null; // not one of ours
     }
   }
 }

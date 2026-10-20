@@ -6,6 +6,8 @@ import io.turnbase.platform.PostgresIntegrationTest;
 import io.turnbase.platform.TurnBaseApplication;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -62,6 +64,46 @@ class ReconciliationJobIT extends PostgresIntegrationTest {
     Instant nextAttemptAt =
         ((Timestamp) Objects.requireNonNull(row.get("next_attempt_at"))).toInstant();
     assertThat(nextAttemptAt).isAfter(Instant.now());
+  }
+
+  @Test
+  void dutyFSweepRemovesTheOwnershipKeysOfClosedAndMissingRoomsAndLeavesOpenOnes_IMP_M16_08() {
+    context = boot("0s");
+    ReconciliationJob job = context.getBean(ReconciliationJob.class);
+    StringRedisTemplate redis = context.getBean(StringRedisTemplate.class);
+    UUID openRoom = insertRoom(context, "LOBBY");
+    UUID inProgressRoom = insertRoom(context, "IN_PROGRESS");
+    UUID closedRoom = insertRoom(context, "CLOSED");
+    redis.opsForValue().set("room:" + openRoom + ":pod", "pod-x");
+    redis.opsForValue().set("room:" + openRoom + ":epoch", "3");
+    redis.opsForValue().set("room:" + inProgressRoom + ":pod", "pod-x");
+    redis.opsForValue().set("room:" + inProgressRoom + ":epoch", "3");
+    redis.opsForValue().set("room:" + closedRoom + ":pod", "pod-x");
+    redis.opsForValue().set("room:" + closedRoom + ":epoch", "3");
+    redis.opsForValue().set("room:not-a-uuid:pod", "left alone");
+    List<UUID> orphans = new ArrayList<>();
+    for (int i = 0; i < 5_000; i++) {
+      UUID orphan = i % 2 == 0 ? UUID.randomUUID() : insertRoom(context, "CLOSED");
+      orphans.add(orphan);
+      redis.opsForValue().set("room:" + orphan + ":pod", "pod-x");
+      redis.opsForValue().set("room:" + orphan + ":epoch", "7");
+    }
+    RoomOwnershipServiceIT.resetRedisStats(redis);
+
+    job.sweepClosedRoomKeys();
+
+    for (UUID orphan : orphans) {
+      assertThat(redis.hasKey("room:" + orphan + ":pod")).isFalse();
+      assertThat(redis.hasKey("room:" + orphan + ":epoch")).isFalse();
+    }
+    assertThat(redis.hasKey("room:" + closedRoom + ":pod")).isFalse();
+    assertThat(redis.hasKey("room:" + closedRoom + ":epoch")).isFalse();
+    for (UUID open : List.of(openRoom, inProgressRoom)) {
+      assertThat(redis.opsForValue().get("room:" + open + ":pod")).isEqualTo("pod-x");
+      assertThat(redis.opsForValue().get("room:" + open + ":epoch")).isEqualTo("3");
+    }
+    assertThat(redis.hasKey("room:not-a-uuid:pod")).isTrue();
+    assertThat(RoomOwnershipServiceIT.redisCommandCalls(redis, "keys")).isZero();
   }
 
   @Test
