@@ -49,6 +49,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   private final WebSocketChannelInterceptor channelInterceptor;
   private final WebSocketTraceInterceptor traceInterceptor;
+  private final SubscribeReceiptInterceptor receiptInterceptor;
   private final JsonMapper jsonMapper;
   private final SessionCookies sessionCookies;
 
@@ -64,11 +65,13 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
   WebSocketConfig(
       @Lazy WebSocketChannelInterceptor channelInterceptor,
       WebSocketTraceInterceptor traceInterceptor,
+      SubscribeReceiptInterceptor receiptInterceptor,
       JsonMapper jsonMapper,
       SessionCookies sessionCookies) {
     this.sessionCookies = sessionCookies;
     this.jsonMapper = jsonMapper;
     this.traceInterceptor = traceInterceptor;
+    this.receiptInterceptor = receiptInterceptor;
     this.channelInterceptor = channelInterceptor;
   }
 
@@ -102,7 +105,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   @Override
   public void configureClientInboundChannel(ChannelRegistration registration) {
-    registration.interceptors(channelInterceptor, traceInterceptor);
+    registration.interceptors(channelInterceptor, traceInterceptor, receiptInterceptor);
     registration.executor(channelExecutor("clientInboundChannel-"));
   }
 

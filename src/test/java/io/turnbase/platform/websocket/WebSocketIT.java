@@ -35,6 +35,7 @@ import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.messaging.simp.user.SimpUser;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
@@ -73,7 +74,11 @@ class WebSocketIT extends PostgresIntegrationTest {
             "--turnbase.admin.username=admin",
             "--turnbase.admin.password=admin",
             "--spring.data.redis.url=" + redisUrl(),
-            "--turnbase.rate-limit.minting.guest.capacity=1000000");
+            "--turnbase.rate-limit.minting.guest.capacity=1000000",
+            "--turnbase.rate-limit.ws.subscribe.capacity=1000000",
+            "--turnbase.rate-limit.ws.subscribe.refill-tokens=1000000",
+            "--turnbase.rate-limit.ws.connection.capacity=1000000",
+            "--turnbase.rate-limit.ws.connection.refill-tokens=1000000");
     context = booted;
     int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
@@ -210,6 +215,62 @@ class WebSocketIT extends PostgresIntegrationTest {
     session.disconnect();
   }
 
+  /**
+   * {@code IMP-M16-11}: a {@code SUBSCRIBE} carrying a {@code receipt} header is answered with a
+   * {@code RECEIPT} only once the broker has registered the subscription, so a broadcast sent the
+   * moment the receipt arrives is never missed. A hand-off made before registration, which is what
+   * {@code afterSendCompletion} on the executor channel would give, loses some of these.
+   */
+  @Test
+  void aBroadcastSentRightAfterTheReceiptIsNeverMissed() throws Exception {
+    String cookie = mintGuestCookie();
+    UUID roomId = createPublicRoom(cookie, seedTwoPlayerGame());
+    String destination = "/topic/room." + roomId;
+    SimpMessagingTemplate template = context().getBean(SimpMessagingTemplate.class);
+    StompSession session = connect(cookie);
+    session.setAutoReceipt(true);
+
+    int iterations = 1000;
+    int misses = 0;
+    for (int i = 0; i < iterations; i++) {
+      CompletableFuture<Object> broadcast = new CompletableFuture<>();
+      CompletableFuture<Void> receipt = new CompletableFuture<>();
+      StompHeaders headers = new StompHeaders();
+      headers.setDestination(destination);
+      StompSession.Subscription subscription =
+          session.subscribe(
+              headers,
+              new StompFrameHandler() {
+                @Override
+                public Type getPayloadType(StompHeaders headers) {
+                  return Map.class;
+                }
+
+                @Override
+                public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                  broadcast.complete(payload);
+                }
+              });
+      subscription.addReceiptTask(
+          () -> {
+            receipt.complete(null);
+            template.convertAndSend(destination, (Object) Map.of("type", "PING"));
+          });
+      subscription.addReceiptLostTask(
+          () -> receipt.completeExceptionally(new IllegalStateException("receipt lost")));
+      receipt.get(5, TimeUnit.SECONDS);
+      try {
+        broadcast.get(2, TimeUnit.SECONDS);
+      } catch (java.util.concurrent.TimeoutException e) {
+        misses++;
+      }
+      subscription.unsubscribe();
+    }
+
+    assertThat(misses).as("broadcasts missed after the receipt").isZero();
+    session.disconnect();
+  }
+
   private StompSession connect(String cookie) throws Exception {
     WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
     handshakeHeaders.add(HttpHeaders.COOKIE, cookie);
@@ -238,10 +299,20 @@ class WebSocketIT extends PostgresIntegrationTest {
     }
   }
 
+  private final ThreadPoolTaskScheduler receiptScheduler = receiptScheduler();
+
+  private static ThreadPoolTaskScheduler receiptScheduler() {
+    ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+    scheduler.setThreadNamePrefix("receipt-");
+    scheduler.initialize();
+    return scheduler;
+  }
+
   private WebSocketStompClient newStompClient() {
     // No SockJS — the server offers a plain WebSocket endpoint only (websocket.md § Connection).
     WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
     stompClient.setMessageConverter(new MappingJackson2MessageConverter());
+    stompClient.setTaskScheduler(receiptScheduler);
     return stompClient;
   }
 
