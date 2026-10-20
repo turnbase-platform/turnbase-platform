@@ -5,6 +5,13 @@ spring:
     active: ${SPRING_PROFILES_ACTIVE:local}
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  task:
+    scheduling:
+      # IMP-M16-10: Boot's @Scheduled pool (default 1). The ownership lease and re-check have
+      # their own schedulers since IMP-M16-07, so four cover the periodic jobs without letting one
+      # slow job delay the others.
+      pool:
+        size: 4
   data:
     # local-environment.md §7.9. Tiers 1-5's buckets (rate-limiting.md, IMP-M1-02) — the only
     # Redis consumer in this repo today. Host + port, never `url`: Spring Boot's `url` overrides
@@ -24,6 +31,13 @@ server:
   # Helm chart's preStop/terminationGracePeriodSeconds (IMP-M0-08) only give a graceful drain
   # time to happen; this is what makes it happen at all.
   shutdown: graceful
+  tomcat:
+    # IMP-M16-10: explicit, not the library defaults. Idle workers above min-spare are released
+    # after TomcatWorkerIdleTimeout.IDLE (the 60 s default never fires while the Game Host's
+    # heartbeats keep arriving, load-testing.md §13 finding 17).
+    threads:
+      max: 200
+      min-spare: 10
 
 management:
   server:

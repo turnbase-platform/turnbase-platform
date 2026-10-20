@@ -360,15 +360,21 @@ class AuthControllerIT extends PostgresIntegrationTest {
     assertThat(parse(response)).containsExactly(Map.entry("authenticated", false));
   }
 
+  /**
+   * Spring's scheduling post-processor logs "more than one TaskScheduler bean" when the candidates
+   * are ambiguous and none is named {@code taskScheduler}. Since {@code IMP-M16-10} the broker's
+   * own scheduler is a candidate beside the pool {@code SchedulingPoolConfig} names that, so the
+   * name is what resolves it, and the heartbeat scheduler stays out of the candidates.
+   */
   @Test
-  void exactlyOneTaskSchedulerIsAnAutowireCandidate() {
+  void theTaskSchedulerNamedByDefaultResolvesTheAmbiguityAndTheHeartbeatSchedulerIsNoCandidate() {
     assertThat(
             java.util.Arrays.stream(
                     context.getBeanNamesForType(org.springframework.scheduling.TaskScheduler.class))
                 .filter(
                     name -> context.getBeanFactory().getBeanDefinition(name).isAutowireCandidate())
                 .toList())
-        .hasSize(1);
+        .containsExactlyInAnyOrder("taskScheduler", "messageBrokerTaskScheduler");
   }
 
   @Test

@@ -2,6 +2,7 @@ package io.turnbase.platform.websocket;
 
 import io.turnbase.platform.common.SessionCookies;
 import java.util.List;
+import java.util.concurrent.ThreadPoolExecutor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -10,6 +11,7 @@ import org.springframework.messaging.converter.MessageConverter;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
@@ -32,6 +34,18 @@ import tools.jackson.databind.json.JsonMapper;
 class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   private static final long[] HEARTBEAT = {10_000, 10_000};
+
+  /**
+   * Waiting frames per STOMP channel executor: none. A thread pool only grows past its core size
+   * when its queue refuses a task, and the inbound handlers block on the Game Host, so a queue in
+   * front of four core threads capped the platform at four concurrent calls (32 pairs: move round
+   * trip p50 25 ms -> 43 ms, platform CPU 2.3 -> 1.9 cores). With a hand-off the pool grows to its
+   * maximum and a frame beyond that runs on the publishing thread.
+   */
+  static final int CHANNEL_QUEUE_CAPACITY = 0;
+
+  /** Idle seconds after which a STOMP channel thread is released, core threads included. */
+  static final int CHANNEL_KEEP_ALIVE_SECONDS = 60;
 
   private final WebSocketChannelInterceptor channelInterceptor;
   private final WebSocketTraceInterceptor traceInterceptor;
@@ -89,13 +103,45 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
   @Override
   public void configureClientInboundChannel(ChannelRegistration registration) {
     registration.interceptors(channelInterceptor, traceInterceptor);
+    registration.executor(channelExecutor("clientInboundChannel-"));
+  }
+
+  @Override
+  public void configureClientOutboundChannel(ChannelRegistration registration) {
+    registration.executor(channelExecutor("clientOutboundChannel-"));
   }
 
   /**
-   * Not an autowire candidate: Spring Boot's own {@code taskScheduler} is the one
-   * {@code @Scheduled} jobs resolve by type, and a second candidate makes the scheduling
-   * post-processor log "more than one TaskScheduler bean" at start-up. The broker receives this one
-   * by direct call above.
+   * {@code IMP-M16-10}: the STOMP channel executors are bounded and release their threads. Core =
+   * available processors, maximum = four times that, a hand-off instead of a queue, whose overflow
+   * runs on the publishing thread (back-pressure instead of an unbounded backlog), and every
+   * thread, core included, times out after {@link #CHANNEL_KEEP_ALIVE_SECONDS} idle seconds. The
+   * broker channel has no executor on purpose: with the simple broker it delivers on the
+   * publisher's thread (the load-test census shows no {@code brokerChannel-} thread), and giving it
+   * a pool would add a hand-off to every fan-out.
+   *
+   * <p>Set with {@code executor(...)}, which wins over {@code taskExecutor(...)}: Spring Boot's own
+   * configurer (order 0, this one runs after it) hands both channels the context's only {@code
+   * AsyncTaskExecutor}, and without this override they would share that pool and its settings.
+   */
+  static ThreadPoolTaskExecutor channelExecutor(String threadNamePrefix) {
+    int processors = Runtime.getRuntime().availableProcessors();
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setThreadNamePrefix(threadNamePrefix);
+    executor.setCorePoolSize(processors);
+    executor.setMaxPoolSize(4 * processors);
+    executor.setQueueCapacity(CHANNEL_QUEUE_CAPACITY);
+    executor.setKeepAliveSeconds(CHANNEL_KEEP_ALIVE_SECONDS);
+    executor.setAllowCoreThreadTimeOut(true);
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+    return executor;
+  }
+
+  /**
+   * Not an autowire candidate: the {@code @Scheduled} jobs resolve the {@code taskScheduler} that
+   * {@code SchedulingPoolConfig} defines (the broker's own scheduler is the only other candidate,
+   * and the name settles it), and a third makes the resolution ambiguous. The broker receives this
+   * one by direct call above.
    */
   @Bean(autowireCandidate = false)
   TaskScheduler heartbeatTaskScheduler() {
