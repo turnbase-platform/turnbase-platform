@@ -50,7 +50,15 @@ class HistoryRecordingService implements GameOutcomeRecorder {
     if (!inserted) {
       return; // FR-EFF-007 made durable: a re-delivered game_over writes and counts nothing.
     }
+    writeEntriesIfValid(report, roster);
+    // Last statement of the transaction (data-model-history.md §3): the game row is the one row
+    // every completion of that game updates, so its lock is held from here to the commit and not
+    // while the entries above are written (IMP-M16-13: 3.8 ms a statement at 64 pairs, almost all
+    // of it waiting for that lock).
     repository.incrementCompletedSessions(report.gameId());
+  }
+
+  private void writeEntriesIfValid(GameOutcomeReport report, @Nullable SessionRoster roster) {
     if (roster == null) {
       return;
     }

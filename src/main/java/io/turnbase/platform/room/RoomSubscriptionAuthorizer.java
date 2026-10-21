@@ -57,6 +57,13 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
   private final Map<UUID, Set<String>> sessionsByRoom = new ConcurrentHashMap<>();
   private final Map<String, RoomMembership> membershipBySession = new ConcurrentHashMap<>();
 
+  /**
+   * The inverse of {@link #sessionsByRoom}, so a disconnect touches the rooms its session is in and
+   * not every room this instance has ever served (IMP-M16-13: the walk was 2.3% of platform CPU at
+   * 64 pairs and grew with the rooms created since the start).
+   */
+  private final Map<String, Set<UUID>> roomsBySession = new ConcurrentHashMap<>();
+
   RoomSubscriptionAuthorizer(
       RoomRepository repository,
       RoomOwnershipService ownership,
@@ -104,9 +111,16 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
     RoomOwnershipService.ClaimOutcome outcome = ownership.claimWithRetry(roomId);
     if (outcome instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine
         || outcome instanceof RoomOwnershipService.ClaimOutcome.Adopted) {
-      sessionsByRoom
-          .computeIfAbsent(roomId, id -> ConcurrentHashMap.newKeySet())
-          .add(stompSessionId);
+      sessionsByRoom.compute(
+          roomId,
+          (id, sessions) -> {
+            Set<String> tracked = sessions == null ? ConcurrentHashMap.newKeySet() : sessions;
+            tracked.add(stompSessionId);
+            return tracked;
+          });
+      roomsBySession
+          .computeIfAbsent(stompSessionId, id -> ConcurrentHashMap.newKeySet())
+          .add(roomId);
       // room-lifecycle.md §1.1: connection_count is a refcount over a user's concurrent
       // connections (FR-GRACE-006), resolved once per session that subscribes to this room's
       // topic — the mirror of registerDisconnect's decrement, and (room-lifecycle.md §3.2,
@@ -138,6 +152,7 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
       return;
     }
     for (String stompSessionId : sessions) {
+      forgetRoom(stompSessionId, event.roomId());
       // Removed here, synchronously, before the socket is actually severed — see the class
       // Javadoc: this is what makes the eventual SessionDisconnectEvent read as instance-initiated
       // rather than a player disconnect once it fires.
@@ -161,8 +176,9 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
   void onSessionDisconnect(SessionDisconnectEvent event) {
     String stompSessionId = event.getSessionId();
     RoomMembership membership = membershipBySession.remove(stompSessionId);
-    for (Set<String> roomSessions : sessionsByRoom.values()) {
-      roomSessions.remove(stompSessionId);
+    Set<UUID> rooms = roomsBySession.remove(stompSessionId);
+    if (rooms != null) {
+      rooms.forEach(roomId -> forgetSession(roomId, stompSessionId));
     }
     if (membership != null) {
       LifecycleLog.info(
@@ -174,5 +190,33 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
           membership.userId());
       roomService.onDisconnect(membership.roomId(), membership.userId());
     }
+  }
+
+  /** Drops the session from the room's set and the room itself once its last session is gone. */
+  private void forgetSession(UUID roomId, String stompSessionId) {
+    sessionsByRoom.computeIfPresent(
+        roomId,
+        (id, sessions) -> {
+          sessions.remove(stompSessionId);
+          return sessions.isEmpty() ? null : sessions;
+        });
+  }
+
+  private void forgetRoom(String stompSessionId, UUID roomId) {
+    roomsBySession.computeIfPresent(
+        stompSessionId,
+        (id, rooms) -> {
+          rooms.remove(roomId);
+          return rooms.isEmpty() ? null : rooms;
+        });
+  }
+
+  /** Rooms and sessions currently tracked, for the tests that pin the bookkeeping to its size. */
+  int trackedRooms() {
+    return sessionsByRoom.size();
+  }
+
+  int trackedSessions() {
+    return roomsBySession.size();
   }
 }

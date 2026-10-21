@@ -176,6 +176,65 @@ class RoomSubscriptionAuthorizerTest {
     verify(roomService, never()).onDisconnect(any(), any());
   }
 
+  /**
+   * {@code IMP-M16-13}: the bookkeeping is sized by the sessions that are connected, not by the
+   * rooms this instance has served; a disconnect used to walk every room it had ever tracked.
+   */
+  @Test
+  void aDisconnectedSessionLeavesNoRoomBehind() {
+    when(repository.isCurrentParticipant(any(), any())).thenReturn(true);
+    when(ownership.claimWithRetry(any()))
+        .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
+    for (int i = 0; i < 50; i++) {
+      authorizer.authorize(user, "/topic/room." + UUID.randomUUID(), "stomp-session-" + i);
+    }
+    assertThat(authorizer.trackedRooms()).isEqualTo(50);
+    assertThat(authorizer.trackedSessions()).isEqualTo(50);
+
+    for (int i = 0; i < 50; i++) {
+      authorizer.onSessionDisconnect(disconnectEvent("stomp-session-" + i));
+    }
+
+    assertThat(authorizer.trackedRooms()).isZero();
+    assertThat(authorizer.trackedSessions()).isZero();
+  }
+
+  @Test
+  void aRoomKeepsItsOtherSessionsWhenOneDisconnects() {
+    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(ownership.claimWithRetry(roomId))
+        .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-2");
+
+    authorizer.onSessionDisconnect(disconnectEvent("stomp-session-1"));
+    authorizer.onRoomOwnershipLost(new RoomOwnershipLostEvent(roomId, "test"));
+
+    verify(connectionRegistry).closeSession(eq("stomp-session-2"), anyString(), anyString());
+    verify(connectionRegistry, never())
+        .closeSession(eq("stomp-session-1"), anyString(), anyString());
+    assertThat(authorizer.trackedRooms()).isZero();
+    assertThat(authorizer.trackedSessions()).isZero();
+  }
+
+  @Test
+  void aSessionSubscribedToTwoRoomsIsForgottenInBoth() {
+    UUID other = UUID.randomUUID();
+    when(repository.isCurrentParticipant(any(), any())).thenReturn(true);
+    when(ownership.claimWithRetry(any()))
+        .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
+    authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
+    authorizer.authorize(user, "/topic/room." + other, "stomp-session-1");
+
+    authorizer.onSessionDisconnect(disconnectEvent("stomp-session-1"));
+    authorizer.onRoomOwnershipLost(new RoomOwnershipLostEvent(roomId, "test"));
+    authorizer.onRoomOwnershipLost(new RoomOwnershipLostEvent(other, "test"));
+
+    verify(connectionRegistry, never()).closeSession(anyString(), anyString(), anyString());
+    assertThat(authorizer.trackedRooms()).isZero();
+    assertThat(authorizer.trackedSessions()).isZero();
+  }
+
   private static SessionDisconnectEvent disconnectEvent(String stompSessionId) {
     return new SessionDisconnectEvent(
         new Object(),
