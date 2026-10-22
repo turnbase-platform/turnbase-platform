@@ -2353,7 +2353,11 @@ class RoomRepository {
   // The deadline sweep (IMP-M2-07, room-lifecycle.md §5.1).
   // ---------------------------------------------------------------------
 
-  /** §5.1 duty 1's query: this instance's own due reservations. */
+  /**
+   * §5.1 duty 1's query: this instance's own due reservations. A closed room is excluded here
+   * ({@code FR-DBQ-004}): {@code onRoomClosed} drops its epoch, so no duty can mutate it, and it
+   * would otherwise be selected again on every tick until its purge.
+   */
   List<DueReservation> dueGraceReservations(String instanceId) {
     return jdbcClient
         .sql(
@@ -2362,7 +2366,7 @@ class RoomRepository {
                    r.active_session_id
               from room_participant rp join room r using (room_id)
              where rp.grace_expires_at <= now() and rp.left_at is null
-               and r.owner_instance_id = :instanceId
+               and r.owner_instance_id = :instanceId and r.state <> 'CLOSED'
             """)
         .param("instanceId", instanceId)
         .query(
@@ -2595,7 +2599,10 @@ class RoomRepository {
         .update();
   }
 
-  /** §5.1 duty 2's query: departures a foreign instance resolved, still owed an announcement. */
+  /**
+   * §5.1 duty 2's query: departures a foreign instance resolved, still owed an announcement. Not
+   * for a closed room ({@code FR-DBQ-004}): nobody listens to its topic and its closure is done.
+   */
   List<DeferredTail> deferredTails(String instanceId) {
     return jdbcClient
         .sql(
@@ -2604,7 +2611,7 @@ class RoomRepository {
               from room_participant rp join room r using (room_id)
              where rp.left_at is not null and rp.lost_announced_at is null
                and rp.leave_reason in ('GRACE_EXPIRED', 'EARLY_RELEASE', 'LEFT')
-               and r.owner_instance_id = :instanceId
+               and r.owner_instance_id = :instanceId and r.state <> 'CLOSED'
             """)
         .param("instanceId", instanceId)
         .query(
@@ -2641,12 +2648,17 @@ class RoomRepository {
     return updated > 0;
   }
 
-  /** §5.1 duty 3's query: elapsed migration windows on rooms this instance owns. */
+  /**
+   * §5.1 duty 3's query: elapsed migration windows on rooms this instance owns and can still
+   * change. A room that closed inside its window keeps {@code owner_instance_id} and the window, so
+   * {@code state <> 'CLOSED'} is what stops it being re-read every tick ({@code FR-DBQ-004}).
+   */
   List<UUID> elapsedMigrationWindowRoomIds(String instanceId) {
     return jdbcClient
         .sql(
             "select room_id from room"
-                + " where migration_window_expires_at <= now() and owner_instance_id = :instanceId")
+                + " where migration_window_expires_at <= now() and owner_instance_id = :instanceId"
+                + " and state <> 'CLOSED'")
         .param("instanceId", instanceId)
         .query(UUID.class)
         .list();
