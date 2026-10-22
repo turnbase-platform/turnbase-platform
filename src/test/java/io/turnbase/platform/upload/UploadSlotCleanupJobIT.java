@@ -36,6 +36,7 @@ class UploadSlotCleanupJobIT extends PostgresIntegrationTest {
   static void setUp() {
     Flyway.configure()
         .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+        .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
         .load()
         .migrate();
     DriverManagerDataSource dataSource =

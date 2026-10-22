@@ -12,6 +12,12 @@ spring:
       # slow job delay the others.
       pool:
         size: 4
+  flyway:
+    postgresql:
+      # IMP-M17-02: Flyway's default advisory lock is transactional, so its connection sits
+      # idle-in-transaction for the whole run and CREATE INDEX CONCURRENTLY waits on it forever.
+      # A session-level lock still serialises pods; schema-migrations.md § CREATE INDEX CONCURRENTLY.
+      transactional-lock: false
   data:
     # local-environment.md §7.9. Tiers 1-5's buckets (rate-limiting.md, IMP-M1-02) — the only
     # Redis consumer in this repo today. Host + port, never `url`: Spring Boot's `url` overrides

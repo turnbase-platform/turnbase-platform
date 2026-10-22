@@ -31,6 +31,7 @@ class BusinessMetricsQueryPlanIT {
   void bothRoomGaugeQueriesUseAPartialIndexWith100000ClosedRooms() {
     Flyway.configure()
         .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+        .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
         .load()
         .migrate();
     DriverManagerDataSource dataSource = new DriverManagerDataSource();

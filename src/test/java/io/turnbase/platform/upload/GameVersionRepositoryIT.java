@@ -33,6 +33,7 @@ class GameVersionRepositoryIT extends PostgresIntegrationTest {
   static void setUpSchemaAndRepository() {
     Flyway.configure()
         .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+        .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
         .load()
         .migrate();
     DriverManagerDataSource dataSource =

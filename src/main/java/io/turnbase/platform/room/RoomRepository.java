@@ -304,7 +304,7 @@ class RoomRepository {
             left join (
               select team_id, count(*) as occupied
               from room_participant
-              where role = 'PLAYER' and left_at is null
+              where room_id = :roomId and role = 'PLAYER' and left_at is null
               group by team_id
             ) rc on rc.team_id = t.team_id
             where t.room_id = :roomId and coalesce(rc.occupied, 0) < t.configured_size
@@ -724,7 +724,7 @@ class RoomRepository {
   TeamRemovedPayload removeTeam(UUID roomId, UUID hostUserId, UUID teamId) {
     requireLobby(requireHost(roomId, hostUserId));
     requireTeamInRoom(roomId, teamId);
-    long occupied = teamOccupancy(teamId);
+    long occupied = teamOccupancy(roomId, teamId);
     if (occupied > 0) {
       throw new RoomCommandException("TEAM_NOT_EMPTY", "This team still has members.");
     }
@@ -746,7 +746,7 @@ class RoomRepository {
           "SIZE_OUT_OF_RANGE",
           "newSize must be within [%d, %d].".formatted(template.sizeMin(), template.sizeMax()));
     }
-    long occupied = teamOccupancy(teamId);
+    long occupied = teamOccupancy(roomId, teamId);
     if (newSize < occupied) {
       throw new RoomCommandException(
           "OVER_CAPACITY", "newSize would reduce capacity below the current member count.");
@@ -789,7 +789,7 @@ class RoomRepository {
                         "VALIDATION_FAILED",
                         "No such team.",
                         Map.of("field", "toTeamId", "value", toTeamId.toString())));
-    if (teamOccupancy(toTeamId) >= configuredSize) {
+    if (teamOccupancy(roomId, toTeamId) >= configuredSize) {
       throw new RoomCommandException("TEAM_FULL", "The target team has no available slot.");
     }
     jdbcClient
@@ -862,12 +862,14 @@ class RoomRepository {
     return count == null ? 0 : count;
   }
 
-  private long teamOccupancy(UUID teamId) {
+  /** FR-DBQ-002: counted among the participants of {@code roomId} only. */
+  private long teamOccupancy(UUID roomId, UUID teamId) {
     Long count =
         jdbcClient
             .sql(
-                "select count(*) from room_participant where team_id = :teamId"
-                    + " and role = 'PLAYER' and left_at is null")
+                "select count(*) from room_participant where room_id = :roomId"
+                    + " and team_id = :teamId and role = 'PLAYER' and left_at is null")
+            .param("roomId", roomId)
             .param("teamId", teamId)
             .query(Long.class)
             .single();
@@ -1104,7 +1106,8 @@ class RoomRepository {
                 select t.team_id, t.template_index, coalesce(rc.occupied, 0) as occupied
                 from room_team t
                 left join (select team_id, count(*) as occupied from room_participant
-                           where role = 'PLAYER' and left_at is null group by team_id) rc
+                           where room_id = :roomId and role = 'PLAYER' and left_at is null
+                           group by team_id) rc
                   on rc.team_id = t.team_id
                 where t.room_id = :roomId
                 """)
@@ -1647,15 +1650,15 @@ class RoomRepository {
       join game g on g.game_id = r.game_id
       join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
       left join app_user hu on hu.user_id = r.host_user_id
-      left join (select room_id, count(*) as player_count from room_participant
-                 where role = 'PLAYER' and left_at is null group by room_id) pc
-        on pc.room_id = r.room_id
-      left join (select room_id, sum(configured_size) as player_capacity from room_team
-                 group by room_id) cap
-        on cap.room_id = r.room_id
-      left join (select room_id, count(*) as spectator_count from room_participant
-                 where role = 'SPECTATOR' and left_at is null group by room_id) sc
-        on sc.room_id = r.room_id
+      left join lateral (select count(*) as player_count from room_participant
+                         where room_id = r.room_id and role = 'PLAYER' and left_at is null) pc
+        on true
+      left join lateral (select sum(configured_size) as player_capacity from room_team
+                         where room_id = r.room_id) cap
+        on true
+      left join lateral (select count(*) as spectator_count from room_participant
+                         where room_id = r.room_id and role = 'SPECTATOR' and left_at is null) sc
+        on true
       """;
 
   /** Post-mutation refetch: the caller is already known to have access (they just acted on it). */
@@ -1754,15 +1757,15 @@ class RoomRepository {
         join game g on g.game_id = r.game_id
         join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
         left join app_user hu on hu.user_id = r.host_user_id
-        left join (select room_id, count(*) as player_count from room_participant
-                   where role = 'PLAYER' and left_at is null group by room_id) pc
-          on pc.room_id = r.room_id
-        left join (select room_id, sum(configured_size) as player_capacity from room_team
-                   group by room_id) cap
-          on cap.room_id = r.room_id
-        left join (select room_id, count(*) as spectator_count from room_participant
-                   where role = 'SPECTATOR' and left_at is null group by room_id) sc
-          on sc.room_id = r.room_id
+        left join lateral (select count(*) as player_count from room_participant
+                           where room_id = r.room_id and role = 'PLAYER' and left_at is null) pc
+          on true
+        left join lateral (select sum(configured_size) as player_capacity from room_team
+                           where room_id = r.room_id) cap
+          on true
+        left join lateral (select count(*) as spectator_count from room_participant
+                           where room_id = r.room_id and role = 'SPECTATOR' and left_at is null) sc
+          on true
         where\s"""
             + where.sql()
             + " order by "
@@ -1786,15 +1789,15 @@ class RoomRepository {
         join game g on g.game_id = r.game_id
         join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
         left join app_user hu on hu.user_id = r.host_user_id
-        left join (select room_id, count(*) as player_count from room_participant
-                   where role = 'PLAYER' and left_at is null group by room_id) pc
-          on pc.room_id = r.room_id
-        left join (select room_id, sum(configured_size) as player_capacity from room_team
-                   group by room_id) cap
-          on cap.room_id = r.room_id
-        left join (select room_id, count(*) as spectator_count from room_participant
-                   where role = 'SPECTATOR' and left_at is null group by room_id) sc
-          on sc.room_id = r.room_id
+        left join lateral (select count(*) as player_count from room_participant
+                           where room_id = r.room_id and role = 'PLAYER' and left_at is null) pc
+          on true
+        left join lateral (select sum(configured_size) as player_capacity from room_team
+                           where room_id = r.room_id) cap
+          on true
+        left join lateral (select count(*) as spectator_count from room_participant
+                           where room_id = r.room_id and role = 'SPECTATOR' and left_at is null) sc
+          on true
         where\s"""
             + where.sql();
     var spec = jdbcClient.sql(sql);
@@ -2356,17 +2359,22 @@ class RoomRepository {
   /**
    * §5.1 duty 1's query: this instance's own due reservations. A closed room is excluded here
    * ({@code FR-DBQ-004}): {@code onRoomClosed} drops its epoch, so no duty can mutate it, and it
-   * would otherwise be selected again on every tick until its purge.
+   * would otherwise be selected again on every tick until its purge. The rooms are chosen first,
+   * and fenced with {@code materialized}: the grace index spans the reservations of closed rooms
+   * too, and joining from it would read them all ({@code FR-DBQ-001}).
    */
   List<DueReservation> dueGraceReservations(String instanceId) {
     return jdbcClient
         .sql(
             """
+            with mine as materialized (
+              select room_id, active_session_id from room
+               where owner_instance_id = :instanceId and state <> 'CLOSED'
+            )
             select rp.room_id, rp.user_id, rp.grace_reservation_id, rp.team_id,
-                   r.active_session_id
-              from room_participant rp join room r using (room_id)
+                   mine.active_session_id
+              from mine join room_participant rp on rp.room_id = mine.room_id
              where rp.grace_expires_at <= now() and rp.left_at is null
-               and r.owner_instance_id = :instanceId and r.state <> 'CLOSED'
             """)
         .param("instanceId", instanceId)
         .query(
@@ -2602,16 +2610,20 @@ class RoomRepository {
   /**
    * §5.1 duty 2's query: departures a foreign instance resolved, still owed an announcement. Not
    * for a closed room ({@code FR-DBQ-004}): nobody listens to its topic and its closure is done.
+   * Rooms first, as for {@link #dueGraceReservations}: the unannounced index spans closed rooms.
    */
   List<DeferredTail> deferredTails(String instanceId) {
     return jdbcClient
         .sql(
             """
-            select rp.room_id, rp.user_id, rp.team_id, rp.leave_reason, r.host_user_id
-              from room_participant rp join room r using (room_id)
+            with mine as materialized (
+              select room_id, host_user_id from room
+               where owner_instance_id = :instanceId and state <> 'CLOSED'
+            )
+            select rp.room_id, rp.user_id, rp.team_id, rp.leave_reason, mine.host_user_id
+              from mine join room_participant rp on rp.room_id = mine.room_id
              where rp.left_at is not null and rp.lost_announced_at is null
                and rp.leave_reason in ('GRACE_EXPIRED', 'EARLY_RELEASE', 'LEFT')
-               and r.owner_instance_id = :instanceId and r.state <> 'CLOSED'
             """)
         .param("instanceId", instanceId)
         .query(

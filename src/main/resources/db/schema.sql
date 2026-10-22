@@ -1004,10 +1004,17 @@ CREATE INDEX room_open_state_idx ON public.room USING btree (state) WHERE (state
 
 
 --
--- Name: room_participant_grace_due_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: room_participant_grace_room_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX room_participant_grace_due_idx ON public.room_participant USING btree (grace_expires_at) WHERE ((grace_expires_at IS NOT NULL) AND (left_at IS NULL));
+CREATE INDEX room_participant_grace_room_idx ON public.room_participant USING btree (room_id, grace_expires_at) WHERE ((grace_expires_at IS NOT NULL) AND (left_at IS NULL));
+
+
+--
+-- Name: room_participant_live_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX room_participant_live_user_idx ON public.room_participant USING btree (user_id) WHERE (left_at IS NULL);
 
 
 --

@@ -60,6 +60,7 @@ class FlywayBaselineIT {
     return Flyway.configure()
         .cleanDisabled(false)
         .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+        .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
         .load();
   }
 
@@ -79,7 +80,7 @@ class FlywayBaselineIT {
     MigrateResult result = flyway.migrate();
 
     assertThat(result.success).isTrue();
-    assertThat(result.migrationsExecuted).isEqualTo(2);
+    assertThat(result.migrationsExecuted).isEqualTo(3);
 
     try (Connection connection =
         DriverManager.getConnection(
