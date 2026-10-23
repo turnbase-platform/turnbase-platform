@@ -21,10 +21,17 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
-          {{- with .Values.postgres.extraArgs }}
-          # Arguments for the image's entrypoint (`-c name=value` server settings); empty by default.
+          {{- if or .Values.postgres.settings .Values.postgres.extraArgs }}
+          # Arguments for the image's entrypoint: `postgres.settings` as `-c name=value` server settings
+          # (sorted by name), then `postgres.extraArgs` verbatim.
           args:
+            {{- range $name, $value := .Values.postgres.settings }}
+            - -c
+            - {{ printf "%s=%v" $name $value | quote }}
+            {{- end }}
+            {{- with .Values.postgres.extraArgs }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: postgres
