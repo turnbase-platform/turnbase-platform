@@ -18,6 +18,12 @@ spring:
       # idle-in-transaction for the whole run and CREATE INDEX CONCURRENTLY waits on it forever.
       # A session-level lock still serialises pods; schema-migrations.md § CREATE INDEX CONCURRENTLY.
       transactional-lock: false
+  datasource:
+    hikari:
+      # IMP-M17-03, FR-DBQ-005: explicit, never Hikari's library default. 10 is the value that default
+      # had been, so setting it changed no behaviour; IMP-M17-04 chooses the real one. Fixed-size
+      # (minimum-idle stays at its default, the maximum). local-environment.md §7.9.
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:10}
   data:
     # local-environment.md §7.9. Tiers 1-5's buckets (rate-limiting.md, IMP-M1-02) — the only
     # Redis consumer in this repo today. Host + port, never `url`: Spring Boot's `url` overrides

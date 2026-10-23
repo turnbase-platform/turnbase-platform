@@ -40,6 +40,9 @@ platform:
   containerPort: 8080
   managementPort: 8081
   resources: {}
+  db:
+    # IMP-M17-03, FR-DBQ-005: spring.datasource.hikari.maximum-pool-size, per environment.
+    poolMaxSize: 10
   # Extra container env entries ({name, value} or {name, valueFrom}); they win over the ConfigMap.
   # The load-test overlay (load-testing.md A1) uses it for SPRING_PROFILES_ACTIVE.
   extraEnv: []

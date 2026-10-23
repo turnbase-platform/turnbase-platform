@@ -8,6 +8,7 @@ data:
   SPRING_PROFILES_ACTIVE: "local"
   SPRING_DATASOURCE_URL: "jdbc:postgresql://{{ .Release.Name }}-postgres:5432/{{ .Values.postgres.database }}"
   SPRING_DATASOURCE_USERNAME: {{ .Values.postgres.appUser | quote }}
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: {{ .Values.platform.db.poolMaxSize | quote }}
   SPRING_DATA_REDIS_HOST: "{{ .Release.Name }}-redis"
   SPRING_DATA_REDIS_PORT: "6379"
   MANAGEMENT_SERVER_PORT: {{ .Values.platform.managementPort | quote }}
