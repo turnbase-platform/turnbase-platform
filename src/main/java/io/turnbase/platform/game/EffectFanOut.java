@@ -3,11 +3,13 @@ package io.turnbase.platform.game;
 import com.google.protobuf.ByteString;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.turnbase.grpc.gamehost.v1.Effect;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,26 +58,32 @@ class EffectFanOut implements EffectDelivery {
   }
 
   @Override
-  public void deliver(UUID sessionId, long sequence, List<Effect> effects) {
+  public List<GameLogStore.Entry> deliver(UUID sessionId, long sequence, List<Effect> effects) {
     if (effects.isEmpty()) {
-      return;
+      return List.of();
     }
     Optional<SessionRoster> roster = rosters.rosterOf(sessionId);
-    fanOut(sessionId, sequence, effects, roster.orElse(null));
+    List<GameLogStore.Entry> retained = new ArrayList<>();
+    fanOut(sessionId, sequence, effects, roster.orElse(null), retained::add);
+    return retained;
   }
 
   @Override
   public void deliverInitial(UUID sessionId, List<Effect> effects, SessionRoster roster) {
-    fanOut(sessionId, 0, effects, roster);
+    fanOut(sessionId, 0, effects, roster, entry -> logStore.append(sessionId, entry));
   }
 
   private void fanOut(
-      UUID sessionId, long sequence, List<Effect> effects, @Nullable SessionRoster roster) {
+      UUID sessionId,
+      long sequence,
+      List<Effect> effects,
+      @Nullable SessionRoster roster,
+      Consumer<GameLogStore.Entry> retain) {
     boolean gameOverSeen = false;
     for (int index = 0; index < effects.size(); index++) {
       Effect effect = effects.get(index);
       try {
-        gameOverSeen = fanOutOne(sessionId, sequence, index, effect, roster, gameOverSeen);
+        gameOverSeen = fanOutOne(sessionId, sequence, index, effect, roster, gameOverSeen, retain);
       } catch (IllegalStateException e) {
         // One malformed payload is the game's defect; the effects around it are still owed.
         log.error(
@@ -90,7 +98,8 @@ class EffectFanOut implements EffectDelivery {
       int index,
       Effect effect,
       @Nullable SessionRoster roster,
-      boolean gameOverSeen) {
+      boolean gameOverSeen,
+      Consumer<GameLogStore.Entry> retain) {
     {
       switch (effect.getEffectCase()) {
         case BROADCAST ->
@@ -121,8 +130,7 @@ class EffectFanOut implements EffectDelivery {
           }
         }
         case LOG -> {
-          logStore.append(
-              sessionId, new GameLogStore.Entry(sequence, index, effect.getLog().getEntry()));
+          retain.accept(new GameLogStore.Entry(sequence, index, effect.getLog().getEntry()));
           Map<String, Object> message = base("GAME_LOG", sessionId, sequence, index);
           message.put("payload", Map.of("entry", effect.getLog().getEntry()));
           publish("/topic/game." + sessionId, message);

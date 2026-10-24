@@ -34,9 +34,14 @@ public class GameLogStore {
 
   void append(UUID sessionId, Entry entry) {
     String key = key(sessionId);
+    redis.opsForList().rightPush(key, json(entry));
+    redis.expire(key, HostRegistry.KEY_TTL);
+  }
+
+  /** The stored form of one entry, as {@link #read} parses it. */
+  String json(Entry entry) {
     try {
-      redis.opsForList().rightPush(key, objectMapper.writeValueAsString(entry));
-      redis.expire(key, HostRegistry.KEY_TTL);
+      return objectMapper.writeValueAsString(entry);
     } catch (JacksonException e) {
       throw new IllegalStateException("log entry is not serialisable", e);
     }

@@ -14,6 +14,7 @@ import io.turnbase.platform.common.KeyedLocks;
 import io.turnbase.platform.common.LifecycleLog;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -69,6 +70,7 @@ public class GameInputService {
   private final StringRedisTemplate redis;
   private final OrchestrationProperties properties;
   private final EffectDelivery effects;
+  private final MoveCommit moveCommit;
   private final GameEndListener gameEnd;
   private final GameOutcomeRecorder outcomeRecorder;
   private final SessionRosterSource rosters;
@@ -82,6 +84,7 @@ public class GameInputService {
       StringRedisTemplate redis,
       OrchestrationProperties properties,
       EffectDelivery effects,
+      MoveCommit moveCommit,
       GameEndListener gameEnd,
       GameOutcomeRecorder outcomeRecorder,
       SessionRosterSource rosters,
@@ -92,6 +95,7 @@ public class GameInputService {
     this.redis = redis;
     this.properties = properties;
     this.effects = effects;
+    this.moveCommit = moveCommit;
     this.gameEnd = gameEnd;
     this.outcomeRecorder = outcomeRecorder;
     this.rosters = rosters;
@@ -159,7 +163,6 @@ public class GameInputService {
       return infrastructure(onTransportFailure(sessionId, instanceId, address.get(), e), sessionId);
     }
     if (result.getStatus() == ProcessStatus.PROCESS_STATUS_OK) {
-      redis.opsForValue().set("failcount:" + sessionId, "0", HostRegistry.KEY_TTL);
       deliverOnce(sessionId, request.getSequence(), result);
       result.getEffectsList().stream()
           .filter(Effect::hasGameOver)
@@ -307,15 +310,23 @@ public class GameInputService {
     log.warn("Reassigned sessionId={} from {} to {}", sessionId, failedInstance, replacement.get());
   }
 
+  /**
+   * Fan out once per sequence, then write the failure-counter reset, the retained log entries and
+   * the watermark in one round trip. The reset happens even when the fan-out throws (the result was
+   * {@code OK}); the watermark moves only after a fan-out that completed.
+   */
   private void deliverOnce(UUID sessionId, long sequence, ProcessResult result) {
     String delivered = redis.opsForValue().get("delivered:" + sessionId);
-    if (delivered != null && sequence <= Long.parseLong(delivered)) {
-      return;
+    Long advanceTo = null;
+    List<GameLogStore.Entry> retained = List.of();
+    try {
+      if (delivered == null || sequence > Long.parseLong(delivered)) {
+        retained = effects.deliver(sessionId, sequence, result.getEffectsList());
+        advanceTo = sequence;
+      }
+    } finally {
+      moveCommit.record(sessionId, advanceTo, retained);
     }
-    effects.deliver(sessionId, sequence, result.getEffectsList());
-    redis
-        .opsForValue()
-        .set("delivered:" + sessionId, Long.toString(sequence), HostRegistry.KEY_TTL);
   }
 
   private Outcome onTransportFailure(

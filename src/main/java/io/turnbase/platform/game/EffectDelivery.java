@@ -14,8 +14,10 @@ public interface EffectDelivery {
   /**
    * @param sequence the input's sequence, {@code 0} for {@code CreateSession}'s initial effects
    * @param effects in the order the handler produced them; never reordered
+   * @return the {@code log} entries that were sent to clients and are still to be retained; the
+   *     caller stores them with the move's other post-result writes ({@link MoveCommit})
    */
-  void deliver(UUID sessionId, long sequence, List<Effect> effects);
+  List<GameLogStore.Entry> deliver(UUID sessionId, long sequence, List<Effect> effects);
 
   /**
    * {@code CreateSession}'s effects. The room has not yet recorded {@code active_session_id} when

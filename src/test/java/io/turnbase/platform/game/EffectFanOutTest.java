@@ -8,6 +8,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
@@ -196,13 +197,17 @@ class EffectFanOutTest {
   @Test
   void retainsEachLogEntryWithItsPosition() {
     roster();
-    fanOut.deliver(
-        sessionId,
-        7,
-        List.of(
-            broadcast("{}"),
-            Effect.newBuilder().setLog(LogEffect.newBuilder().setEntry("**X** played")).build()));
+    List<GameLogStore.Entry> retained =
+        fanOut.deliver(
+            sessionId,
+            7,
+            List.of(
+                broadcast("{}"),
+                Effect.newBuilder()
+                    .setLog(LogEffect.newBuilder().setEntry("**X** played"))
+                    .build()));
 
-    verify(logStore).append(sessionId, new GameLogStore.Entry(7, 1, "**X** played"));
+    assertThat(retained).containsExactly(new GameLogStore.Entry(7, 1, "**X** played"));
+    verifyNoInteractions(logStore);
   }
 }

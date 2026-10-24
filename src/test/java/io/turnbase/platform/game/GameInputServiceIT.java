@@ -41,6 +41,11 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   record Delivered(UUID sessionId, long sequence, int effects) {}
 
   static final List<Delivered> DELIVERED = new CopyOnWriteArrayList<>();
+  static final java.util.Map<Long, String> WATERMARK_AT_DELIVERY =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  static final List<String> COMMANDS = new CopyOnWriteArrayList<>();
+  static final java.util.concurrent.atomic.AtomicBoolean FAIL_FANOUT =
+      new java.util.concurrent.atomic.AtomicBoolean();
   static final List<UUID> GAME_OVERS = new CopyOnWriteArrayList<>();
   static final List<UUID> SESSION_FAILURES = new CopyOnWriteArrayList<>();
 
@@ -48,9 +53,19 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   static class Recorder {
     @Bean
     @Primary
-    EffectDelivery recordingDelivery() {
-      return (sessionId, sequence, effects) ->
-          DELIVERED.add(new Delivered(sessionId, sequence, effects.size()));
+    EffectDelivery recordingDelivery(StringRedisTemplate redis) {
+      return (sessionId, sequence, effects) -> {
+        if (FAIL_FANOUT.get()) {
+          throw new IllegalStateException("fan-out failed");
+        }
+        // The context's own template: this nested configuration is scanned into other ITs too.
+        WATERMARK_AT_DELIVERY.put(sequence, redis.opsForValue().get("delivered:" + sessionId));
+        DELIVERED.add(new Delivered(sessionId, sequence, effects.size()));
+        return effects.stream()
+            .filter(Effect::hasLog)
+            .map(e -> new GameLogStore.Entry(sequence, effects.indexOf(e), e.getLog().getEntry()))
+            .toList();
+      };
     }
 
     @Bean
@@ -117,6 +132,22 @@ class GameInputServiceIT extends PostgresIntegrationTest {
             });
     inputs = context.getBean(GameInputService.class);
     registry = context.getBean(HostRegistry.class);
+    var lettuce =
+        (org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory)
+            context.getBean(org.springframework.data.redis.connection.RedisConnectionFactory.class);
+    java.util.Objects.requireNonNull(
+            (io.lettuce.core.AbstractRedisClient) lettuce.getNativeClient())
+        .addListener(
+            new io.lettuce.core.event.command.CommandListener() {
+              @Override
+              public void commandSucceeded(
+                  io.lettuce.core.event.command.CommandSucceededEvent event) {
+                var command = event.getCommand();
+                String args = command.getArgs() == null ? "" : command.getArgs().toCommandString();
+                COMMANDS.add(command.getType().name() + " " + args);
+              }
+            });
+    lettuce.resetConnection(); // connections made before the listener do not report to it
     redis = context.getBean(StringRedisTemplate.class);
     registry.register("input-host", "127.0.0.1:" + fakeHost.getPort(), List.of("jvm"));
   }
@@ -398,5 +429,96 @@ class GameInputServiceIT extends PostgresIntegrationTest {
     behaviour = request -> ok(request, 0);
     assertThat(inputs.process(input(session, 1))).isEqualTo(GameInputService.Outcome.DELIVERED);
     registry.deregister("down-host");
+  }
+
+  private static ProcessResult okWithLog(ProcessInputRequest request) {
+    return ProcessResult.newBuilder()
+        .setSessionId(request.getSessionId())
+        .setSequence(request.getSequence())
+        .setStatus(ProcessStatus.PROCESS_STATUS_OK)
+        .addEffects(
+            Effect.newBuilder()
+                .setLog(io.turnbase.grpc.gamehost.v1.LogEffect.newBuilder().setEntry("moved")))
+        .build();
+  }
+
+  @Test
+  void theWritesAfterAResultAreOneRedisRoundTrip() {
+    behaviour = GameInputServiceIT::okWithLog;
+    inputs.process(input(newSession(), 1)); // warms the script cache: the first call sends EVAL
+    UUID session = newSession();
+    String id = session.toString();
+    COMMANDS.clear();
+
+    assertThat(inputs.process(input(session, 1))).isEqualTo(GameInputService.Outcome.DELIVERED);
+
+    // The client reports completed commands from its I/O thread, a moment after they return.
+    long deadline = System.nanoTime() + 5_000_000_000L;
+    while (COMMANDS.stream().noneMatch(c -> c.startsWith("EVAL") && c.contains(id))
+        && System.nanoTime() < deadline) {
+      Thread.onSpinWait();
+    }
+    List<String> ofSession = COMMANDS.stream().filter(c -> c.contains(id)).toList();
+    List<String> fromDispatch = ofSession.subList(indexOfRoutingGet(ofSession), ofSession.size());
+    assertThat(fromDispatch.stream().filter(c -> !c.startsWith("GET")))
+        .as("every write after the result: the failcount reset, the log and the watermark")
+        .hasSize(1)
+        .allSatisfy(c -> assertThat(c).startsWith("EVAL").contains("failcount:", "gamelog:"));
+    assertThat(redis.opsForValue().get("delivered:" + session)).isEqualTo("1");
+    assertThat(redis.opsForValue().get("failcount:" + session)).isEqualTo("0");
+    assertThat(redis.opsForList().range("gamelog:" + session, 0, -1)).hasSize(1);
+  }
+
+  @Test
+  void theWatermarkIsNotAdvancedBeforeTheEffectsAreFannedOut() {
+    behaviour = GameInputServiceIT::okWithLog;
+    UUID session = newSession();
+    redis.opsForValue().set("delivered:" + session, "6");
+
+    inputs.process(input(session, 7));
+
+    assertThat(WATERMARK_AT_DELIVERY.get(7L)).as("watermark during fan-out").isEqualTo("6");
+    assertThat(redis.opsForValue().get("delivered:" + session)).isEqualTo("7");
+  }
+
+  @Test
+  void aReplayedSequenceIsNeitherFannedOutNorLoggedAgain() {
+    behaviour = GameInputServiceIT::okWithLog;
+    UUID session = newSession();
+    inputs.process(input(session, 1));
+    int deliveries = DELIVERED.size();
+
+    inputs.process(input(session, 1));
+
+    assertThat(DELIVERED).hasSize(deliveries);
+    assertThat(redis.opsForList().range("gamelog:" + session, 0, -1)).hasSize(1);
+  }
+
+  @Test
+  void aFailedFanOutResetsTheFailureCountButLeavesTheWatermark() {
+    behaviour = GameInputServiceIT::okWithLog;
+    UUID session = newSession();
+    redis.opsForValue().set("failcount:" + session, "2");
+    FAIL_FANOUT.set(true);
+    try {
+      org.junit.jupiter.api.Assertions.assertThrows(
+          IllegalStateException.class, () -> inputs.process(input(session, 1)));
+    } finally {
+      FAIL_FANOUT.set(false);
+    }
+
+    assertThat(redis.opsForValue().get("failcount:" + session)).isEqualTo("0");
+    assertThat(redis.opsForValue().get("delivered:" + session)).isEqualTo("0");
+    assertThat(redis.opsForList().range("gamelog:" + session, 0, -1)).isEmpty();
+  }
+
+  private static int indexOfRoutingGet(List<String> commands) {
+    int index =
+        commands.indexOf(
+            commands.stream()
+                .filter(c -> c.startsWith("GET key<routing:"))
+                .findFirst()
+                .orElseThrow());
+    return index;
   }
 }
