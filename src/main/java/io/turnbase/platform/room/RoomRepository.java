@@ -14,6 +14,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -109,6 +110,12 @@ class RoomRepository {
 
     List<TeamTemplateInfo> templates = parseTeamTemplates(game.manifest());
     UUID firstTeamId = null;
+    // One multi-row insert for every initial team (IMP-M18-03): a statement per team made the
+    // create path's statement count grow with the manifest's team count.
+    StringBuilder teamRows = new StringBuilder();
+    Map<String, Object> teamParams = new HashMap<>();
+    teamParams.put("roomId", roomId);
+    int row = 0;
     for (int templateIndex = 0; templateIndex < templates.size(); templateIndex++) {
       TeamTemplateInfo template = templates.get(templateIndex);
       for (int teamIndex = 0; teamIndex < template.countMin(); teamIndex++) {
@@ -116,19 +123,27 @@ class RoomRepository {
         if (firstTeamId == null) {
           firstTeamId = teamId;
         }
-        jdbcClient
-            .sql(
-                """
-                insert into room_team (team_id, room_id, template_index, team_index, configured_size)
-                values (:teamId, :roomId, :templateIndex, :teamIndex, :configuredSize)
-                """)
-            .param("teamId", teamId)
-            .param("roomId", roomId)
-            .param("templateIndex", templateIndex)
-            .param("teamIndex", teamIndex)
-            .param("configuredSize", template.sizeMax())
-            .update();
+        if (row > 0) {
+          teamRows.append(", ");
+        }
+        teamRows.append(
+            "(:teamId%d, :roomId, :templateIndex%d, :teamIndex%d, :configuredSize%d)"
+                .formatted(row, row, row, row));
+        teamParams.put("teamId" + row, teamId);
+        teamParams.put("templateIndex" + row, templateIndex);
+        teamParams.put("teamIndex" + row, teamIndex);
+        teamParams.put("configuredSize" + row, template.sizeMax());
+        row++;
       }
+    }
+    if (row > 0) {
+      jdbcClient
+          .sql(
+              "insert into room_team (team_id, room_id, template_index, team_index,"
+                  + " configured_size) values "
+                  + teamRows)
+          .params(teamParams)
+          .update();
     }
 
     // FR-TEAM-005: all teams are empty at t=0, so the deterministic assignment is the first
@@ -167,19 +182,25 @@ class RoomRepository {
           roomId, releaseCallersCurrentRoom(userId, roomId), Optional.empty(), Optional.empty());
     }
     UUID teamId = plan.teamId();
-    long nextJoinOrder = nextJoinOrder(roomId);
     // data-model.md §2 / room-rest-api.md §5 step 6 (IMP-GATE-50): room_participant keeps one row
     // per (room_id, user_id) for a caller's entire history in this room, so a caller re-joining
     // after a previous departure (LEFT, KICKED, or GRACE_EXPIRED — this method is only reached at
     // all once step 2 above has already ruled out a live row) already owns this key. Reusing it
     // rather than plain-inserting is what makes that ordinary case not a primary-key violation.
-    jdbcClient
-        .sql(
-            """
+    // The next join_order is computed inside the insert and returned (IMP-M18-03): the room row is
+    // locked by planJoin, so the max cannot move between the read and the write, exactly as when
+    // it was a separate statement.
+    long nextJoinOrder =
+        jdbcClient
+            .sql(
+                """
             insert into room_participant (room_id, user_id, role, team_id, join_order, joined_at,
                                            connection_count, ready, left_at, leave_reason,
                                            lost_announced_at, grace_reservation_id, grace_expires_at)
-            values (:roomId, :userId, :role, :teamId, :joinOrder, now(),
+            values (:roomId, :userId, :role, :teamId,
+                    (select coalesce(max(join_order), 0) + 1 from room_participant
+                      where room_id = :roomId),
+                    now(),
                     0, false, null, null, null, null, null)
             on conflict (room_id, user_id) do update
                set role = excluded.role, team_id = excluded.team_id,
@@ -187,17 +208,18 @@ class RoomRepository {
                    connection_count = 0, ready = false,
                    left_at = null, leave_reason = null, lost_announced_at = null,
                    grace_reservation_id = null, grace_expires_at = null
+            returning join_order
             """)
-        .param("roomId", roomId)
-        .param("userId", userId)
-        .param("role", role.name())
-        .param("teamId", teamId)
-        .param("joinOrder", nextJoinOrder)
-        .update();
+            .param("roomId", roomId)
+            .param("userId", userId)
+            .param("role", role.name())
+            .param("teamId", teamId)
+            .query(Long.class)
+            .single();
 
     Optional<ReleasedRoomResponse> released = releaseCallersCurrentRoom(userId, roomId);
     PlayerJoinedPayload joined =
-        new PlayerJoinedPayload(userId, usernameOf(userId), role.name(), teamId, nextJoinOrder);
+        new PlayerJoinedPayload(userId, plan.callerUsername(), role.name(), teamId, nextJoinOrder);
     // room-rest-api.md §5 step 7 (room-invitation-rest-api.md §4): a successful join resolves the
     // caller's pending invitation to this room, if any; a failed join (thrown above) never reaches
     // here, so a rejected join leaves the invitation pending for a retry.
@@ -221,7 +243,8 @@ class RoomRepository {
     planJoin(userId, roomId, role, inviteCode, spectatorCapacity, false);
   }
 
-  private record JoinPlan(boolean alreadyParticipant, @Nullable UUID teamId) {}
+  private record JoinPlan(
+      boolean alreadyParticipant, @Nullable UUID teamId, String callerUsername) {}
 
   private JoinPlan planJoin(
       UUID userId,
@@ -235,28 +258,31 @@ class RoomRepository {
             .sql(
                 """
                 select r.room_id, r.visibility, r.state, r.spectating_enabled, r.host_user_id,
-                       r.invite_code, gv.supports_spectators, gv.supports_mid_game_join
+                       r.invite_code, gv.supports_spectators, gv.supports_mid_game_join,
+                       (select username from app_user where user_id = :userId) as caller_username
                 from room r
                 join game_version gv on gv.game_id = r.game_id and gv.version = r.game_version
                 where r.room_id = :roomId
                 """
                     + (lock ? "for update" : ""))
             .param("roomId", roomId)
+            .param("userId", userId)
             .query(RoomRepository::mapRoomForJoin)
             .optional()
             .orElseThrow(() -> new NotFoundException("No such room."));
 
+    boolean currentParticipant = isCurrentParticipant(roomId, userId);
     boolean visibleToCaller =
         isVisible(room.visibility(), room.hostUserId(), userId)
-            || isCurrentParticipant(roomId, userId)
+            || currentParticipant
             || hasPendingInvitation(roomId, userId)
             || (inviteCode != null && inviteCode.equals(room.inviteCode()));
     if (!visibleToCaller) {
       throw new NotFoundException("No such room.");
     }
 
-    if (isCurrentParticipant(roomId, userId)) {
-      return new JoinPlan(true, null);
+    if (currentParticipant) {
+      return new JoinPlan(true, null, room.callerUsername());
     }
 
     if ("CLOSED".equals(room.state())) {
@@ -284,7 +310,7 @@ class RoomRepository {
         throw new BusinessRuleException("Spectator capacity has been reached.");
       }
     }
-    return new JoinPlan(false, teamId);
+    return new JoinPlan(false, teamId, room.callerUsername());
   }
 
   private String usernameOf(UUID userId) {
@@ -369,16 +395,6 @@ class RoomRepository {
             .query(Long.class)
             .single();
     return count == null ? 0 : count;
-  }
-
-  private long nextJoinOrder(UUID roomId) {
-    Long max =
-        jdbcClient
-            .sql("select max(join_order) from room_participant where room_id = :roomId")
-            .param("roomId", roomId)
-            .query(Long.class)
-            .single();
-    return (max == null ? 0 : max) + 1;
   }
 
   /**
@@ -1981,7 +1997,8 @@ class RoomRepository {
         rs.getObject("host_user_id", UUID.class),
         rs.getString("invite_code"),
         rs.getBoolean("supports_spectators"),
-        rs.getBoolean("supports_mid_game_join"));
+        rs.getBoolean("supports_mid_game_join"),
+        Objects.requireNonNull(rs.getString("caller_username"), "no such caller"));
   }
 
   private static RoomResourceRow mapResourceRow(ResultSet rs, int rowNum) throws SQLException {
@@ -2071,7 +2088,8 @@ class RoomRepository {
       @Nullable UUID hostUserId,
       String inviteCode,
       boolean supportsSpectators,
-      boolean supportsMidGameJoin) {}
+      boolean supportsMidGameJoin,
+      String callerUsername) {}
 
   record RoomResourceRow(
       UUID roomId,

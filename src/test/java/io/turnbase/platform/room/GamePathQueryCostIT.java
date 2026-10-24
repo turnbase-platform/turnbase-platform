@@ -137,6 +137,17 @@ class GamePathQueryCostIT extends PostgresIntegrationTest {
     }
     assertThat(statements).as("statements recorded on the game path").hasSizeGreaterThan(25);
 
+    // IMP-M18-03: the join_order and the joiner's username arrive with the statements that were
+    // already running, and a create inserts its teams in one statement.
+    assertThat(statements)
+        .as("no separate max(join_order) or username lookup on the join path")
+        .noneMatch(r -> r.key().startsWith("select max(join_order)"))
+        .noneMatch(r -> r.key().startsWith("select username from app_user"));
+    assertThat(statements)
+        .as("one room_team insert text for every team of a create")
+        .filteredOn(r -> r.key().startsWith("insert into room_team"))
+        .hasSize(1);
+
     Map<String, Cost> empty = measureAll(statements);
 
     seedRetainedHistory(flowUsers);
