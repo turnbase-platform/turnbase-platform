@@ -13,5 +13,15 @@ import java.util.UUID;
  * <p>This item only ever publishes {@code reason} of {@code DISPLACED} (login displacement,
  * FR-SESS-003) or {@code LOGOUT} (FR-SESS-011) — the other {@code user_session.revoked_reason}
  * values belong to the items that own those paths.
+ *
+ * <p>{@code remote} is true for a revocation another Platform instance raised and {@link
+ * SessionRevocationRelay} re-published here (ADR-0020 §4, {@code IMP-M18-08}): the connection
+ * registries close their sockets for it exactly as for a local one, and the relay does not send it
+ * on again.
  */
-public record SessionRevokedEvent(UUID sessionId, UUID userId, String reason) {}
+public record SessionRevokedEvent(UUID sessionId, UUID userId, String reason, boolean remote) {
+
+  public SessionRevokedEvent(UUID sessionId, UUID userId, String reason) {
+    this(sessionId, userId, reason, false);
+  }
+}

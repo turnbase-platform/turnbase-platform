@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
@@ -21,6 +22,7 @@ import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
@@ -43,6 +45,7 @@ public class WebSocketConnectionRegistry {
   private final Map<UUID, Set<String>> sessionIdsByUser = new ConcurrentHashMap<>();
   private final MessageChannel clientOutboundChannel;
   private final JsonMapper objectMapper;
+  private final @Nullable ConnectionCapLedger ledger;
 
   /**
    * {@code clientOutboundChannel} is {@code @Lazy}: eagerly resolving it here would force Spring to
@@ -52,14 +55,23 @@ public class WebSocketConnectionRegistry {
    * constructing. A lazy proxy defers that resolution to the first actual {@link #closeSession}
    * call, by which point the broker is long since initialized.
    */
+  @Autowired
   WebSocketConnectionRegistry(
       @Qualifier("clientOutboundChannel") @Lazy MessageChannel clientOutboundChannel,
       JsonMapper objectMapper,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      @Nullable ConnectionCapLedger ledger) {
     this.clientOutboundChannel = clientOutboundChannel;
     this.objectMapper = objectMapper;
+    this.ledger = ledger;
     Gauge.builder("turnbase_websocket_connections_active", connections, Map::size)
         .register(meterRegistry);
+  }
+
+  /** One instance, no ledger: the cap is counted locally only. */
+  WebSocketConnectionRegistry(
+      MessageChannel clientOutboundChannel, JsonMapper objectMapper, MeterRegistry meterRegistry) {
+    this(clientOutboundChannel, objectMapper, meterRegistry, null);
   }
 
   /**
@@ -71,6 +83,10 @@ public class WebSocketConnectionRegistry {
         sessionIdsByUser.computeIfAbsent(user.userId(), id -> ConcurrentHashMap.newKeySet());
     synchronized (userSessions) {
       if (userSessions.size() >= maxConnectionsPerUser) {
+        return false;
+      }
+      if (ledger != null
+          && !ledger.tryAcquire(user.userId(), stompSessionId, maxConnectionsPerUser)) {
         return false;
       }
       userSessions.add(stompSessionId);
@@ -90,7 +106,22 @@ public class WebSocketConnectionRegistry {
       if (userSessions != null) {
         userSessions.remove(stompSessionId);
       }
+      if (ledger != null) {
+        ledger.release(user.userId(), stompSessionId);
+      }
     }
+  }
+
+  /** Keeps this instance's connections inside the cluster-wide cap's lease ({@code IMP-M18-08}). */
+  @Scheduled(fixedRate = 30_000)
+  void renewLeases() {
+    if (ledger == null) {
+      return;
+    }
+    ledger.renew(
+        connections.entrySet().stream()
+            .map(e -> new ConnectionCapLedger.Lease(e.getValue().userId(), e.getKey()))
+            .toList());
   }
 
   @Nullable AuthenticatedUser userOf(String stompSessionId) {
