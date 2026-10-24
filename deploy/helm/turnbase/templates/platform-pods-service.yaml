@@ -1,0 +1,19 @@
+# IMP-M18-09 (load-testing-phase-b.md §4.3): a headless Service gives each ready platform pod a DNS
+# name, <a-b-c-d>.<this Service>.<namespace>.svc.cluster.local (the pod's address with dashes, which
+# is part of its instance name), which the frontend proxy uses to route `/ws?instance=` to the pod that owns the room. Ready pods only
+# (publishNotReadyAddresses stays false), so a pod that is not ready does not resolve and the proxy
+# falls back to the regular Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-platform-pods
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "turnbase.selectorLabels" (dict "component" "platform" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.platform.containerPort }}
+      targetPort: http

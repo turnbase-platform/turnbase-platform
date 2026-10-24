@@ -45,11 +45,17 @@ spec:
                 name: {{ .Release.Name }}-platform
             - secretRef:
                 name: {{ .Release.Name }}-platform
-          {{- with .Values.platform.extraEnv }}
           # Container env wins over envFrom: the override hook (load-testing.md A1).
           env:
+            # IMP-M18-09: the instance name carries the pod's address (PodIdentity), which is what
+            # the frontend proxy resolves through the headless Service.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- with .Values.platform.extraEnv }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           # local-environment.md §3: the monolith must be reachable and serving before any Game
           # Host has registered, and readiness must never report the Game Host (§3 "The
           # monolith's readiness must not depend on the Game Host") — nothing here names it.

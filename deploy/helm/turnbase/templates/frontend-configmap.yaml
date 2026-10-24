@@ -10,3 +10,5 @@ data:
   TURNBASE_GAME_FRONTEND_ORIGIN_TEMPLATE: {{ .Values.origins.gameFrontendTemplate | quote }}
   # <service-name>:<port> — this chart's own Platform Monolith Service (IMP-GATE-74).
   TURNBASE_FRONTEND_UPSTREAM: "{{ .Release.Name }}-platform:{{ .Values.platform.containerPort }}"
+  # IMP-M18-09: the DNS domain of the platform pods (platform-pods-service.yaml), for `/ws?instance=`.
+  TURNBASE_PLATFORM_PODS_DOMAIN: "{{ .Release.Name }}-platform-pods.{{ .Release.Namespace }}.svc.cluster.local"
