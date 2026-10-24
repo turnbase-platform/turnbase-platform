@@ -84,16 +84,21 @@ postgres:
   appPassword: ""
   # Container resources; the load-test overlay (load-testing.md A1) pins requests == limits.
   resources: {}
-  # Server settings, rendered as `-c name=value` before extraArgs. Sized for the pinned 2 CPU / 1 GiB
-  # (local-environment.md §7.9, FR-DBQ-007): shared_buffers 25% of memory, max_connections above the
-  # platform pool (10) with room for migrations and operators.
+  # Server settings, rendered as `-c name=value` before extraArgs. Sized for the Phase B 4 CPU / 2 GiB
+  # (local-environment.md §7.9, FR-DBQ-007): shared_buffers 25% of memory, max_connections above
+  # platform.maxReplicas x the pool (3 x 10) with room for migrations and operators, and the
+  # worker settings at the core count.
   settings:
-    shared_buffers: 256MB
-    effective_cache_size: 512MB
+    shared_buffers: 512MB
+    effective_cache_size: 1GB
     max_connections: 50
     max_wal_size: 2GB
     checkpoint_completion_target: "0.9"
     random_page_cost: "1.1"
+    max_worker_processes: 4
+    max_parallel_workers: 4
+    max_parallel_workers_per_gather: 2
+    max_parallel_maintenance_workers: 2
   # Extra arguments for the image's entrypoint, e.g. ["-c", "log_checkpoints=on"]. Empty in production;
   # the load-test overlay uses it to load pg_stat_statements.
   extraArgs: []
