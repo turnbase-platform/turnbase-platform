@@ -12,9 +12,11 @@ import static org.mockito.Mockito.when;
 import io.turnbase.grpc.gamehost.v1.ActionInput;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.game.GameInputService;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -26,8 +28,10 @@ class GameActionControllerTest {
   private final RoomRepository repository = mock(RoomRepository.class);
   private final GameInputService inputs = mock(GameInputService.class);
   private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+  private final ParticipantCache participants =
+      new ParticipantCache(mock(RoomOwnershipService.class));
   private final GameActionController controller =
-      new GameActionController(repository, inputs, messaging, mapper);
+      new GameActionController(repository, participants, inputs, messaging, mapper);
 
   private final UUID sessionId = UUID.randomUUID();
   private final UUID userId = UUID.randomUUID();
@@ -51,8 +55,7 @@ class GameActionControllerTest {
   @Test
   void attachesTheServerSideIdentityAndIgnoresAClaimedOne() throws Exception {
     when(principal.userId()).thenReturn(userId);
-    when(repository.actingParticipant(sessionId, userId))
-        .thenReturn(Optional.of(new RoomRepository.ActingParticipant("PLAYER", teamId, "bob")));
+    stubActor("PLAYER", teamId, "bob");
     when(inputs.submitAction(eq(sessionId), any()))
         .thenReturn(new GameInputService.Result(GameInputService.Outcome.DELIVERED, null));
 
@@ -69,7 +72,7 @@ class GameActionControllerTest {
   @Test
   void nonParticipantOrInactiveSessionIsNotMember() throws Exception {
     when(principal.userId()).thenReturn(userId);
-    when(repository.actingParticipant(sessionId, userId)).thenReturn(Optional.empty());
+    when(repository.sessionRoomView(sessionId)).thenReturn(Optional.empty());
 
     controller.handle(sessionId, action("{}"), principal);
 
@@ -80,8 +83,7 @@ class GameActionControllerTest {
   @Test
   void spectatorIsRoleNotEligible() throws Exception {
     when(principal.userId()).thenReturn(userId);
-    when(repository.actingParticipant(sessionId, userId))
-        .thenReturn(Optional.of(new RoomRepository.ActingParticipant("SPECTATOR", null, "erin")));
+    stubActor("SPECTATOR", null, "erin");
 
     controller.handle(sessionId, action("{}"), principal);
 
@@ -93,8 +95,7 @@ class GameActionControllerTest {
   void aGameFailureIsToldToTheActingPlayerAsItsKindOnly() throws Exception {
     when(principal.userId()).thenReturn(userId);
     when(principal.getName()).thenReturn(userId.toString());
-    when(repository.actingParticipant(sessionId, userId))
-        .thenReturn(Optional.of(new RoomRepository.ActingParticipant("PLAYER", teamId, "bob")));
+    stubActor("PLAYER", teamId, "bob");
     when(inputs.submitAction(eq(sessionId), any()))
         .thenReturn(
             new GameInputService.Result(GameInputService.Outcome.REJECTED, "HANDLER_EXCEPTION"));
@@ -117,8 +118,7 @@ class GameActionControllerTest {
   @Test
   void anInfrastructureFailureDropsTheActionAsUnavailable() throws Exception {
     when(principal.userId()).thenReturn(userId);
-    when(repository.actingParticipant(sessionId, userId))
-        .thenReturn(Optional.of(new RoomRepository.ActingParticipant("PLAYER", teamId, "bob")));
+    stubActor("PLAYER", teamId, "bob");
     when(inputs.submitAction(eq(sessionId), any()))
         .thenReturn(new GameInputService.Result(GameInputService.Outcome.RETRY, null));
 
@@ -127,5 +127,16 @@ class GameActionControllerTest {
     ArgumentCaptor<Object> sent = ArgumentCaptor.forClass(Object.class);
     verify(messaging).convertAndSendToUser(any(), eq("/queue/errors"), sent.capture());
     assertThat(sent.getValue().toString()).contains("ACTION_REJECTED", "kind=UNAVAILABLE");
+  }
+
+  private void stubActor(String role, @Nullable UUID team, String username) {
+    when(repository.sessionRoomView(sessionId))
+        .thenReturn(
+            Optional.of(
+                new SessionRoomView(
+                    UUID.randomUUID(),
+                    sessionId,
+                    "IN_PROGRESS",
+                    List.of(new SessionRoomView.Member(userId, role, team, username)))));
   }
 }

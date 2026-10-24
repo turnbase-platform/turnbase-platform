@@ -2857,6 +2857,48 @@ class RoomRepository {
         .list();
   }
 
+  /**
+   * One read of everything the move path asks about a session's room: its state and every current
+   * participant, with the username the acting player is shown as. {@link ParticipantCache} stores
+   * it; empty when no room claims the session.
+   */
+  Optional<SessionRoomView> sessionRoomView(UUID sessionId) {
+    List<SessionRoomRow> rows =
+        jdbcClient
+            .sql(
+                """
+                select r.room_id, r.state, rp.user_id, rp.role, rp.team_id, au.username
+                from room r
+                  join room_participant rp on rp.room_id = r.room_id
+                  join app_user au on au.user_id = rp.user_id
+                where r.active_session_id = :sessionId and rp.left_at is null
+                order by rp.join_order
+                """)
+            .param("sessionId", sessionId)
+            .query(
+                (rs, rowNum) ->
+                    new SessionRoomRow(
+                        rs.getObject("room_id", UUID.class),
+                        rs.getString("state"),
+                        new SessionRoomView.Member(
+                            rs.getObject("user_id", UUID.class),
+                            rs.getString("role"),
+                            rs.getObject("team_id", UUID.class),
+                            rs.getString("username"))))
+            .list();
+    if (rows.isEmpty()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new SessionRoomView(
+            rows.get(0).roomId(),
+            sessionId,
+            rows.get(0).state(),
+            rows.stream().map(SessionRoomRow::member).toList()));
+  }
+
+  private record SessionRoomRow(UUID roomId, String state, SessionRoomView.Member member) {}
+
   record SessionParticipant(UUID userId, String role, @Nullable UUID teamId) {}
 
   record ActingParticipant(String role, @Nullable UUID teamId, String username) {}

@@ -4,7 +4,6 @@ import io.turnbase.platform.game.SessionRoster;
 import io.turnbase.platform.game.SessionRosterSource;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -16,20 +15,22 @@ import org.springframework.stereotype.Component;
 class RoomSessionRosterSource implements SessionRosterSource {
 
   private final RoomRepository repository;
+  private final ParticipantCache participants;
 
-  RoomSessionRosterSource(RoomRepository repository) {
+  RoomSessionRosterSource(RoomRepository repository, ParticipantCache participants) {
     this.repository = repository;
+    this.participants = participants;
   }
 
   @Override
   public Optional<SessionRoster> rosterOf(UUID sessionId) {
-    List<RoomRepository.SessionParticipant> rows = repository.sessionParticipants(sessionId);
-    if (rows.isEmpty()) {
+    Optional<SessionRoomView> view = participants.viewOf(sessionId, repository::sessionRoomView);
+    if (view.isEmpty()) {
       return Optional.empty();
     }
     Map<UUID, UUID> players = new HashMap<>();
     Set<UUID> spectators = new HashSet<>();
-    for (RoomRepository.SessionParticipant row : rows) {
+    for (SessionRoomView.Member row : view.get().members()) {
       if ("PLAYER".equals(row.role()) && row.teamId() != null) {
         players.put(row.userId(), row.teamId());
       } else if ("SPECTATOR".equals(row.role())) {

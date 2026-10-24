@@ -59,13 +59,16 @@ class RoomEventExecutor {
   private final JdbcClient jdbcClient;
   private final SimpMessagingTemplate messagingTemplate;
   private final TransactionTemplate transactionTemplate;
+  private final ParticipantCache participants;
 
   RoomEventExecutor(
       RoomOwnershipService ownership,
+      ParticipantCache participants,
       JdbcClient jdbcClient,
       SimpMessagingTemplate messagingTemplate,
       PlatformTransactionManager transactionManager) {
     this.ownership = ownership;
+    this.participants = participants;
     this.jdbcClient = jdbcClient;
     this.messagingTemplate = messagingTemplate;
     this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -89,6 +92,7 @@ class RoomEventExecutor {
                       new RoomUnavailableRetryException(
                           "This instance does not own room " + roomId + ".", RETRY_AFTER_MS));
       Committed<T> committed;
+      participants.mutationStarted(roomId);
       try {
         committed =
             transactionTemplate.execute(
@@ -124,6 +128,8 @@ class RoomEventExecutor {
         ownership.evictAfterFailedCas(roomId);
         throw new RoomUnavailableRetryException(
             "Lost ownership of room " + roomId + " mid-mutation.", RETRY_AFTER_MS);
+      } finally {
+        participants.mutationFinished(roomId);
       }
       Committed<T> result = requireCommitted(committed);
       if (result.event() != null) {
