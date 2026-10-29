@@ -189,7 +189,17 @@ class HostRegistry {
           new Candidate(
               instanceId, warm, Integer.parseInt(String.valueOf(entry.get("activeSessions")))));
     }
+    return choose(candidates, properties.maxSessionsPerHost());
+  }
+
+  /**
+   * §11 / {@code load-testing-phase-b.md} §5.1: among candidates below {@code cap}, warm first,
+   * then lowest {@code activeSessions}, then lexical {@code instanceId}. A cold host is chosen only
+   * when no warm host is below the cap.
+   */
+  static Optional<String> choose(List<Candidate> candidates, int cap) {
     return candidates.stream()
+        .filter(c -> c.activeSessions() < cap)
         .min(
             Comparator.comparing((Candidate c) -> !c.warm())
                 .thenComparingInt(Candidate::activeSessions)
@@ -217,5 +227,5 @@ class HostRegistry {
     return "contexts:" + instanceId;
   }
 
-  private record Candidate(String instanceId, boolean warm, int activeSessions) {}
+  record Candidate(String instanceId, boolean warm, int activeSessions) {}
 }

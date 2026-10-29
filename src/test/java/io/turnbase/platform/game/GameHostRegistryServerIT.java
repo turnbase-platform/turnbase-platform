@@ -192,6 +192,39 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void selectionSkipsQuarantinedHostsAndHostsAtTheSessionCap() {
+    for (String other : List.of("host-a", "host-hb")) {
+      registry.deregister(other);
+    }
+    register("cap-a", "a:1", "jvm");
+    register("cap-b", "b:1", "jvm");
+    register("cap-q", "q:1", "jvm");
+    blocking.reportContexts(
+        ReportContextsRequest.newBuilder()
+            .setInstanceId("cap-a")
+            .addContexts(ContextKey.newBuilder().setGameId("game").setGameVersion("1.0.0"))
+            .build());
+    registry.heartbeat("cap-q", 0, 0, 0);
+    registry.quarantine("cap-q");
+
+    registry.heartbeat("cap-a", 99, 1, 0);
+    assertThat(registry.selectHost("game", "1.0.0")).contains("cap-a");
+
+    // The warm host reaches the cap (default 100): the cold one takes the session.
+    registry.heartbeat("cap-a", 100, 1, 0);
+    assertThat(registry.selectHost("game", "1.0.0")).contains("cap-b");
+
+    // Every routable host at the cap (the quarantined one is idle but skipped).
+    registry.heartbeat("cap-b", 100, 1, 0);
+    assertThat(registry.selectHost("game", "1.0.0")).isEqualTo(Optional.empty());
+
+    for (String id : List.of("cap-a", "cap-b", "cap-q")) {
+      registry.deregister(id);
+      redis.delete("hostquarantine:" + id);
+    }
+  }
+
+  @Test
   void deregisterRemovesEveryKeyAndIsIdempotent() {
     register("host-gone", "g:1", "jvm");
     blocking.deregister(DeregisterRequest.newBuilder().setInstanceId("host-gone").build());

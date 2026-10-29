@@ -133,6 +133,7 @@ turnbase:
     dispatch-deadline: ${TURNBASE_ORCHESTRATION_DISPATCH_DEADLINE:35s}
     host-wait: ${TURNBASE_ORCHESTRATION_HOST_WAIT:40s}
     quarantine-ttl: ${TURNBASE_ORCHESTRATION_QUARANTINE_TTL:60s}
+    max-sessions-per-host: ${TURNBASE_ORCHESTRATION_MAX_SESSIONS_PER_HOST:100}
   jobs:
     deadline-sweep:
       interval: ${TURNBASE_JOBS_DEADLINE_SWEEP_INTERVAL:5s}
