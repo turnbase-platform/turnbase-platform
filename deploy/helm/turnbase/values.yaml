@@ -61,6 +61,9 @@ platform:
     minReplicas: 1
     maxReplicas: 3
     targetCPUUtilizationPercentage: 70
+    # autoscaling/v2 `behavior`, rendered as is. Empty keeps the controller defaults. With the HPA on,
+    # the Deployment omits `replicas` (the HPA owns it).
+    behavior: {}
 
 gamehost:
   image:

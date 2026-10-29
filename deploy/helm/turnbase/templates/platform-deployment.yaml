@@ -6,7 +6,9 @@ metadata:
     {{- include "turnbase.labels" . | nindent 4 }}
     {{- include "turnbase.selectorLabels" (dict "component" "platform" "root" .) | nindent 4 }}
 spec:
+  {{- if not .Values.platform.autoscaling.enabled }}
   replicas: {{ .Values.platform.replicaCount }}
+  {{- end }}
   # ADR-0008 "Deployment strategy": rolling even at one replica. Under Recreate the successor
   # never overlaps the incumbent, so the claim/adoption path this design rests on would never
   # run against a live incumbent — the crash/rolling-deploy path would go dormant on the one

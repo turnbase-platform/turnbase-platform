@@ -165,6 +165,26 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
   }
 
   /**
+   * {@code room-lifecycle.md} §1.6 step 4: the drain tells every client attached to this room to
+   * reconnect. Tagged instance-initiated exactly as {@link #onRoomOwnershipLost} does it.
+   */
+  @EventListener
+  void onRoomDraining(RoomDrainingEvent event) {
+    Set<String> sessions = sessionsByRoom.remove(event.roomId());
+    if (sessions == null) {
+      return;
+    }
+    for (String stompSessionId : sessions) {
+      forgetRoom(stompSessionId, event.roomId());
+      membershipBySession.remove(stompSessionId);
+      connectionRegistry.closeSession(
+          stompSessionId,
+          "RECONNECT_REQUIRED",
+          "This instance is shutting down. Reconnect and rejoin the room.");
+    }
+  }
+
+  /**
    * {@code room-lifecycle.md} §3.1 (`IMP-M2-07`): a session with no recorded room membership here
    * is either one that never subscribed to a room topic, or one {@link #onRoomOwnershipLost} has
    * already tagged instance-initiated — both are correctly a no-op. A session that still has an

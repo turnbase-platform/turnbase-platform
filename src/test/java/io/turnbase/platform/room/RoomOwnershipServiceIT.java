@@ -45,6 +45,47 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void aDrainingInstanceReleasesItsRoomsAndAnotherClaimsThemAtOnce() {
+    instanceA = boot();
+    instanceB = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    RoomOwnershipService ownershipB = instanceB.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(instanceA);
+    ownershipA.claim(roomId);
+    StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
+    String livenessKey = "pod:" + instanceA.getBean(PodIdentity.class).id() + ":alive";
+    assertThat(redis.hasKey(livenessKey)).isTrue();
+
+    instanceA.getBean(RoomDrain.class).drain();
+
+    assertThat(ownershipA.epochOf(roomId)).isEmpty();
+    assertThat(redis.hasKey(livenessKey)).isFalse();
+    assertThat(roomRow(instanceA, roomId).get("owner_instance_id")).isNull();
+    // The free branch: no lease wait, the survivor owns the room on its first claim.
+    assertThat(ownershipB.claim(roomId))
+        .isInstanceOf(RoomOwnershipService.ClaimOutcome.Adopted.class);
+    // The renewal does not read the deleted liveness key as a lapse.
+    ownershipA.renewLease();
+    assertThat(instanceA.getBean(ApplicationAvailability.class).getLivenessState())
+        .isEqualTo(LivenessState.CORRECT);
+  }
+
+  @Test
+  void aDrainingInstanceRefusesToClaimARoomItDoesNotOwn() {
+    instanceA = boot();
+    RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
+    UUID roomId = insertRoom(instanceA);
+
+    ownershipA.beginDrain();
+
+    assertThat(ownershipA.claim(roomId))
+        .isInstanceOf(RoomOwnershipService.ClaimOutcome.Redirect.class);
+    assertThat(ownershipA.claimWithRetry(roomId))
+        .isInstanceOf(RoomOwnershipService.ClaimOutcome.Redirect.class);
+    assertThat(ownershipA.epochOf(roomId)).isEmpty();
+  }
+
+  @Test
   void firstClaimOnAFreshRoomAdoptsAndStampsTheRoomRow() {
     instanceA = boot();
     RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);

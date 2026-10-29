@@ -113,6 +113,12 @@ class RoomOwnershipService {
 
   private volatile boolean evicted = false;
 
+  /** §1.6 step 2: set on the shutdown signal; no room is claimed or adopted from then on. */
+  private volatile boolean draining = false;
+
+  /** §1.6 step 5: the liveness key is deleted, so the renewal must not read that as a lapse. */
+  private volatile boolean retired = false;
+
   RoomOwnershipService(
       StringRedisTemplate redis,
       JdbcClient jdbcClient,
@@ -182,7 +188,7 @@ class RoomOwnershipService {
    * renewal-failure guess) and is unconditionally fatal for the whole instance.
    */
   void renewLease() {
-    if (evicted) {
+    if (evicted || retired) {
       return;
     }
     Boolean renewed =
@@ -204,7 +210,7 @@ class RoomOwnershipService {
    * not affect the others.
    */
   void recheckOwnership() {
-    if (evicted) {
+    if (evicted || retired) {
       return;
     }
     List<UUID> roomIds = List.copyOf(owned.keySet());
@@ -279,6 +285,9 @@ class RoomOwnershipService {
    * "already mine" — never a permanent redirect, since result {@code 1} is redirect-and-retry.
    */
   ClaimOutcome claim(UUID roomId) {
+    if (draining && !owned.containsKey(roomId)) {
+      return new ClaimOutcome.Redirect(null);
+    }
     List<?> reply =
         metrics.record(
             () ->
@@ -329,6 +338,9 @@ class RoomOwnershipService {
    */
   ClaimOutcome claimWithRetry(UUID roomId) {
     ClaimOutcome outcome = claim(roomId);
+    if (draining) {
+      return outcome;
+    }
     for (int attempt = 2;
         attempt <= RETRY_ATTEMPTS
             && (outcome instanceof ClaimOutcome.Redirect
@@ -401,6 +413,7 @@ class RoomOwnershipService {
       openMassGraceReservations(roomId);
     }
     registerOwned(roomId, epoch, version.get());
+    log.info("pod {} adopted room {} at epoch {}", pod.id(), roomId, epoch);
     return new ClaimOutcome.Adopted(epoch, version.get());
   }
 
@@ -459,6 +472,30 @@ class RoomOwnershipService {
           .update();
     }
     owned.remove(roomId);
+  }
+
+  /** {@code room-lifecycle.md} §1.6 step 2: refuse to claim any room not already owned. */
+  void beginDrain() {
+    draining = true;
+  }
+
+  boolean isDraining() {
+    return draining;
+  }
+
+  /** The rooms this instance owns right now, for the drain to walk. */
+  List<UUID> ownedRoomIds() {
+    return List.copyOf(owned.keySet());
+  }
+
+  /**
+   * §1.6 step 5, second half: deletes {@code pod:{podId}:alive} so a claimant sees the instance as
+   * gone at once, and stops the renewal, whose {@code XX} would otherwise read the deletion as a
+   * lapse.
+   */
+  void retireLiveness() {
+    retired = true;
+    metrics.record(() -> redis.delete(livenessKey()));
   }
 
   /** The epoch every fenced mutation of this room must include, per §1.5 layer 4. */
