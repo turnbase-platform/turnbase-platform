@@ -294,6 +294,7 @@ public class GameInputService {
    * and the attempt is retried.
    */
   private void reassign(UUID sessionId, String failedInstance) {
+    registry.quarantine(failedInstance, properties.leaseTtl());
     String gameKey = redis.opsForValue().get("gamekey:" + sessionId);
     int colon = gameKey == null ? -1 : gameKey.indexOf(':');
     if (colon < 0) {

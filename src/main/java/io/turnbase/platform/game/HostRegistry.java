@@ -128,7 +128,16 @@ class HostRegistry {
    * to again.
    */
   void quarantine(String instanceId) {
-    redis.opsForValue().set(quarantineKey(instanceId), "1", properties.quarantineTtl());
+    quarantine(instanceId, properties.quarantineTtl());
+  }
+
+  /**
+   * As above for a host a dispatch just found unreachable: its lease may still be live for up to
+   * {@code lease-ttl}, and without this a second failure picks the first dead host again
+   * (IMP-M18-12, two hosts killed in succession).
+   */
+  void quarantine(String instanceId, Duration ttl) {
+    redis.opsForValue().set(quarantineKey(instanceId), "1", ttl);
   }
 
   boolean isQuarantined(String instanceId) {
