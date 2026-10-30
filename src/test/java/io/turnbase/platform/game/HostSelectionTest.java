@@ -16,21 +16,21 @@ class HostSelectionTest {
   void warmHostBelowCapIsPreferredOverAnEmptierColdOne() {
     var warm = new Candidate("warm", true, 9);
     var cold = new Candidate("cold", false, 0);
-    assertThat(HostRegistry.choose(List.of(cold, warm), CAP)).contains("warm");
+    assertThat(HostRegistry.choose(List.of(cold, warm), CAP, 1)).contains("warm");
   }
 
   @Test
   void warmHostAtCapIsSkippedForACold() {
     var warm = new Candidate("warm", true, CAP);
     var cold = new Candidate("cold", false, 3);
-    assertThat(HostRegistry.choose(List.of(warm, cold), CAP)).contains("cold");
+    assertThat(HostRegistry.choose(List.of(warm, cold), CAP, 1)).contains("cold");
   }
 
   @Test
   void everyHostAtCapGivesNoHost() {
     var a = new Candidate("a", true, CAP);
     var b = new Candidate("b", false, CAP + 4);
-    assertThat(HostRegistry.choose(List.of(a, b), CAP)).isEqualTo(Optional.empty());
+    assertThat(HostRegistry.choose(List.of(a, b), CAP, 1)).isEqualTo(Optional.empty());
   }
 
   @Test
@@ -38,11 +38,33 @@ class HostSelectionTest {
     var a = new Candidate("a", true, 5);
     var b = new Candidate("b", true, 2);
     var c = new Candidate("c", true, 2);
-    assertThat(HostRegistry.choose(List.of(a, c, b), CAP)).contains("b");
+    assertThat(HostRegistry.choose(List.of(a, c, b), CAP, 1)).contains("b");
   }
 
   @Test
   void noCandidatesGivesNoHost() {
-    assertThat(HostRegistry.choose(List.of(), CAP)).isEmpty();
+    assertThat(HostRegistry.choose(List.of(), CAP, 1)).isEmpty();
+  }
+
+  @Test
+  void aColdHostIsWarmedWhileFewerThanTheWantedHostsAreWarm() {
+    var warm = new Candidate("warm", true, 3);
+    var cold = new Candidate("cold", false, 0);
+    assertThat(HostRegistry.choose(List.of(warm, cold), CAP, 2)).contains("cold");
+  }
+
+  @Test
+  void onceEnoughHostsAreWarmTheEmptierWarmOneWins() {
+    var a = new Candidate("a", true, 3);
+    var b = new Candidate("b", true, 1);
+    var cold = new Candidate("c", false, 0);
+    assertThat(HostRegistry.choose(List.of(a, b, cold), CAP, 2)).contains("b");
+  }
+
+  @Test
+  void noWarmHostYetFallsBackToLowestSessions() {
+    var a = new Candidate("a", false, 2);
+    var b = new Candidate("b", false, 1);
+    assertThat(HostRegistry.choose(List.of(a, b), CAP, 2)).contains("b");
   }
 }

@@ -101,7 +101,8 @@ class GameSessionServiceTest {
             Duration.ofSeconds(5),
             hostWait,
             Duration.ofSeconds(60),
-            100),
+            100,
+            2),
         effects);
   }
 

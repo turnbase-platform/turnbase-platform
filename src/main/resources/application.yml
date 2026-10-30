@@ -134,6 +134,7 @@ turnbase:
     host-wait: ${TURNBASE_ORCHESTRATION_HOST_WAIT:40s}
     quarantine-ttl: ${TURNBASE_ORCHESTRATION_QUARANTINE_TTL:60s}
     max-sessions-per-host: ${TURNBASE_ORCHESTRATION_MAX_SESSIONS_PER_HOST:100}
+    warm-hosts: ${TURNBASE_ORCHESTRATION_WARM_HOSTS:2}
   jobs:
     deadline-sweep:
       interval: ${TURNBASE_JOBS_DEADLINE_SWEEP_INTERVAL:5s}

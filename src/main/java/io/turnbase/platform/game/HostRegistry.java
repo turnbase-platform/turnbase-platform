@@ -239,17 +239,22 @@ class HostRegistry {
           new Candidate(
               instanceId, warm, Integer.parseInt(String.valueOf(entry.get("activeSessions")))));
     }
-    return choose(candidates, properties.maxSessionsPerHost());
+    return choose(candidates, properties.maxSessionsPerHost(), properties.warmHosts());
   }
 
   /**
    * §11 / {@code load-testing-phase-b.md} §5.1: among candidates below {@code cap}, warm first,
-   * then lowest {@code activeSessions}, then lexical {@code instanceId}. A cold host is chosen only
-   * when no warm host is below the cap.
+   * then lowest {@code activeSessions}, then lexical {@code instanceId}. A cold host is chosen when
+   * no warm host is below the cap, and also while fewer than {@code warmHosts} hosts are warm and a
+   * cold one is below the cap: that start pays the cold boot once, so a later drain or failover
+   * finds a warm host.
    */
-  static Optional<String> choose(List<Candidate> candidates, int cap) {
-    return candidates.stream()
-        .filter(c -> c.activeSessions() < cap)
+  static Optional<String> choose(List<Candidate> candidates, int cap, int warmHosts) {
+    var open = candidates.stream().filter(c -> c.activeSessions() < cap).toList();
+    long warm = candidates.stream().filter(Candidate::warm).count();
+    boolean warmAStandby = warm > 0 && warm < warmHosts && open.stream().anyMatch(c -> !c.warm());
+    return open.stream()
+        .filter(c -> !warmAStandby || !c.warm())
         .min(
             Comparator.comparing((Candidate c) -> !c.warm())
                 .thenComparingInt(Candidate::activeSessions)

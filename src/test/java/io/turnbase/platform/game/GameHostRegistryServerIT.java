@@ -171,14 +171,23 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
     registry.heartbeat("sel-c", 1, 1, 0);
     assertThat(registry.selectHost("game", "1.0.0")).contains("sel-b");
 
-    // A warm host beats a less loaded cold one.
+    // One warm host is fewer than warm-hosts (2): the least loaded cold one is chosen to warm it.
     blocking.reportContexts(
         ReportContextsRequest.newBuilder()
             .setInstanceId("sel-a")
             .addContexts(ContextKey.newBuilder().setGameId("game").setGameVersion("1.0.0"))
             .build());
-    assertThat(registry.selectHost("game", "1.0.0")).contains("sel-a");
+    assertThat(registry.selectHost("game", "1.0.0")).contains("sel-b");
     assertThat(redis.opsForSet().members("contexts:sel-a")).containsExactly("game:1.0.0");
+
+    // Two warm hosts: warm beats the less loaded cold one, then the least loaded of the warm.
+    blocking.reportContexts(
+        ReportContextsRequest.newBuilder()
+            .setInstanceId("sel-c")
+            .addContexts(ContextKey.newBuilder().setGameId("game").setGameVersion("1.0.0"))
+            .build());
+    registry.heartbeat("sel-b", 0, 1, 0);
+    assertThat(registry.selectHost("game", "1.0.0")).contains("sel-c");
 
     // A full snapshot replaces, never merges.
     blocking.reportContexts(ReportContextsRequest.newBuilder().setInstanceId("sel-a").build());
@@ -207,8 +216,9 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
     registry.heartbeat("cap-q", 0, 0, 0);
     registry.quarantine("cap-q");
 
+    // Warm cap-a is the only warm host (warm-hosts is 2): the cold cap-b is warmed first.
     registry.heartbeat("cap-a", 99, 1, 0);
-    assertThat(registry.selectHost("game", "1.0.0")).contains("cap-a");
+    assertThat(registry.selectHost("game", "1.0.0")).contains("cap-b");
 
     // The warm host reaches the cap (default 100): the cold one takes the session.
     registry.heartbeat("cap-a", 100, 1, 0);

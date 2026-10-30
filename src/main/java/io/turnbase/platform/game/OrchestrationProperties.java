@@ -10,7 +10,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * rather than being configured there, so the two cannot be set inconsistently; {@code
  * game-host-internals.md} §11 requires the TTL to be at least twice the interval. {@code
  * maxSessionsPerHost} is FR-SCALE-005's per-host cap: a host at it is not selected for a new
- * session.
+ * session. {@code warmHosts} is how many hosts should hold a game's context: while fewer do, a new
+ * session goes to a cold host, so a drain or failover finds a warm one.
  */
 @ConfigurationProperties(prefix = "turnbase.orchestration")
 public record OrchestrationProperties(
@@ -19,12 +20,16 @@ public record OrchestrationProperties(
     Duration dispatchDeadline,
     @DefaultValue("40s") Duration hostWait,
     @DefaultValue("60s") Duration quarantineTtl,
-    @DefaultValue("100") int maxSessionsPerHost) {
+    @DefaultValue("100") int maxSessionsPerHost,
+    @DefaultValue("2") int warmHosts) {
 
   public OrchestrationProperties {
     if (maxSessionsPerHost < 1) {
       throw new IllegalArgumentException(
           "turnbase.orchestration.max-sessions-per-host must be at least 1");
+    }
+    if (warmHosts < 1) {
+      throw new IllegalArgumentException("turnbase.orchestration.warm-hosts must be at least 1");
     }
     if (leaseTtl.compareTo(heartbeatInterval.multipliedBy(2)) < 0) {
       throw new IllegalArgumentException(
