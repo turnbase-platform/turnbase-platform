@@ -76,6 +76,19 @@ class HostRegistry {
    * rather than resurrecting a half entry with no address.
    */
   boolean heartbeat(String instanceId, int activeSessions, int activeContexts, int memoryPercent) {
+    return heartbeat(instanceId, activeSessions, activeContexts, memoryPercent, false);
+  }
+
+  /**
+   * As above; {@code draining} is the host announcing its own scale-in (FR-SCALE-006): the flag is
+   * set and stays set until the host registers again, so a later beat without it cannot undo it.
+   */
+  boolean heartbeat(
+      String instanceId,
+      int activeSessions,
+      int activeContexts,
+      int memoryPercent,
+      boolean draining) {
     if (!Boolean.TRUE.equals(redis.hasKey(hostKey(instanceId)))) {
       return false;
     }
@@ -87,9 +100,37 @@ class HostRegistry {
                 "activeSessions", Integer.toString(activeSessions),
                 "activeContexts", Integer.toString(activeContexts),
                 "memoryUsedPercent", Integer.toString(memoryPercent)));
+    if (draining) {
+      redis.opsForHash().put(hostKey(instanceId), "draining", "true");
+    }
     redis.expire(hostKey(instanceId), KEY_TTL);
     renewLease(instanceId);
     return true;
+  }
+
+  /**
+   * The load of every live host, for the scaling gauges: {@code activeSessions} and memory as last
+   * heartbeated, and whether the host is draining.
+   */
+  List<HostLoad> loads() {
+    Set<String> members = redis.opsForSet().members(HOSTS);
+    List<HostLoad> loads = new ArrayList<>();
+    if (members == null) {
+      return loads;
+    }
+    for (String instanceId : members) {
+      Map<Object, Object> entry = redis.opsForHash().entries(hostKey(instanceId));
+      if (entry.isEmpty() || !isLive(instanceId)) {
+        continue;
+      }
+      loads.add(
+          new HostLoad(
+              instanceId,
+              Integer.parseInt(String.valueOf(entry.get("activeSessions"))),
+              Integer.parseInt(String.valueOf(entry.get("memoryUsedPercent"))),
+              "true".equals(entry.get("draining"))));
+    }
+    return loads;
   }
 
   boolean isDraining(String instanceId) {
@@ -235,6 +276,8 @@ class HostRegistry {
   private static String contextsKey(String instanceId) {
     return "contexts:" + instanceId;
   }
+
+  record HostLoad(String instanceId, int activeSessions, int memoryPercent, boolean draining) {}
 
   record Candidate(String instanceId, boolean warm, int activeSessions) {}
 }

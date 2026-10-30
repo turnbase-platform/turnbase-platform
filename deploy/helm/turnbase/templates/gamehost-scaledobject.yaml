@@ -1,0 +1,35 @@
+{{- if .Values.gamehost.autoscaling.enabled }}
+# FR-SCALE-001/-003/-004: KEDA owns the Game Host's replica count. Both triggers read the Platform's gauges over the
+# Redis registry (GameHostLoadMetrics); KEDA runs in its own namespace, hence the qualified Prometheus address, because the Game Hosts' own metrics endpoints sit behind one Service.
+# `metricType: Value`: the metric is already a ratio, so the HPA scales the replicas by metric / threshold.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-gamehost
+  labels:
+    {{- include "turnbase.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-gamehost
+  minReplicaCount: {{ .Values.gamehost.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.gamehost.autoscaling.maxReplicas }}
+  {{- with .Values.gamehost.autoscaling.behavior }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  triggers:
+    - type: prometheus
+      metricType: Value
+      metadata:
+        serverAddress: {{ .Values.gamehost.autoscaling.prometheusAddress | default (printf "http://%s-prometheus.%s.svc:9090" .Release.Name .Release.Namespace) | quote }}
+        query: max(turnbase_gamehost_sessions_utilization)
+        threshold: {{ .Values.gamehost.autoscaling.sessionUtilizationThreshold | quote }}
+    - type: prometheus
+      metricType: Value
+      metadata:
+        serverAddress: {{ .Values.gamehost.autoscaling.prometheusAddress | default (printf "http://%s-prometheus.%s.svc:9090" .Release.Name .Release.Namespace) | quote }}
+        query: max(turnbase_gamehost_memory_max_percent)
+        threshold: {{ .Values.gamehost.autoscaling.memoryPercentThreshold | quote }}
+{{- end }}

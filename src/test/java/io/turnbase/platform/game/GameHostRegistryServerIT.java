@@ -225,6 +225,37 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void aDrainingHeartbeatTakesTheHostOutOfSelectionAndTheScalingGauges() {
+    for (String other : redis.opsForSet().members("hosts")) {
+      registry.deregister(other);
+    }
+    register("dr-a", "a:1", "jvm");
+    register("dr-b", "b:1", "jvm");
+    registry.heartbeat("dr-a", 30, 1, 40);
+    registry.heartbeat("dr-b", 10, 1, 60);
+    var meters = context.getBean(io.micrometer.core.instrument.MeterRegistry.class);
+    assertThat(meters.get("turnbase.gamehost.live").gauge().value()).isEqualTo(2);
+    assertThat(meters.get("turnbase.gamehost.sessions.active").gauge().value()).isEqualTo(40);
+    assertThat(meters.get("turnbase.gamehost.sessions.utilization").gauge().value())
+        .isEqualTo(40.0 / 200);
+    assertThat(meters.get("turnbase.gamehost.memory.max.percent").gauge().value()).isEqualTo(60);
+
+    registry.heartbeat("dr-a", 30, 1, 40, true);
+    // a later beat without the flag does not undo it
+    registry.heartbeat("dr-a", 30, 1, 40, false);
+
+    assertThat(registry.isDraining("dr-a")).isTrue();
+    assertThat(registry.selectHost("game", "1.0.0")).contains("dr-b");
+    assertThat(meters.get("turnbase.gamehost.live").gauge().value()).isEqualTo(1);
+    // the draining host's sessions leave the numerator as well as the capacity
+    assertThat(meters.get("turnbase.gamehost.sessions.utilization").gauge().value())
+        .isEqualTo(10.0 / 100);
+
+    registry.deregister("dr-a");
+    registry.deregister("dr-b");
+  }
+
+  @Test
   void deregisterRemovesEveryKeyAndIsIdempotent() {
     register("host-gone", "g:1", "jvm");
     blocking.deregister(DeregisterRequest.newBuilder().setInstanceId("host-gone").build());

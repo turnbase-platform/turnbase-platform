@@ -63,12 +63,16 @@ class GameHostRegistryGrpcService
     return new StreamObserver<>() {
       @Override
       public void onNext(HeartbeatRequest request) {
+        if (request.getDraining() && !registry.isDraining(request.getInstanceId())) {
+          log.info("Game Host draining instanceId={}", request.getInstanceId());
+        }
         boolean known =
             registry.heartbeat(
                 request.getInstanceId(),
                 request.getActiveSessions(),
                 request.getActiveContexts(),
-                request.getMemoryUsedPercent());
+                request.getMemoryUsedPercent(),
+                request.getDraining());
         if (!known) {
           // The entry is gone (deregistered, or Redis was reset): the host must Register again,
           // which a reconnecting client does on any stream error. One message goes first because

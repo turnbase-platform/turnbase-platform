@@ -76,6 +76,24 @@ gamehost:
   resources: {}
   # As platform.extraEnv.
   extraEnv: []
+  # Seconds between SIGTERM and SIGKILL: the drain period (TURNBASE_GAMEHOST_DRAIN_PERIOD, 30s) plus the
+  # gRPC server's wait for calls in flight.
+  terminationGracePeriodSeconds: 90
+  # KEDA ScaledObject (load-testing-phase-b.md 5.3; requires KEDA, installed by loadtest/install.sh). It scales on
+  # the Platform's gauges over the registry: sessions against the per-host cap, and the highest heap percentage.
+  # With it on, the Deployment omits `replicas` (KEDA's HPA owns it).
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 3
+    # turnbase_gamehost_sessions_utilization: active sessions over (hosts x cap). Above this, add a host.
+    sessionUtilizationThreshold: "0.7"
+    # turnbase_gamehost_memory_max_percent: highest heap-used percentage over the hosts.
+    memoryPercentThreshold: "85"
+    # Where the gauges are read: the chart's own Prometheus.
+    prometheusAddress: ""
+    # autoscaling/v2 `behavior`, rendered as is.
+    behavior: {}
 
 postgres:
   image: postgres:16-alpine

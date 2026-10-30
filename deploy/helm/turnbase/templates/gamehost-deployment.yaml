@@ -6,7 +6,9 @@ metadata:
     {{- include "turnbase.labels" . | nindent 4 }}
     {{- include "turnbase.selectorLabels" (dict "component" "gamehost" "root" .) | nindent 4 }}
 spec:
+  {{- if not .Values.gamehost.autoscaling.enabled }}
   replicas: {{ .Values.gamehost.replicaCount }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -20,6 +22,7 @@ spec:
       labels:
         {{- include "turnbase.selectorLabels" (dict "component" "gamehost" "root" .) | nindent 8 }}
     spec:
+      terminationGracePeriodSeconds: {{ .Values.gamehost.terminationGracePeriodSeconds }}
       containers:
         - name: gamehost
           image: "{{ .Values.gamehost.image.repository }}:{{ .Values.gamehost.image.tag }}"
