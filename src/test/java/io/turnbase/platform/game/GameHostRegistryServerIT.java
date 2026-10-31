@@ -87,6 +87,18 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void aHostWhoseLeaseLapsedWithoutDeregisteringDropsOutOfTheLoadFigures() {
+    register("host-lapsed", "10.0.0.9:9090", "jvm");
+    assertThat(registry.loads()).anyMatch(l -> l.instanceId().equals("host-lapsed"));
+
+    // A pod removed without a drain: its host: entry stays, only the lease expires.
+    redis.delete("hostlease:host-lapsed");
+
+    assertThat(redis.hasKey("host:host-lapsed")).isTrue();
+    assertThat(registry.loads()).noneMatch(l -> l.instanceId().equals("host-lapsed"));
+  }
+
+  @Test
   void heartbeatStreamRefreshesTheLeaseAndCarriesLoadSignals() throws Exception {
     register("host-hb", "10.0.0.2:9090", "jvm");
     redis.expire("hostlease:host-hb", 2, TimeUnit.SECONDS);
