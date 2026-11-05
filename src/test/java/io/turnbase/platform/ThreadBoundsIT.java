@@ -28,6 +28,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  *
  * <p>Keeps its own boot: it asserts the pools of a freshly started application, which a reused
  * context would not show. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code platform-operations.md} FR-MET-006, NFR-ASC-003.
  */
 class ThreadBoundsIT extends PostgresIntegrationTest {
 

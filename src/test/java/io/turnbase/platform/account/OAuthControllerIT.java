@@ -35,6 +35,8 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>Keeps its own boot: the stub Google port is in the boot arguments, so no two runs share a key.
  * (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code user-accounts.md} FR-AUTH-007, FR-AUTH-016.
  */
 class OAuthControllerIT extends PostgresIntegrationTest {
 

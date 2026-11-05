@@ -37,6 +37,8 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code IMP-M18-04} / {@code load-testing-phase-b.md} §3.3: a move by a participant the owning
  * instance has already seen issues no Postgres statement, and anything that changes the room — a
  * mutation through the executor, a loss of ownership — sends the next move back to Postgres.
+ *
+ * <p>Requirements protected: {@code platform-operations.md} FR-DBQ-001, NFR-DBQ-004.
  */
 @UsesSharedApplication
 class MoveParticipantCacheIT extends PostgresIntegrationTest {

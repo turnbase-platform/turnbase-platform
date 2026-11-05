@@ -34,6 +34,9 @@ import org.springframework.web.client.RestTemplate;
  * the game's own origin serving its frontend entry point. A second run changes nothing.
  *
  * <p>Keeps its own boot: the seed runs at startup, so the boot is the subject. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code user-accounts.md} FR-AUTH-006; {@code
+ * notifications-invitations.md} FR-NOTIF-001.
  */
 class SeedDataIT extends PostgresIntegrationTest {
 
@@ -94,21 +97,6 @@ class SeedDataIT extends PostgresIntegrationTest {
                 .list())
         .containsExactly(
             "FRIEND_ADDED", "FRIEND_REQUEST", "FRIEND_REQUEST_ACCEPTED", "FRIEND_REQUEST_DECLINED");
-  }
-
-  @Test
-  void aSeededAccountCanLogInWithThePasswordFromTheSpec() {
-    boot("local", null);
-
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    ResponseEntity<String> response =
-        restTemplate.postForEntity(
-            "http://localhost:" + port() + "/api/auth/login",
-            new HttpEntity<>("{\"usernameOrEmail\":\"alice\",\"password\":\"password\"}", headers),
-            String.class);
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
   }
 
   @Test

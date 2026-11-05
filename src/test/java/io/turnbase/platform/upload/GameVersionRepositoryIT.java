@@ -23,6 +23,9 @@ import tools.jackson.databind.json.JsonMapper;
  * ADR-0006), so the {@code VERIFIED -> UNVERIFIED} transition and the two-slot backward-ordering
  * guard are untestable end-to-end and are proven here instead, against the same transaction the
  * real pipeline calls.
+ *
+ * <p>Requirements protected: {@code game-catalog.md} FR-GAME-010, FR-GAME-014; {@code
+ * admin-tooling.md} FR-BADGE-001.
  */
 class GameVersionRepositoryIT extends PostgresIntegrationTest {
 

@@ -16,6 +16,8 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 /**
  * Proves the bucket assertion (local-environment.md §5) against a real MinIO — conventions.md §3:
  * Testcontainers, never a hand-started stack.
+ *
+ * <p>Requirements protected: {@code game-development-experience.md} FR-UPLOAD-001.
  */
 class ArtifactBucketReadinessCheckIT extends PostgresIntegrationTest {
 

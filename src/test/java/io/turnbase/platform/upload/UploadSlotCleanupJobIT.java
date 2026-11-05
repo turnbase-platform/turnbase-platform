@@ -24,6 +24,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code bundle-format.md} §7.2's sweep duties 1, 3 and 4 — duty 2 (the lease-expiry fix for a
  * died-mid-validation version number) is proven at the full HTTP stack level by {@link
  * VersionUploadControllerIT#theSweepFreesAnAbandonedLeaseAndTheVersionNumberCanBeRetried}.
+ *
+ * <p>Requirements protected: {@code platform-operations.md} FR-JOB-012; {@code
+ * game-development-experience.md} NFR-UPLOAD-001.
  */
 class UploadSlotCleanupJobIT extends PostgresIntegrationTest {
 

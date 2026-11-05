@@ -46,6 +46,8 @@ import tools.jackson.databind.json.JsonMapper;
  * session cookie and an unauthenticated attempt never gets a session (clause 2); an unauthorized
  * {@code SUBSCRIBE} is silently dropped, not errored (clause 3, {@code websocket.md} §
  * Authorization).
+ *
+ * <p>Requirements protected: {@code user-accounts.md} NFR-SEC-006, FR-SESS-010.
  */
 @UsesSharedApplication
 class WebSocketIT extends PostgresIntegrationTest {

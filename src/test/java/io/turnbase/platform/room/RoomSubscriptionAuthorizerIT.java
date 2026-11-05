@@ -42,6 +42,9 @@ import tools.jackson.databind.json.JsonMapper;
  * only test that proves {@link
  * io.turnbase.platform.websocket.WebSocketConnectionRegistry#closeSession} actually closes a real
  * WebSocket, not merely that it sends a message.
+ *
+ * <p>Requirements protected: {@code game-rooms.md} FR-LIFE-007; {@code reconnection-flow.md}
+ * FR-DC-006.
  */
 @UsesSharedApplication
 class RoomSubscriptionAuthorizerIT extends PostgresIntegrationTest {

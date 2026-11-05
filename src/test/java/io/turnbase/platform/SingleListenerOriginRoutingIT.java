@@ -29,6 +29,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  *
  * <p>Keeps its own boot: it runs the single-listener topology, and a reused context carries other
  * tests' settings. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code game-development-experience.md} FR-ASSET-001, FR-ASSET-002,
+ * FR-ASSET-009.
  */
 class SingleListenerOriginRoutingIT extends PostgresIntegrationTest {
 

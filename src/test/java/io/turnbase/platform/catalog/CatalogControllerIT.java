@@ -29,6 +29,9 @@ import tools.jackson.databind.json.JsonMapper;
  * anonymously, since {@code SessionAuthenticationInterceptor} exempts {@code /api/games}); a game
  * carries exactly one badge from one column; the info doc is delivered as raw Markdown source,
  * never HTML.
+ *
+ * <p>Requirements protected: {@code game-catalog.md} FR-CAT-001, FR-CAT-010, FR-GDET-003,
+ * FR-GDET-004, FR-GDET-007, FR-GDET-008; {@code admin-tooling.md} FR-PRV-001.
  */
 @UsesSharedApplication
 class CatalogControllerIT extends PostgresIntegrationTest {

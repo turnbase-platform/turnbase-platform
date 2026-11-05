@@ -37,6 +37,8 @@ import org.springframework.web.client.RestTemplate;
  *
  * <p>Keeps its own boot: each test needs its own tiny rate-limit overrides and empty buckets, set
  * at startup. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code user-accounts.md} NFR-SEC-003, NFR-SEC-007.
  */
 class RateLimitInterceptorIT extends PostgresIntegrationTest {
 

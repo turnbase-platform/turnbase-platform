@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Test;
  * <p>A dedicated container, not the shared one in {@link PostgresIntegrationTest}: this test's
  * assertions depend on the database being genuinely clean before the first {@code migrate()} call,
  * which a container already migrated by another *IT would not be.
+ *
+ * <p>Requirements protected: {@code platform-operations.md} FR-DB-001, FR-DB-002.
  */
 class FlywayBaselineIT extends PostgresIntegrationTest {
 

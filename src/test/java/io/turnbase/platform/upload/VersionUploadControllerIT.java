@@ -31,6 +31,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code file-uploads.md}'s three-step flow end to end, and {@code bundle-format.md} §3.4's
  * synchronous/asynchronous failure split (IMP-M4-03's Done-when clause 5), the sweep's lease
  * recovery (clause 2), and §7.4's slot reclamation.
+ *
+ * <p>Requirements protected: {@code game-development-experience.md} FR-UPLOAD-001, FR-UPLOAD-002,
+ * FR-UPLOAD-006, FR-UPLOAD-007, FR-UPLOAD-008; {@code game-catalog.md} FR-GAME-009.
  */
 @UsesSharedApplication
 class VersionUploadControllerIT extends PostgresIntegrationTest {

@@ -55,6 +55,9 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>Keeps its own boot: it needs two live contexts at once, which the one-context cache never
  * holds. Both are booted once for the class; every test registers its own user. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code platform-operations.md} FR-ASC-002, FR-ASC-003, FR-JOB-005;
+ * {@code user-accounts.md} FR-SESS-010.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TwoInstanceIT extends PostgresIntegrationTest {

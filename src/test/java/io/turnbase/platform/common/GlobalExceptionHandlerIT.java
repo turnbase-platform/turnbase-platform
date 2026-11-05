@@ -31,6 +31,8 @@ import tools.jackson.databind.json.JsonMapper;
  * {@link GlobalExceptionHandler} produces for every {@code error-handling.md} taxonomy entry — the
  * Done-when clause's own words: "an integration test asserts the exact response body for each error
  * class, including {@code room-unavailable-retry} and its {@code retryAfterMs} member."
+ *
+ * <p>Requirements protected: {@code user-accounts.md} NFR-SEC-006 (the 401 shape).
  */
 @UsesSharedApplication
 class GlobalExceptionHandlerIT extends PostgresIntegrationTest {

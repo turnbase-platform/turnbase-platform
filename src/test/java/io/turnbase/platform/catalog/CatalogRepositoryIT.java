@@ -20,6 +20,9 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
  * Unverified game is invisible to everyone but its owner; a game carries exactly one badge from one
  * column) at the SQL layer, following {@code GameVersionRepositoryIT}'s lighter Flyway-migrate
  * pattern.
+ *
+ * <p>Requirements protected: {@code admin-tooling.md} FR-PRV-001, FR-BADGE-001; {@code
+ * game-catalog.md} FR-CAT-005, FR-GDET-005.
  */
 class CatalogRepositoryIT extends PostgresIntegrationTest {
 

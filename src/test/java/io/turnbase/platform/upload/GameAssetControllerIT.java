@@ -27,6 +27,9 @@ import org.springframework.web.client.RestTemplate;
  *
  * <p>Keeps its own boot: its game-origin hosts and upload limits are set at startup and differ from
  * every other class. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code game-development-experience.md} FR-ASSET-001, FR-ASSET-002,
+ * FR-ASSET-005, FR-ASSET-009.
  */
 class GameAssetControllerIT extends PostgresIntegrationTest {
 

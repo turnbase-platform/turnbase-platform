@@ -30,6 +30,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 /**
  * {@code IMP-M9-05} (CA-05): a confirmed leave reaches the engine right after its transaction
  * commits, with no sweep tick; a failed inline attempt is recorded and left to the sweep.
+ *
+ * <p>Requirements protected: {@code game-rooms.md} FR-LIFE-004; {@code reconnection-flow.md}
+ * FR-DC-005, FR-EXPIRY-002.
  */
 @UsesSharedApplication
 class InlineLeaveDispatchIT extends PostgresIntegrationTest {

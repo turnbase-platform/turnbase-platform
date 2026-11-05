@@ -31,6 +31,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * {@code IMP-M3-08}: the owed teardown is driven to a real {@code TerminateSession}, cleared on
  * confirmation, kept (and aged) on failure, and the normal end of a game returns the room to Lobby
  * through the same {@code detachSession}.
+ *
+ * <p>Requirements protected: {@code game-rooms.md} FR-XFER-005, FR-LIFE-002; {@code
+ * platform-operations.md} FR-ALERT-007.
  */
 @UsesSharedApplication
 class SessionTeardownIT extends PostgresIntegrationTest {

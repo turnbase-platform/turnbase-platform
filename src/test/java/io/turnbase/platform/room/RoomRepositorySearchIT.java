@@ -14,7 +14,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import tools.jackson.databind.json.JsonMapper;
 
-/** IMP-M10-15: the room-list {@code search} filter matches the user's literal text. */
+/**
+ * IMP-M10-15: the room-list {@code search} filter matches the user's literal text. *
+ *
+ * <p>Requirements protected: {@code game-rooms.md} FR-LIST-003.
+ */
 class RoomRepositorySearchIT extends PostgresIntegrationTest {
 
   private static JdbcClient jdbcClient;

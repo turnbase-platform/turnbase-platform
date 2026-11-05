@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
  * this test does not create.
  *
  * <p>Keeps its own boot: boot behaviour is what it tests. (IMP-M20-10)
+ *
+ * <p>Requirements protected: {@code platform-operations.md} FR-DB-001.
  */
 class TurnBaseApplicationIT extends PostgresIntegrationTest {
 

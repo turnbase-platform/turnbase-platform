@@ -24,6 +24,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * assignment comes from {@link RoomOwnershipService#nextVersion} rather than a fresh read, a
  * no-event mutation never touches {@code room.version}, and a fenced commit failure evicts the room
  * rather than leaving this instance's dirty in-memory state in play.
+ *
+ * <p>Requirements protected: {@code game-rooms.md} FR-LIFE-001; {@code platform-operations.md}
+ * FR-JOB-007.
  */
 @UsesSharedApplication
 class RoomEventExecutorIT extends PostgresIntegrationTest {

@@ -42,6 +42,8 @@ import tools.jackson.databind.json.JsonMapper;
  * ({@code IMP-GATE-43}/{@code IMP-GATE-44}) — proven by a subscriber that actually receives the
  * frames, not by asserting the database alone. Also proves the no-op paths (re-joining, leaving a
  * room never joined) broadcast nothing.
+ *
+ * <p>Requirements protected: {@code game-rooms.md} FR-JOIN-001, FR-LIFE-004.
  */
 @UsesSharedApplication
 class RoomEventFanoutIT extends PostgresIntegrationTest {

@@ -40,6 +40,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * record outlives the host) are killed, drained or revived under the real dispatch path, and the
  * same scenarios run against each reassignment mode. Results are written to {@code
  * target/m18-reassignment-results.md}; the report quotes them.
+ *
+ * <p>Requirements protected: {@code platform-architecture.md} FR-FAIL-002, FR-FAIL-003,
+ * NFR-REL-002.
  */
 class HostFailureReassignmentIT extends PostgresIntegrationTest {
 

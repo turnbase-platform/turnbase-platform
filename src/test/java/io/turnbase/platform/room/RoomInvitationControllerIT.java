@@ -27,6 +27,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code room-invitation-rest-api.md} §§2-4 end to end: send (host-only, friends-only, idempotent),
  * decline (self-scoped, idempotent), and acceptance via the ordinary join endpoint (resolves on
  * success, untouched on failure — {@code IMP-M2-12}'s own Done-when).
+ *
+ * <p>Requirements protected: {@code notifications-invitations.md} FR-INV-001, FR-INV-002,
+ * FR-INV-003, FR-INV-004, FR-INV-005.
  */
 @UsesSharedApplication
 class RoomInvitationControllerIT extends PostgresIntegrationTest {

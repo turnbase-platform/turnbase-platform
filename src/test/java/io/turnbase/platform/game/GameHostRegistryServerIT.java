@@ -35,6 +35,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * (h2c through the servlet container, {@code local-environment.md} §7.8) and backed by the Redis
  * shape of {@code game-host-internals.md} §13 — exercised over a real socket by a real gRPC client,
  * including the bidirectional {@code Heartbeat} stream.
+ *
+ * <p>Requirements protected: {@code platform-architecture.md} FR-REG-001, FR-REG-003, FR-REG-004,
+ * FR-SCALE-005.
  */
 @UsesSharedApplication
 class GameHostRegistryServerIT extends PostgresIntegrationTest {

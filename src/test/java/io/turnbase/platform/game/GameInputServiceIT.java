@@ -36,6 +36,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * {@code IMP-M3-05}: input dispatch against a fake in-process Game Host — the per-session sequence,
  * once-only effect delivery, and the failure counting of {@code orchestration-gamehost-protocol.md}
  * *Error model* / GAME-I3.
+ *
+ * <p>Requirements protected: {@code platform-architecture.md} FR-ROUTE-001, FR-ROUTE-002,
+ * FR-ROUTE-003, FR-DELIVER-004, FR-FAIL-001, FR-FAIL-003.
  */
 @UsesSharedApplication
 class GameInputServiceIT extends PostgresIntegrationTest {

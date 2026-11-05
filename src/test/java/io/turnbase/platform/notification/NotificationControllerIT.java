@@ -41,6 +41,9 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * {@code notification-rest-api.md} §§2-6's five endpoints, plus {@code sse-notifications.md}'s
  * offline-catch-up half of the stream endpoint end to end against a real Postgres.
+ *
+ * <p>Requirements protected: {@code notifications-invitations.md} FR-NOTIF-001, FR-NOTIF-002,
+ * FR-NOTIF-003, FR-NOTIF-004, FR-NOTIF-005, FR-NOTIF-007, FR-NOTIF-008.
  */
 @UsesSharedApplication
 class NotificationControllerIT extends PostgresIntegrationTest {
