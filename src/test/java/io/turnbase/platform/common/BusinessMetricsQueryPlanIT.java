@@ -2,30 +2,23 @@ package io.turnbase.platform.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.turnbase.platform.PostgresIntegrationTest;
 import java.util.List;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * {@code IMP-M16-09}: the two {@code count(*)} gauges that {@link BusinessMetricsConfig} runs every
  * 30 seconds read partial indexes of the baseline, not the table, while closed rooms (kept 7 days,
  * FR-RET-006) vastly outnumber open ones. The plans are asserted, and printed for the record.
  */
-@Testcontainers
-class BusinessMetricsQueryPlanIT {
+class BusinessMetricsQueryPlanIT extends PostgresIntegrationTest {
 
   private static final int CLOSED_ROOMS = 100_000;
   private static final int OPEN_ROOMS = 300;
-
-  @Container
-  private static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
   void bothRoomGaugeQueriesUseAPartialIndexWith100000ClosedRooms() {

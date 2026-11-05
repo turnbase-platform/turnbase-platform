@@ -3,13 +3,10 @@ package io.turnbase.platform.upload;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.turnbase.platform.PostgresIntegrationTest;
 import java.net.URI;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
-import org.testcontainers.containers.MinIOContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -20,15 +17,7 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
  * Proves the bucket assertion (local-environment.md §5) against a real MinIO — conventions.md §3:
  * Testcontainers, never a hand-started stack.
  */
-@Testcontainers
-class ArtifactBucketReadinessCheckIT {
-
-  // IMP-GATE-73: see PostgresIntegrationTest's identical container declaration.
-  @Container
-  private static final MinIOContainer MINIO =
-      new MinIOContainer(
-          DockerImageName.parse("pgsty/minio:RELEASE.2026-08-04T00-00-00Z")
-              .asCompatibleSubstituteFor("minio/minio"));
+class ArtifactBucketReadinessCheckIT extends PostgresIntegrationTest {
 
   private S3Client client() {
     return S3Client.builder()

@@ -3,27 +3,20 @@ package io.turnbase.platform.common;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.turnbase.platform.PostgresIntegrationTest;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * FR-MET-003 (observability.md §2.1): the four business gauges are re-derived from real rows, not
  * asserted against a mock. `turnbase_friend_requests_pending` in particular exercises IMP-GATE-20's
  * fix — {@code friend_request} has no {@code status} column, so every row counts.
  */
-@Testcontainers
-class BusinessMetricsConfigIT {
-
-  @Container
-  private static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine");
+class BusinessMetricsConfigIT extends PostgresIntegrationTest {
 
   private JdbcTemplate jdbcTemplate;
 

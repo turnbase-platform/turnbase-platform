@@ -11,9 +11,6 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * IMP-M0-06's own Done-when clause, checked directly against the Flyway API rather than through a
@@ -25,8 +22,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * assertions depend on the database being genuinely clean before the first {@code migrate()} call,
  * which a container already migrated by another *IT would not be.
  */
-@Testcontainers
-class FlywayBaselineIT {
+class FlywayBaselineIT extends PostgresIntegrationTest {
 
   private static final List<String> EXPECTED_TABLES =
       List.of(
@@ -51,10 +47,6 @@ class FlywayBaselineIT {
           "game_history_entry",
           "notification",
           "shedlock");
-
-  @Container
-  private static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine");
 
   private Flyway newFlyway() {
     return Flyway.configure()
