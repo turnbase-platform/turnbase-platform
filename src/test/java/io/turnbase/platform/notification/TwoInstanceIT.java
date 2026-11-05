@@ -25,9 +25,10 @@ import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockProvider;
 import net.javacrumbs.shedlock.core.SimpleLock;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
@@ -53,8 +54,9 @@ import tools.jackson.databind.json.JsonMapper;
  * in {@code notification} because the SSE registry is package-private.
  *
  * <p>Keeps its own boot: it needs two live contexts at once, which the one-context cache never
- * holds. (IMP-M20-10)
+ * holds. Both are booted once for the class; every test registers its own user. (IMP-M20-10)
  */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TwoInstanceIT extends PostgresIntegrationTest {
 
   private static final int API_CAPACITY = 10;
@@ -72,7 +74,7 @@ class TwoInstanceIT extends PostgresIntegrationTest {
     http.setErrorHandler(new NoOpResponseErrorHandler());
   }
 
-  @BeforeEach
+  @BeforeAll
   void boot() {
     a = boot("a");
     b = boot("b");
@@ -80,7 +82,7 @@ class TwoInstanceIT extends PostgresIntegrationTest {
     urlB = "http://127.0.0.1:" + port(b());
   }
 
-  @AfterEach
+  @AfterAll
   void stop() {
     if (b != null) {
       b.close();
