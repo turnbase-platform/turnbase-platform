@@ -12,7 +12,8 @@ import io.turnbase.grpc.gamehost.v1.TerminateSessionRequest;
 import io.turnbase.grpc.gamehost.v1.TerminateSessionResponse;
 import io.turnbase.grpc.gamehost.v1.TerminationReason;
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +23,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -32,6 +32,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * confirmation, kept (and aged) on failure, and the normal end of a game returns the room to Lobby
  * through the same {@code detachSession}.
  */
+@UsesSharedApplication
 class SessionTeardownIT extends PostgresIntegrationTest {
 
   record Terminated(String sessionId, TerminationReason reason) {}
@@ -69,8 +70,7 @@ class SessionTeardownIT extends PostgresIntegrationTest {
             .build()
             .start();
     context =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -95,7 +95,6 @@ class SessionTeardownIT extends PostgresIntegrationTest {
   @AfterAll
   static void shutdown() {
     fakeHost.shutdownNow();
-    context.close();
   }
 
   private static UUID insertRoom(String state) {

@@ -51,6 +51,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code IMP-M18-08} / {@code load-testing-phase-b.md} §4.1, §4.2: two Platform application
  * contexts on one Postgres and one Redis behave as one instance for everything user-scoped. Lives
  * in {@code notification} because the SSE registry is package-private.
+ *
+ * <p>Keeps its own boot: it needs two live contexts at once, which the one-context cache never
+ * holds. (IMP-M20-10)
  */
 class TwoInstanceIT extends PostgresIntegrationTest {
 

@@ -3,7 +3,9 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.SharedApplication;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -20,11 +22,9 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.RedisCallback;
@@ -39,16 +39,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * {@code turnbase.jobs.reconcile.startup-suppression} to a window this test can control rather than
  * waiting out the real 120s default.
  */
+@UsesSharedApplication
 class ReconciliationJobIT extends PostgresIntegrationTest {
 
   private @Nullable ConfigurableApplicationContext context;
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void dutyARedrivesAnOwedTeardownAndBacksOffOnFailure() {
@@ -468,27 +462,29 @@ class ReconciliationJobIT extends PostgresIntegrationTest {
       String startupSuppression, Class<?>... extraSources) {
     List<Class<?>> sources = new ArrayList<>(List.of(TurnBaseApplication.class));
     sources.addAll(List.of(extraSources));
-    return new SpringApplication(sources.toArray(Class<?>[]::new))
-        .run(
-            "--server.port=0",
-            "--management.server.port=0",
-            "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
-            "--spring.datasource.username=" + POSTGRES.getUsername(),
-            "--spring.datasource.password=" + POSTGRES.getPassword(),
-            "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
-            "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
-            "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
-            "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
-            "--turnbase.admin.username=admin",
-            "--turnbase.admin.password=admin",
-            "--spring.data.redis.url=" + redisUrl(),
-            "--turnbase.room.lease.renew-interval=1h",
-            "--turnbase.room.idle-window=1s",
-            "--turnbase.jobs.deadline-sweep.interval=1h",
-            // Keeps the background sweep tick from racing this test's own manual job.run() calls.
-            "--turnbase.jobs.reconcile.interval=1h",
-            "--turnbase.jobs.reconcile.startup-suppression=" + startupSuppression,
-            "--turnbase.jobs.reconcile.orphan-age=0s");
+    return SharedApplication.run(
+        sources.toArray(Class<?>[]::new),
+        new String[] {
+          "--server.port=0",
+          "--management.server.port=0",
+          "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+          "--spring.datasource.username=" + POSTGRES.getUsername(),
+          "--spring.datasource.password=" + POSTGRES.getPassword(),
+          "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+          "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+          "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+          "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+          "--turnbase.admin.username=admin",
+          "--turnbase.admin.password=admin",
+          "--spring.data.redis.url=" + redisUrl(),
+          "--turnbase.room.lease.renew-interval=1h",
+          "--turnbase.room.idle-window=1s",
+          "--turnbase.jobs.deadline-sweep.interval=1h",
+          // Keeps the background sweep tick from racing this test's own manual job.run() calls.
+          "--turnbase.jobs.reconcile.interval=1h",
+          "--turnbase.jobs.reconcile.startup-suppression=" + startupSuppression,
+          "--turnbase.jobs.reconcile.orphan-age=0s"
+        });
   }
 
   private static UUID insertGame(JdbcClient jdbcClient) {

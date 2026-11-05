@@ -15,7 +15,9 @@ import io.turnbase.grpc.gamehost.v1.ProcessInputResponse;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.SharedApplication;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
@@ -24,7 +26,6 @@ import java.util.function.Function;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,6 +37,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * once-only effect delivery, and the failure counting of {@code orchestration-gamehost-protocol.md}
  * *Error model* / GAME-I3.
  */
+@UsesSharedApplication
 class GameInputServiceIT extends PostgresIntegrationTest {
 
   record Delivered(UUID sessionId, long sequence, int effects) {}
@@ -114,7 +116,7 @@ class GameInputServiceIT extends PostgresIntegrationTest {
             .build()
             .start();
     context =
-        SpringApplication.run(
+        SharedApplication.run(
             new Class<?>[] {TurnBaseApplication.class, Recorder.class},
             new String[] {
               "--server.port=0",
@@ -155,7 +157,6 @@ class GameInputServiceIT extends PostgresIntegrationTest {
   @AfterAll
   static void shutdown() {
     fakeHost.shutdownNow();
-    context.close();
   }
 
   private static UUID newSession() {

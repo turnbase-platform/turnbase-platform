@@ -3,14 +3,13 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -21,16 +20,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * RoomControllerIT} carries the REST-level half — rejoin after expiry as an ordinary join, and the
  * {@code IMP-GATE-50} row-reuse fix.
  */
+@UsesSharedApplication
 class RoomReconnectIT extends PostgresIntegrationTest {
 
   private @Nullable ConfigurableApplicationContext context;
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void reconnectWithinTheGraceWindowClearsTheReservationAndBumpsVersion() {
@@ -108,8 +101,7 @@ class RoomReconnectIT extends PostgresIntegrationTest {
   }
 
   private static ConfigurableApplicationContext boot() {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
+    return SharedApplication.run(
         "--server.port=0",
         "--management.server.port=0",
         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),

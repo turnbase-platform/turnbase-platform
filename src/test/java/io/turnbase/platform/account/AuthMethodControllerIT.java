@@ -37,6 +37,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code IMP-M1-11}'s own Done-when clause, end to end: the account representation, the three
  * {@code /api/users/me/auth-methods} routes, FR-AUTH-011's guard under real concurrency, and the
  * three-request Google link ({@code oauth-rest-api.md} §7a) against a stub Google.
+ *
+ * <p>Keeps its own boot: the stub Google port is in the boot arguments, so no two runs share a key.
+ * (IMP-M20-10)
  */
 class AuthMethodControllerIT extends PostgresIntegrationTest {
 

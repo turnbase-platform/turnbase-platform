@@ -12,7 +12,8 @@ import io.turnbase.grpc.gamehost.v1.ProcessInputResponse;
 import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +23,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -31,6 +31,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * {@code IMP-M9-05} (CA-05): a confirmed leave reaches the engine right after its transaction
  * commits, with no sweep tick; a failed inline attempt is recorded and left to the sweep.
  */
+@UsesSharedApplication
 class InlineLeaveDispatchIT extends PostgresIntegrationTest {
 
   private static final List<ProcessInputRequest> RECEIVED = new CopyOnWriteArrayList<>();
@@ -66,8 +67,7 @@ class InlineLeaveDispatchIT extends PostgresIntegrationTest {
             .build()
             .start();
     context =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -93,7 +93,6 @@ class InlineLeaveDispatchIT extends PostgresIntegrationTest {
   @AfterAll
   static void shutdown() {
     fakeHost.shutdownNow();
-    context.close();
   }
 
   @BeforeEach

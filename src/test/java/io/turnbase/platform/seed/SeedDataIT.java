@@ -32,6 +32,8 @@ import org.springframework.web.client.RestTemplate;
  * friendship, the pending request and the four in-scope notification types, and drives every bundle
  * in {@code turnbase.seed.bundles-dir} through the real upload pipeline — the unpack is proven by
  * the game's own origin serving its frontend entry point. A second run changes nothing.
+ *
+ * <p>Keeps its own boot: the seed runs at startup, so the boot is the subject. (IMP-M20-10)
  */
 class SeedDataIT extends PostgresIntegrationTest {
 

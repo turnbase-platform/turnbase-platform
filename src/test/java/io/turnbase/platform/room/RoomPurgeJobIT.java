@@ -3,12 +3,11 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -17,16 +16,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * permanently deleted, cascading to participant/team rows; game history carries no room foreign key
  * and is untouched (FR-RET-006, not exercised here since no history feature exists yet).
  */
+@UsesSharedApplication
 class RoomPurgeJobIT extends PostgresIntegrationTest {
 
   private @Nullable ConfigurableApplicationContext context;
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void deletesAClosedRoomPastRetentionCascadingToParticipantsAndTeams() {
@@ -79,8 +72,7 @@ class RoomPurgeJobIT extends PostgresIntegrationTest {
   }
 
   private static ConfigurableApplicationContext boot() {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
+    return SharedApplication.run(
         "--server.port=0",
         "--management.server.port=0",
         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),

@@ -22,10 +22,12 @@ import software.amazon.awssdk.services.s3.model.S3Object;
  * A cache of booted application contexts for the integration tests (IMP-M20-10). A boot costs
  * seconds and the ITs used to pay it in every {@code @BeforeEach}; {@link #run} instead returns the
  * context already booted for the same property overrides, and gives the caller the state a fresh
- * boot would have had: every table but Flyway's history emptied, Redis emptied of everything an
- * instance does not write about itself at boot, the bundle bucket emptied. The migrations seed no
- * rows (no {@code INSERT} in {@code db/migration}) and the JWT key set lives in memory, so a
- * truncated database is a first-boot database.
+ * boot would have had: every table but Flyway's history and ShedLock's locks emptied (the lock
+ * provider remembers which lock rows exist and silently skips a job whose row was deleted under it;
+ * a released lock is inert), Redis emptied of everything an instance does not write about itself at
+ * boot, the bundle bucket emptied. The migrations seed no rows (no {@code INSERT} in {@code
+ * db/migration}) and the JWT key set lives in memory, so a truncated database is a first-boot
+ * database.
  *
  * <p>At most one context is live at once. Contexts are keyed by their full argument list: classes
  * that pass the same overrides share a context, and a class that needs different overrides gets its
@@ -88,7 +90,7 @@ public final class SharedApplication {
       try (var rows =
           statement.executeQuery(
               "select tablename from pg_tables where schemaname = 'public'"
-                  + " and tablename <> 'flyway_schema_history'")) {
+                  + " and tablename not in ('flyway_schema_history', 'shedlock')")) {
         while (rows.next()) {
           tables.add("\"" + rows.getString(1) + "\"");
         }

@@ -34,6 +34,9 @@ import org.springframework.web.client.RestTemplate;
  * (rate-limiting.md § Configuration) — each test boots its own context with tiny, test-specific
  * overrides so the assertions are fast and deterministic, the same escape hatch {@code
  * local-environment.md} §8 describes for e2e, used here per-tier instead of wholesale.
+ *
+ * <p>Keeps its own boot: each test needs its own tiny rate-limit overrides and empty buckets, set
+ * at startup. (IMP-M20-10)
  */
 class RateLimitInterceptorIT extends PostgresIntegrationTest {
 

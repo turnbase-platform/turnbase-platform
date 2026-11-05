@@ -28,6 +28,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>Two full {@link TurnBaseApplication} contexts stand in for two Platform Monolith instances —
  * {@link PodIdentity} is a random-per-boot singleton, so two contexts naturally get two distinct
  * {@code podId}s sharing the same Postgres/Redis, exactly as two real pods would.
+ *
+ * <p>Keeps its own boot: it needs two live contexts at once (two pods), which the one-context cache
+ * never holds. (IMP-M20-10)
  */
 class RoomOwnershipServiceIT extends PostgresIntegrationTest {
 

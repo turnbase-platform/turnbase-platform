@@ -9,7 +9,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.SharedApplication;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import io.turnbase.platform.common.AuthenticatedUser;
 import io.turnbase.platform.game.GameInputService;
 import java.lang.reflect.InvocationHandler;
@@ -23,10 +25,8 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.BeanPostProcessor;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -38,18 +38,12 @@ import tools.jackson.databind.json.JsonMapper;
  * instance has already seen issues no Postgres statement, and anything that changes the room — a
  * mutation through the executor, a loss of ownership — sends the next move back to Postgres.
  */
+@UsesSharedApplication
 class MoveParticipantCacheIT extends PostgresIntegrationTest {
 
   private @Nullable ConfigurableApplicationContext context;
   private final GameInputService inputs = mock(GameInputService.class);
   private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void aMoveByACachedParticipantIssuesNoPostgresStatement() {
@@ -173,7 +167,7 @@ class MoveParticipantCacheIT extends PostgresIntegrationTest {
 
   private ConfigurableApplicationContext boot() {
     StatementCounter.STATEMENTS.clear();
-    return SpringApplication.run(
+    return SharedApplication.run(
         new Class<?>[] {TurnBaseApplication.class, StatementCounter.class},
         new String[] {
           "--server.port=0",

@@ -24,6 +24,9 @@ import org.springframework.web.client.RestTemplate;
  * actually go to {@code {gameId}.games.localhost} and {@code turnbase.localhost} (both resolve to
  * loopback per RFC 6761, exactly as the browser-facing design of §3 relies on), not a mocked Host
  * header, so this exercises the real {@code Host}-based virtual routing.
+ *
+ * <p>Keeps its own boot: its game-origin hosts and upload limits are set at startup and differ from
+ * every other class. (IMP-M20-10)
  */
 class GameAssetControllerIT extends PostgresIntegrationTest {
 

@@ -3,14 +3,13 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -20,16 +19,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * run in order on one schedule. {@code RoomOwnershipServiceIT} carries the adoption half
  * (`IMP-GATE-48`).
  */
+@UsesSharedApplication
 class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
 
   private @Nullable ConfigurableApplicationContext context;
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void aLobbyDisconnectIsAnImmediateLeaveWithNoReservation() {
@@ -266,8 +259,7 @@ class GraceDeadlineSweepJobIT extends PostgresIntegrationTest {
   }
 
   private static ConfigurableApplicationContext boot() {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
+    return SharedApplication.run(
         "--server.port=0",
         "--management.server.port=0",
         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),

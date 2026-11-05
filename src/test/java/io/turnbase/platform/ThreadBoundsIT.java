@@ -25,6 +25,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * {@code IMP-M16-10}: the pool settings of the running application, read from the real context —
  * Boot's scheduler, the two STOMP channel executors and the live Tomcat worker pool.
+ *
+ * <p>Keeps its own boot: it asserts the pools of a freshly started application, which a reused
+ * context would not show. (IMP-M20-10)
  */
 class ThreadBoundsIT extends PostgresIntegrationTest {
 

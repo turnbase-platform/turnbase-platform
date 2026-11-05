@@ -7,15 +7,14 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import io.turnbase.platform.common.RoomUnavailableRetryException;
 import java.util.Map;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -26,16 +25,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * no-event mutation never touches {@code room.version}, and a fenced commit failure evicts the room
  * rather than leaving this instance's dirty in-memory state in play.
  */
+@UsesSharedApplication
 class RoomEventExecutorIT extends PostgresIntegrationTest {
 
   private @Nullable ConfigurableApplicationContext context;
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void aMutationWithAnEventAssignsAndCommitsTheNextVersion() {
@@ -188,8 +181,7 @@ class RoomEventExecutorIT extends PostgresIntegrationTest {
   }
 
   private static ConfigurableApplicationContext boot() {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
+    return SharedApplication.run(
         "--server.port=0",
         "--management.server.port=0",
         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),

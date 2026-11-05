@@ -26,6 +26,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  * origin's route table covers (a plain {@code GET /}) is expected to fail two different ways — a
  * game origin 404s on anything outside {@code /play/}/{@code /g/} before authentication is even
  * considered, while the platform origin falls through to its ordinary "session required" 401.
+ *
+ * <p>Keeps its own boot: it runs the single-listener topology, and a reused context carries other
+ * tests' settings. (IMP-M20-10)
  */
 class SingleListenerOriginRoutingIT extends PostgresIntegrationTest {
 

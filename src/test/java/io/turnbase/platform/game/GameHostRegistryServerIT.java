@@ -17,7 +17,8 @@ import io.turnbase.grpc.gamehost.v1.RegisterRequest;
 import io.turnbase.grpc.gamehost.v1.RegisterResponse;
 import io.turnbase.grpc.gamehost.v1.ReportContextsRequest;
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
@@ -26,7 +27,6 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -36,6 +36,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * shape of {@code game-host-internals.md} §13 — exercised over a real socket by a real gRPC client,
  * including the bidirectional {@code Heartbeat} stream.
  */
+@UsesSharedApplication
 class GameHostRegistryServerIT extends PostgresIntegrationTest {
 
   private static ConfigurableApplicationContext context;
@@ -47,8 +48,7 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
   @BeforeAll
   static void boot() {
     context =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -71,7 +71,6 @@ class GameHostRegistryServerIT extends PostgresIntegrationTest {
   @AfterAll
   static void shutdown() {
     channel.shutdownNow();
-    context.close();
   }
 
   @Test

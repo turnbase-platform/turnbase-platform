@@ -3,7 +3,9 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.SharedApplication;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -15,10 +17,8 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.BeanPostProcessor;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -30,18 +30,12 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * and {@code migration_window_expires_at} set) and the released ones. The statements of several
  * consecutive ticks are counted at the datasource.
  */
+@UsesSharedApplication
 class SweepSelectsOnlyRoomsItCanChangeIT extends PostgresIntegrationTest {
 
   private static final int TICKS = 4;
 
   private @Nullable ConfigurableApplicationContext context;
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
 
   @Test
   void aRoomThatClosedInsideItsMigrationWindowIsNotReReadOnEveryTick() {
@@ -168,7 +162,7 @@ class SweepSelectsOnlyRoomsItCanChangeIT extends PostgresIntegrationTest {
 
   private ConfigurableApplicationContext boot() {
     StatementCounter.STATEMENTS.clear();
-    return SpringApplication.run(
+    return SharedApplication.run(
         new Class<?>[] {TurnBaseApplication.class, StatementCounter.class},
         new String[] {
           "--server.port=0",

@@ -17,7 +17,9 @@ import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.grpc.gamehost.v1.RegisterRequest;
 import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.SharedApplication;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -48,7 +50,6 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.BeanPostProcessor;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpEntity;
@@ -81,6 +82,7 @@ import tools.jackson.databind.json.JsonMapper;
  * those parameters: on a database that retains no history, and after 25,000 closed rooms (100,000
  * participants) have been seeded. Seeding is the only difference between the two runs.
  */
+@UsesSharedApplication
 class GamePathQueryCostIT extends PostgresIntegrationTest {
 
   private static final int CLOSED_ROOMS = 25_000;
@@ -101,9 +103,6 @@ class GamePathQueryCostIT extends PostgresIntegrationTest {
   @AfterEach
   void stopApplication() {
     StatementRecorder.recording = false;
-    if (context != null) {
-      context.close();
-    }
   }
 
   @Test
@@ -541,7 +540,7 @@ class GamePathQueryCostIT extends PostgresIntegrationTest {
   private void boot() {
     StatementRecorder.recording = false;
     ConfigurableApplicationContext booted =
-        SpringApplication.run(
+        SharedApplication.run(
             new Class<?>[] {TurnBaseApplication.class, StatementRecorder.class},
             new String[] {
               "--server.port=0",

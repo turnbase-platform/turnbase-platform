@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
  * Spring's test context machinery, so the datasource is passed as a command-line argument rather
  * than through {@code @ServiceConnection} — that annotation only wires a {@code TestContext}, which
  * this test does not create.
+ *
+ * <p>Keeps its own boot: boot behaviour is what it tests. (IMP-M20-10)
  */
 class TurnBaseApplicationIT extends PostgresIntegrationTest {
 

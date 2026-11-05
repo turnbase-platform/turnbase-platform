@@ -32,6 +32,9 @@ import tools.jackson.databind.json.JsonMapper;
  * and no real browser: this suite drives {@code /auth/google} to obtain a real signed {@code
  * state}, then calls {@code /auth/callback} directly with it, the same way a browser would after
  * Google's own redirect.
+ *
+ * <p>Keeps its own boot: the stub Google port is in the boot arguments, so no two runs share a key.
+ * (IMP-M20-10)
  */
 class OAuthControllerIT extends PostgresIntegrationTest {
 
