@@ -3030,8 +3030,8 @@ class RoomRepository {
 
   /**
    * Duty (b)'s health check, one query per page of sessions: of {@code sessionIds}, those still
-   * named as {@code active_session_id} by a non-closed room. The rest are orphaned (`room-
-   * lifecycle.md` §5.2 — "whose room no longer exists or is closed").
+   * named as {@code active_session_id} by a non-closed room. The rest are orphaned
+   * (`room-lifecycle.md` §5.2 — "whose room no longer exists or is closed").
    */
   Set<UUID> sessionsOfOpenRooms(Collection<UUID> sessionIds) {
     if (sessionIds.isEmpty()) {

@@ -51,7 +51,7 @@ public class LoginService {
     String skeleton = usernamePolicy.skeletonOfLoginIdentifier(canonicalIdentifier);
     String lowercasedEmail = canonicalIdentifier.toLowerCase(Locale.ROOT);
 
-    // FR-AUTH-005/input-validation.md: the stored hash was computed from the canonicalized
+    // FR-AUTH-005 (input-validation.md): the stored hash was computed from the canonicalized
     // password at registration, so verification must canonicalize the same way.
     String canonicalPassword = Canonicalizer.canonicalize(request.password());
 

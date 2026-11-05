@@ -45,7 +45,7 @@ class HostFailureReassignmentIT extends PostgresIntegrationTest {
 
   /**
    * The mode under test. The M18-12 measurement ran {@code lazy} and {@code eager} through this
-   * suite (report: {@code loadtest/reports/2026-10-29-m18-reassignment.md}); lazy won and eager's
+   * suite (report: {@code docs/reviews/2026-10-29-m18-reassignment/INDEX.md}); lazy won and eager's
    * code and switch were removed.
    */
   static final List<String> MODES = List.of("lazy");
@@ -523,7 +523,7 @@ class HostFailureReassignmentIT extends PostgresIntegrationTest {
                   o.grpcCalls(),
                   o.redis()));
     }
-    Path out = Path.of("target", "m18-reassignment-results.md");
+    Path out = Path.of("target/m18-reassignment-results.md");
     Files.createDirectories(out.getParent());
     Files.writeString(out, table.toString());
     System.out.println(table);

@@ -529,7 +529,7 @@ class GamePathQueryCostIT extends PostgresIntegrationTest {
                   before.millis(),
                   after.millis()));
     }
-    Path target = Path.of("target", "game-path-query-cost.md");
+    Path target = Path.of("target/game-path-query-cost.md");
     Files.createDirectories(target.getParent());
     Files.writeString(target, report.toString());
   }
