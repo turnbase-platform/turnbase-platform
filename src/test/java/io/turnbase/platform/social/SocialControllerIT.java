@@ -3,16 +3,15 @@ package io.turnbase.platform.social;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -31,6 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
  * block-without-disclosure rejections (FR-SOC-009/021), and the FR-SOC-017 {@code FRIENDS_ONLY}
  * obligation left by {@code IMP-M1-07}.
  */
+@UsesSharedApplication
 class SocialControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -47,8 +47,7 @@ class SocialControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     context =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -70,11 +69,6 @@ class SocialControllerIT extends PostgresIntegrationTest {
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     jdbcClient = context.getBean(JdbcClient.class);
-  }
-
-  @AfterEach
-  void stopApplication() {
-    context.close();
   }
 
   @Test

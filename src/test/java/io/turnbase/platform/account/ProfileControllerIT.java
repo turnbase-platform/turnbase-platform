@@ -3,16 +3,15 @@ package io.turnbase.platform.account;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -30,6 +29,7 @@ import tools.jackson.databind.json.JsonMapper;
  * owner exempt, the FR-ACCT-009 deleted placeholder, the FR-GUEST-010 empty guest profile, and the
  * FR-ACCT-002/003 rolling windows enforced against a stored timestamp.
  */
+@UsesSharedApplication
 class ProfileControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -46,8 +46,7 @@ class ProfileControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     context =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -69,11 +68,6 @@ class ProfileControllerIT extends PostgresIntegrationTest {
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     jdbcClient = context.getBean(JdbcClient.class);
-  }
-
-  @AfterEach
-  void stopApplication() {
-    context.close();
   }
 
   @Test

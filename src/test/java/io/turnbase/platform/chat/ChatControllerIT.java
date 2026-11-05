@@ -3,7 +3,8 @@ package io.turnbase.platform.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.lang.reflect.Type;
 import java.util.HashMap;
 import java.util.Map;
@@ -13,10 +14,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -43,6 +42,7 @@ import tools.jackson.databind.json.JsonMapper;
  * input-validation.md} 4 KB frame cap is enforced at the interceptor, ahead of any business
  * validation.
  */
+@UsesSharedApplication
 class ChatControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -55,8 +55,7 @@ class ChatControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     ConfigurableApplicationContext booted =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -74,13 +73,6 @@ class ChatControllerIT extends PostgresIntegrationTest {
     int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     wsUrl = "ws://127.0.0.1:" + port + "/ws";
-  }
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
   }
 
   @Test

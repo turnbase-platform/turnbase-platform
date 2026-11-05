@@ -31,6 +31,10 @@ import tools.jackson.databind.json.JsonMapper;
  * waiting out the real {@code guest-cleanup.interval} — {@code turnbase.retention.guest-account=0s}
  * makes a freshly-minted guest immediately eligible for the revoke phase, so no clock manipulation
  * is needed either.
+ *
+ * <p>Boots its own application per test, not via {@code SharedApplication} (IMP-M20-10): its
+ * retention is 0 s, so a long-lived context's own scheduled purge would delete the fixtures between
+ * a test's arrange and act steps.
  */
 class GuestPurgeJobIT extends PostgresIntegrationTest {
 

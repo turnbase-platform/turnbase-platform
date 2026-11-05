@@ -3,7 +3,8 @@ package io.turnbase.platform.history;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import io.turnbase.platform.game.GameOutcomeRecorder;
 import io.turnbase.platform.game.GameOutcomeReport;
 import io.turnbase.platform.game.SessionRoster;
@@ -13,10 +14,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -33,6 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code IMP-M5-01}: the recording transaction ({@code flows/06} §B–C) and {@code GET
  * /api/users/{username}/history} ({@code history-rest-api.md}).
  */
+@UsesSharedApplication
 class HistoryIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -62,8 +62,7 @@ class HistoryIT extends PostgresIntegrationTest {
   @BeforeEach
   void boot() {
     context =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -82,11 +81,6 @@ class HistoryIT extends PostgresIntegrationTest {
     baseUrl = "http://127.0.0.1:" + context.getEnvironment().getProperty("local.server.port");
     jdbc = context.getBean(JdbcClient.class);
     recorder = context.getBean(GameOutcomeRecorder.class);
-  }
-
-  @AfterEach
-  void stop() {
-    context.close();
   }
 
   @Test

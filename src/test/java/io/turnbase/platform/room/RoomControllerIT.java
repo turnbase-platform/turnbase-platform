@@ -3,7 +3,8 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -12,7 +13,6 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpEntity;
@@ -32,6 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
  * never a {@code 404} (clause 3); join is one endpoint by role and leave is the {@code DELETE}
  * (clause 4); a redirected claim that never resolves is a {@code 503} (clause 5).
  */
+@UsesSharedApplication
 class RoomControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -60,30 +61,37 @@ class RoomControllerIT extends PostgresIntegrationTest {
     if (secondContext != null) {
       secondContext.close();
     }
-    if (context != null) {
-      context.close();
-    }
   }
 
   private ConfigurableApplicationContext boot() {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
-        "--server.port=0",
-        "--management.server.port=0",
-        "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
-        "--spring.datasource.username=" + POSTGRES.getUsername(),
-        "--spring.datasource.password=" + POSTGRES.getPassword(),
-        "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
-        "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
-        "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
-        "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
-        "--turnbase.admin.username=admin",
-        "--turnbase.admin.password=admin",
-        "--turnbase.room.spectator-capacity=2",
-        "--spring.data.redis.url=" + redisUrl(),
-        "--turnbase.rate-limit.auth.failures-before-lockout=1000000",
-        "--turnbase.rate-limit.minting.guest.capacity=1000000",
-        "--turnbase.rate-limit.minting.registration.capacity=1000000");
+    return SharedApplication.run(bootArguments());
+  }
+
+  /** A second live instance beside the shared one, which the 503 test needs. */
+  private ConfigurableApplicationContext bootSecondInstance() {
+    return org.springframework.boot.SpringApplication.run(
+        io.turnbase.platform.TurnBaseApplication.class, bootArguments());
+  }
+
+  private String[] bootArguments() {
+    return new String[] {
+      "--server.port=0",
+      "--management.server.port=0",
+      "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+      "--spring.datasource.username=" + POSTGRES.getUsername(),
+      "--spring.datasource.password=" + POSTGRES.getPassword(),
+      "--turnbase.artifact-store.endpoint=" + MINIO.getS3URL(),
+      "--turnbase.artifact-store.bucket=" + ARTIFACT_BUCKET,
+      "--turnbase.artifact-store.access-key=" + MINIO.getUserName(),
+      "--turnbase.artifact-store.secret-key=" + MINIO.getPassword(),
+      "--turnbase.admin.username=admin",
+      "--turnbase.admin.password=admin",
+      "--turnbase.room.spectator-capacity=2",
+      "--spring.data.redis.url=" + redisUrl(),
+      "--turnbase.rate-limit.auth.failures-before-lockout=1000000",
+      "--turnbase.rate-limit.minting.guest.capacity=1000000",
+      "--turnbase.rate-limit.minting.registration.capacity=1000000"
+    };
   }
 
   @Test
@@ -896,7 +904,7 @@ class RoomControllerIT extends PostgresIntegrationTest {
     UUID gameId = seedTwoPlayerGame(true, true);
     UUID roomId = createPublicRoom(host, gameId);
 
-    ConfigurableApplicationContext bootedSecond = boot();
+    ConfigurableApplicationContext bootedSecond = bootSecondInstance();
     secondContext = bootedSecond;
     int secondPort =
         Integer.parseInt(bootedSecond.getEnvironment().getProperty("local.server.port"));

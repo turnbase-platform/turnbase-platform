@@ -6,7 +6,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import io.turnbase.platform.upload.TestBundles;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -17,11 +18,9 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -41,6 +40,7 @@ import tools.jackson.databind.json.JsonMapper;
  * row, approve/reject decide the one open review correctly, and every mutating route writes an
  * audit record (NFR-AUD-001).
  */
+@UsesSharedApplication
 class AdminApiControllerIT extends PostgresIntegrationTest {
 
   private static final String ADMIN_USERNAME = "admin";
@@ -61,8 +61,7 @@ class AdminApiControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     ConfigurableApplicationContext booted =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -86,13 +85,6 @@ class AdminApiControllerIT extends PostgresIntegrationTest {
     mainBaseUrl = "http://127.0.0.1:" + mainPort;
     adminBaseUrl = "http://127.0.0.1:" + managementPort;
     jdbcClient = booted.getBean(JdbcClient.class);
-  }
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
   }
 
   // ---------------------------------------------------------------- FR-ADM-001/002: listener +

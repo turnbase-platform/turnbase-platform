@@ -4,7 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
@@ -15,10 +16,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -48,6 +47,7 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code SUBSCRIBE} is silently dropped, not errored (clause 3, {@code websocket.md} §
  * Authorization).
  */
+@UsesSharedApplication
 class WebSocketIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -60,8 +60,7 @@ class WebSocketIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     ConfigurableApplicationContext booted =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -83,13 +82,6 @@ class WebSocketIT extends PostgresIntegrationTest {
     int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     wsUrl = "ws://127.0.0.1:" + port + "/ws";
-  }
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
   }
 
   @Test

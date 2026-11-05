@@ -3,7 +3,7 @@ package io.turnbase.platform.common;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -33,6 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
  * Done-when clause's own words: "an integration test asserts the exact response body for each error
  * class, including {@code room-unavailable-retry} and its {@code retryAfterMs} member."
  */
+@UsesSharedApplication
 class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
 
   private static final String PROBLEM_BASE = "https://turnbase.io/errors/";
@@ -53,8 +53,7 @@ class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     context =
-        org.springframework.boot.SpringApplication.run(
-            TurnBaseApplication.class,
+        io.turnbase.platform.SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -69,11 +68,6 @@ class GlobalExceptionHandlerIT extends PostgresIntegrationTest {
             "--spring.data.redis.url=" + redisUrl());
     int port = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port + "/test/errors";
-  }
-
-  @AfterEach
-  void stopApplication() {
-    context.close();
   }
 
   @Test

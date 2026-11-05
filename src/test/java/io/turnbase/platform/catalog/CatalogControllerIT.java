@@ -3,15 +3,14 @@ package io.turnbase.platform.catalog;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -31,6 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
  * carries exactly one badge from one column; the info doc is delivered as raw Markdown source,
  * never HTML.
  */
+@UsesSharedApplication
 class CatalogControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -53,16 +53,8 @@ class CatalogControllerIT extends PostgresIntegrationTest {
     jdbcClient = booted.getBean(JdbcClient.class);
   }
 
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
-  }
-
   private ConfigurableApplicationContext boot() {
-    return SpringApplication.run(
-        TurnBaseApplication.class,
+    return SharedApplication.run(
         "--server.port=0",
         "--management.server.port=0",
         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),

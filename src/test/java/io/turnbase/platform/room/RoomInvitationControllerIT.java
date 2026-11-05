@@ -3,15 +3,14 @@ package io.turnbase.platform.room;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -29,6 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
  * decline (self-scoped, idempotent), and acceptance via the ordinary join endpoint (resolves on
  * success, untouched on failure — {@code IMP-M2-12}'s own Done-when).
  */
+@UsesSharedApplication
 class RoomInvitationControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -45,8 +45,7 @@ class RoomInvitationControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     ConfigurableApplicationContext booted =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--management.server.port=0",
             "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
@@ -67,13 +66,6 @@ class RoomInvitationControllerIT extends PostgresIntegrationTest {
     int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     jdbcClient = booted.getBean(JdbcClient.class);
-  }
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
   }
 
   @Test

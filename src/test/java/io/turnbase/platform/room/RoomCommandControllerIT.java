@@ -15,7 +15,8 @@ import io.turnbase.grpc.gamehost.v1.ProcessResult;
 import io.turnbase.grpc.gamehost.v1.ProcessStatus;
 import io.turnbase.grpc.gamehost.v1.RegisterRequest;
 import io.turnbase.platform.PostgresIntegrationTest;
-import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.SharedApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
@@ -26,10 +27,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpEntity;
@@ -58,6 +57,7 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code ADD_AI_PLAYER}), and {@code IMP-M2-06}'s share ({@code KICK_PLAYER}, {@code
  * CHANGE_PARAMETERS}, {@code START_GAME}, {@code TRANSFER_HOST}).
  */
+@UsesSharedApplication
 class RoomCommandControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -70,8 +70,7 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     ConfigurableApplicationContext booted =
-        SpringApplication.run(
-            TurnBaseApplication.class,
+        SharedApplication.run(
             "--server.port=0",
             "--turnbase.orchestration.host-wait=0s",
             "--management.server.port=0",
@@ -91,13 +90,6 @@ class RoomCommandControllerIT extends PostgresIntegrationTest {
     int port = Integer.parseInt(booted.getEnvironment().getProperty("local.server.port"));
     baseUrl = "http://127.0.0.1:" + port;
     wsUrl = "ws://127.0.0.1:" + port + "/ws";
-  }
-
-  @AfterEach
-  void stopApplication() {
-    if (context != null) {
-      context.close();
-    }
   }
 
   @Test

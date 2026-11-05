@@ -6,7 +6,9 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.turnbase.platform.PostgresIntegrationTest;
+import io.turnbase.platform.SharedApplication;
 import io.turnbase.platform.TurnBaseApplication;
+import io.turnbase.platform.UsesSharedApplication;
 import io.turnbase.platform.session.SessionRevokedEvent;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,11 +16,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpEntity;
@@ -41,6 +41,7 @@ import tools.jackson.databind.json.JsonMapper;
  * displaced token, and {@code SessionRevokedEvent} publication. Also {@code IMP-M1-05}'s {@code
  * POST /guest}: a credential-free principal minted from one call, immediately authenticated.
  */
+@UsesSharedApplication
 class AuthControllerIT extends PostgresIntegrationTest {
 
   private final JsonMapper objectMapper = JsonMapper.builder().build();
@@ -60,7 +61,7 @@ class AuthControllerIT extends PostgresIntegrationTest {
   @BeforeEach
   void bootApplication() {
     context =
-        SpringApplication.run(
+        SharedApplication.run(
             new Class<?>[] {TurnBaseApplication.class, RecordingSessionRevokedEventListener.class},
             new String[] {
               "--server.port=0",
@@ -87,11 +88,6 @@ class AuthControllerIT extends PostgresIntegrationTest {
     baseUrl = "http://127.0.0.1:" + port + "/api/auth";
     jdbcClient = context.getBean(JdbcClient.class);
     revokedEvents = context.getBean(RecordingSessionRevokedEventListener.class);
-  }
-
-  @AfterEach
-  void stopApplication() {
-    context.close();
   }
 
   @Test

@@ -67,7 +67,17 @@ public abstract class PostgresIntegrationTest {
   }
 
   @BeforeAll
-  static void resetSharedState() throws Exception {
+  static void resetSharedState(org.junit.jupiter.api.TestInfo info) throws Exception {
+    boolean shares =
+        info.getTestClass()
+            .map(c -> c.isAnnotationPresent(UsesSharedApplication.class))
+            .orElse(false);
+    if (shares && SharedApplication.hasLiveContexts()) {
+      return; // SharedApplication.run resets the data before every test
+    }
+    // A class that boots by hand drops the schema, so contexts cached by SharedApplication would
+    // lose theirs; they are closed first and the next shared class boots again.
+    SharedApplication.closeAll();
     try (Connection connection =
             DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());

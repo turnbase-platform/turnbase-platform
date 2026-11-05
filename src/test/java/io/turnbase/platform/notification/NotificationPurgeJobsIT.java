@@ -16,6 +16,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 /**
  * FR-JOB-002 and FR-JOB-013 (IR-20): the generic sweep never removes an actionable notification,
  * and the expiry purge — by cascade — is what does.
+ *
+ * <p>Boots its own application per test, not via {@code SharedApplication} (IMP-M20-10): it drives
+ * purge jobs by hand, and a long-lived context's own scheduled run would race the fixtures between
+ * a test's arrange and act steps.
  */
 class NotificationPurgeJobsIT extends PostgresIntegrationTest {
 
