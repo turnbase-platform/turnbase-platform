@@ -85,25 +85,27 @@ jobs:
           path: target/site/jacoco/
           if-no-files-found: warn
 
-      - name: Trivy scan — dependencies (report)
-        # platform-operations.md FR-CICD-010: every finding is reported; only a critical one
-        # blocks the build (the next step).
+      - name: Trivy scan — dependencies
+        # One scan per target (IMP-M20-13): every severity lands in one JSON result, which is
+        # the report (summary below, artifact) and the gate (next step). platform-operations.md
+        # FR-CICD-010: all findings are reported, only a critical one blocks the build.
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln
-          severity: 'LOW,MEDIUM,HIGH,CRITICAL'
-          exit-code: '0'
+          severity: "LOW,MEDIUM,HIGH,CRITICAL"
+          format: json
+          output: trivy-deps.json
+          exit-code: "0"
 
-      - name: Trivy scan — dependencies (gate)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln
-          severity: CRITICAL
-          exit-code: '1'
+      - name: Trivy report and gate — dependencies
+        run: |
+          jq -r '[.Results[]? | .Target as $t | .Vulnerabilities[]? | {s: .Severity, t: $t, id: .VulnerabilityID, p: .PkgName, v: .InstalledVersion}]
+            | group_by(.s) | map("\(.[0].s): \(length)") | .[]' trivy-deps.json | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | select(.Severity=="CRITICAL")
+            | "CRITICAL \(.VulnerabilityID) \(.PkgName)@\(.InstalledVersion) (\($t))"' trivy-deps.json
+          test "$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-deps.json)" -eq 0
 
       - name: Build container image
         # The jar was already built by `./mvnw verify` above; the Dockerfile packages it
@@ -111,19 +113,25 @@ jobs:
         # turnbase-common (conventions.md §5 bootstrap window, IMP-GATE-07).
         run: docker build -t turnbase/platform:ci .
 
-      - name: Trivy scan — image (report)
+      - name: Trivy scan — image
+        # One scan per target (IMP-M20-13): every severity lands in one JSON result, which is
+        # the report (summary below, artifact) and the gate (next step). platform-operations.md
+        # FR-CICD-010: all findings are reported, only a critical one blocks the build.
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: turnbase/platform:ci
-          severity: 'LOW,MEDIUM,HIGH,CRITICAL'
-          exit-code: '0'
+          severity: "LOW,MEDIUM,HIGH,CRITICAL"
+          format: json
+          output: trivy-image.json
+          exit-code: "0"
 
-      - name: Trivy scan — image (gate)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: turnbase/platform:ci
-          severity: CRITICAL
-          exit-code: '1'
+      - name: Trivy report and gate — image
+        run: |
+          jq -r '[.Results[]? | .Target as $t | .Vulnerabilities[]? | {s: .Severity, t: $t, id: .VulnerabilityID, p: .PkgName, v: .InstalledVersion}]
+            | group_by(.s) | map("\(.[0].s): \(length)") | .[]' trivy-image.json | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | select(.Severity=="CRITICAL")
+            | "CRITICAL \(.VulnerabilityID) \(.PkgName)@\(.InstalledVersion) (\($t))"' trivy-image.json
+          test "$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-image.json)" -eq 0
 
       - name: Log in to GHCR
         if: github.event_name == 'push'
