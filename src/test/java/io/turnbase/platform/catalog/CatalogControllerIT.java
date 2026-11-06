@@ -169,6 +169,34 @@ class CatalogControllerIT extends PostgresIntegrationTest {
   }
 
   @Test
+  void detailCarriesTheActiveManifestsCreditsAndNullForAnOriginalGame() throws Exception {
+    UUID original = seedGame(null, "OFFICIAL", true, "Chess", null);
+    assertThat(parse(get("/api/games/" + original))).containsEntry("credits", null);
+
+    UUID based = seedGame(null, "OFFICIAL", true, "Duel", null);
+    jdbcClient
+        .sql("update game_version set manifest = cast(:m as jsonb) where game_id = :g")
+        .param(
+            "m",
+            """
+            {"title":"Duel","credits":{"designers":["Antoine Bauza","Bruno Cathala"],
+             "artists":["Miguel Coimbra"],"publisher":"Repos Production","year":2015}}
+            """)
+        .param("g", based)
+        .update();
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> credits =
+        (Map<String, Object>) parse(get("/api/games/" + based)).get("credits");
+
+    assertThat(credits)
+        .containsEntry("designers", List.of("Antoine Bauza", "Bruno Cathala"))
+        .containsEntry("artists", List.of("Miguel Coimbra"))
+        .containsEntry("publisher", "Repos Production")
+        .containsEntry("year", 2015);
+  }
+
+  @Test
   void detailOfAnUnknownGameIs404() {
     ResponseEntity<String> response = get("/api/games/" + UUID.randomUUID());
 

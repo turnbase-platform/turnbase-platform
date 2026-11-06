@@ -9,10 +9,13 @@ import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.json.JsonMapper;
 
 /** {@code catalog-rest-api.md} §3, §4. */
 @Service
 class CatalogService {
+
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final CatalogRepository repository;
 
@@ -64,6 +67,7 @@ class CatalogService {
         row.supportsAi(),
         row.supportsSpectators(),
         tags,
+        row.creditsJson() == null ? null : JSON.readTree(row.creditsJson()),
         row.version(),
         row.badge(),
         activePlayerCount,

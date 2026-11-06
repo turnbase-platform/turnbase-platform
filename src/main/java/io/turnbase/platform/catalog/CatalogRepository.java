@@ -48,7 +48,8 @@ class CatalogRepository {
   private static final String DETAIL_SELECT =
       "select "
           + CATALOG_COLUMNS
-          + ", g.info_doc_markdown, g.completed_session_count "
+          + ", g.info_doc_markdown, g.completed_session_count,"
+          + " (gv.manifest -> 'credits')::text as credits_json "
           + CATALOG_FROM;
 
   /** {@code catalog-rest-api.md} §3. */
@@ -259,6 +260,7 @@ class CatalogRepository {
         rs.getString("author_username"),
         rs.getString("short_description"),
         rs.getString("info_doc_markdown"),
+        rs.getString("credits_json"),
         rs.getLong("completed_session_count"),
         rs.getInt("min_players"),
         rs.getInt("max_players"),
@@ -282,6 +284,7 @@ class CatalogRepository {
       String authorUsername,
       String shortDescription,
       @Nullable String infoDocMarkdown,
+      @Nullable String creditsJson,
       long completedSessionCount,
       int minPlayers,
       int maxPlayers,
