@@ -45,11 +45,11 @@ class ParticipantCacheTest {
     when(ownership.epochOf(roomId)).thenAnswer(i -> owned ? Optional.of(epoch) : Optional.empty());
   }
 
-  private Optional<RoomRepository.ActingParticipant> uncached(UUID user) {
+  private Optional<RoomRecords.ActingParticipant> uncached(UUID user) {
     return database(sessionId).flatMap(v -> v.actingParticipant(user));
   }
 
-  private Optional<RoomRepository.ActingParticipant> cached(UUID user) {
+  private Optional<RoomRecords.ActingParticipant> cached(UUID user) {
     return cache.viewOf(sessionId, this::database).flatMap(v -> v.actingParticipant(user));
   }
 

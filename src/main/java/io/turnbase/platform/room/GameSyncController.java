@@ -33,13 +33,18 @@ class GameSyncController {
 
   private static final Logger log = LoggerFactory.getLogger(GameSyncController.class);
 
-  private final RoomRepository repository;
+  private final RoomGameStartRepository gameStart;
+  private final RoomOutboxRepository outbox;
   private final GameSyncService sync;
   private final SimpMessagingTemplate messagingTemplate;
 
   GameSyncController(
-      RoomRepository repository, GameSyncService sync, SimpMessagingTemplate messagingTemplate) {
-    this.repository = repository;
+      RoomGameStartRepository gameStart,
+      RoomOutboxRepository outbox,
+      GameSyncService sync,
+      SimpMessagingTemplate messagingTemplate) {
+    this.gameStart = gameStart;
+    this.outbox = outbox;
     this.sync = sync;
     this.messagingTemplate = messagingTemplate;
   }
@@ -57,9 +62,9 @@ class GameSyncController {
       error(principal, sessionId, envelope, "UNKNOWN_COMMAND");
       return;
     }
-    RoomRepository.ActingParticipant actor =
-        repository.actingParticipant(sessionId, user.userId()).orElse(null);
-    UUID roomId = actor == null ? null : repository.inProgressRoomOf(sessionId).orElse(null);
+    RoomRecords.ActingParticipant actor =
+        outbox.actingParticipant(sessionId, user.userId()).orElse(null);
+    UUID roomId = actor == null ? null : outbox.inProgressRoomOf(sessionId).orElse(null);
     if (actor == null || roomId == null) {
       error(principal, sessionId, envelope, "NOT_MEMBER");
       return;
@@ -94,7 +99,7 @@ class GameSyncController {
 
   /** {@code frontend-gdk-api.md} §5's {@code InitContext}, in the GDK's {@code Player} shape. */
   private Map<String, Object> init(UUID sessionId, UUID roomId, boolean player, UUID userId) {
-    GameSessionService.CreateSessionCommand command = repository.sessionCommand(roomId, sessionId);
+    GameSessionService.CreateSessionCommand command = gameStart.sessionCommand(roomId, sessionId);
     List<Map<String, Object>> roster = new ArrayList<>();
     List<Map<String, Object>> teams = new ArrayList<>();
     @Nullable Map<String, Object> self = null;

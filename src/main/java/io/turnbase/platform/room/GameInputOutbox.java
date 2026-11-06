@@ -19,10 +19,10 @@ class GameInputOutbox {
 
   private static final Logger log = LoggerFactory.getLogger(GameInputOutbox.class);
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final GameInputDispatcher dispatcher;
 
-  GameInputOutbox(RoomRepository repository, GameInputDispatcher dispatcher) {
+  GameInputOutbox(RoomOutboxRepository repository, GameInputDispatcher dispatcher) {
     this.repository = repository;
     this.dispatcher = dispatcher;
   }
@@ -32,9 +32,9 @@ class GameInputOutbox {
    * sweep's to retry. A row the teardown discarded in the meantime is simply not found.
    */
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-  void onPlayerLeftQueued(RoomRepository.PlayerLeftQueued event) {
+  void onPlayerLeftQueued(RoomRecords.PlayerLeftQueued event) {
     try {
-      for (RoomRepository.OutboxRow row : repository.pendingOutboxRows(event.sessionId())) {
+      for (RoomRecords.OutboxRow row : repository.pendingOutboxRows(event.sessionId())) {
         drainOne(row);
       }
     } catch (RuntimeException e) {
@@ -45,7 +45,7 @@ class GameInputOutbox {
     }
   }
 
-  void drainOne(RoomRepository.OutboxRow row) {
+  void drainOne(RoomRecords.OutboxRow row) {
     // data-model.md §4.2: allocated once from the session's `seq:` counter, persisted, reused on
     // every retry.
     long sequence =

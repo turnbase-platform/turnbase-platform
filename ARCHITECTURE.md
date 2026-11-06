@@ -37,7 +37,7 @@ fails that check, so fix the map in the same change.
 
 ### Room create and join
 
-1. `RoomController.create` → `RoomService.create` → `RoomRepository` (room, participant and outbox rows).
+1. `RoomController.create` → `RoomService.create` → `RoomRepository` (room, participant and outbox rows; the room package splits its SQL by concern: `RoomRepository` create/join/leave and member commands, `RoomHostCommandRepository`, `RoomGameStartRepository`, `RoomReadRepository`, `RoomPresenceRepository`, `RoomOutboxRepository`; shared value types in `RoomRecords`).
 2. `RoomController.join` → `RoomService.join`; invite codes via `RoomService.resolveInviteCode` and `InviteCodeGenerator`.
 3. The client subscribes; `RoomSubscriptionAuthorizer` (via `SubscriptionAuthorizer`) admits it and `RoomStateSnapshot` carries the state.
 4. Member and host commands arrive on `RoomMemberCommandController` / `RoomHostCommandController`; `RoomService.toggleReady`, `RoomService.startGame` act on them; failures go out through `RoomCommandErrorSender`.

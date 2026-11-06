@@ -23,11 +23,11 @@ class GameInputDispatcherImpl implements GameInputDispatcher {
   private static final Logger log = LoggerFactory.getLogger(GameInputDispatcherImpl.class);
 
   private final GameInputService inputs;
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final JsonMapper objectMapper;
 
   GameInputDispatcherImpl(
-      GameInputService inputs, RoomRepository repository, JsonMapper objectMapper) {
+      GameInputService inputs, RoomOutboxRepository repository, JsonMapper objectMapper) {
     this.inputs = inputs;
     this.repository = repository;
     this.objectMapper = objectMapper;

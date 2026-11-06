@@ -25,7 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 class GameActionControllerTest {
 
   private final JsonMapper mapper = JsonMapper.builder().build();
-  private final RoomRepository repository = mock(RoomRepository.class);
+  private final RoomOutboxRepository repository = mock(RoomOutboxRepository.class);
   private final GameInputService inputs = mock(GameInputService.class);
   private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
   private final ParticipantCache participants =

@@ -70,7 +70,8 @@ class ReconciliationJob {
 
   private static final int ROOM_KEY_PREFIX_LENGTH = "room:".length();
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository outbox;
+  private final RoomPresenceRepository presence;
   private final RoomOwnershipService ownership;
   private final RoomSessionDetacher detacher;
   private final SessionTerminator terminator;
@@ -81,7 +82,8 @@ class ReconciliationJob {
   private final ReconciliationMetrics metrics;
 
   ReconciliationJob(
-      RoomRepository repository,
+      RoomOutboxRepository outbox,
+      RoomPresenceRepository presence,
       RoomOwnershipService ownership,
       RoomSessionDetacher detacher,
       SessionTerminator terminator,
@@ -90,7 +92,8 @@ class ReconciliationJob {
       JobsProperties jobsProperties,
       RoomProperties roomProperties,
       ReconciliationMetrics metrics) {
-    this.repository = repository;
+    this.outbox = outbox;
+    this.presence = presence;
     this.ownership = ownership;
     this.detacher = detacher;
     this.terminator = terminator;
@@ -152,14 +155,14 @@ class ReconciliationJob {
   // ---------------------------------------------------------------------
 
   private void driveOwedTeardowns() {
-    List<RoomRepository.DueTeardown> due = repository.dueSessionTeardowns(TEARDOWN_BATCH);
+    List<RoomRecords.DueTeardown> due = outbox.dueSessionTeardowns(TEARDOWN_BATCH);
     metrics.setCandidates("a", due.size());
-    for (RoomRepository.DueTeardown teardown : due) {
+    for (RoomRecords.DueTeardown teardown : due) {
       terminator.terminateAndCleanup(teardown.sessionId(), teardown.reason());
       metrics.recordRepair("a", "retried");
     }
     metrics.setTeardownOwed(
-        repository.countSessionTeardownOwed(), repository.oldestSessionTeardownAgeSeconds());
+        outbox.countSessionTeardownOwed(), outbox.oldestSessionTeardownAgeSeconds());
   }
 
   // ---------------------------------------------------------------------
@@ -220,8 +223,8 @@ class ReconciliationJob {
     if (page.isEmpty()) {
       return;
     }
-    Set<UUID> live = repository.sessionsOfOpenRooms(page);
-    Map<UUID, Instant> flagged = repository.orphanedSessionFirstObservedAt(page);
+    Set<UUID> live = outbox.sessionsOfOpenRooms(page);
+    Map<UUID, Instant> flagged = outbox.orphanedSessionFirstObservedAt(page);
     List<UUID> toFlag = new ArrayList<>();
     List<UUID> toDelete = new ArrayList<>();
     List<UUID> toClear = new ArrayList<>();
@@ -243,7 +246,7 @@ class ReconciliationJob {
         toDelete.add(sessionId);
       }
     }
-    repository.flagOrphanedSessionsIfAbsent(toFlag);
+    outbox.flagOrphanedSessionsIfAbsent(toFlag);
     if (!toDelete.isEmpty()) {
       deleteSessionKeyFamilies(toDelete);
       toClear.addAll(toDelete);
@@ -255,7 +258,7 @@ class ReconciliationJob {
         }
       }
     }
-    repository.clearOrphanedSessionFlags(toClear);
+    outbox.clearOrphanedSessionFlags(toClear);
   }
 
   private void deleteSessionKeyFamilies(List<UUID> sessionIds) {
@@ -273,10 +276,10 @@ class ReconciliationJob {
   // ---------------------------------------------------------------------
 
   private void reconcileInProgressWithoutSession(boolean suppressed, boolean massLoss) {
-    List<RoomRepository.RoomSessionPair> candidates = new ArrayList<>();
-    List<RoomRepository.RoomSessionPair> inProgress = repository.inProgressRoomsWithSession();
+    List<RoomRecords.RoomSessionPair> candidates = new ArrayList<>();
+    List<RoomRecords.RoomSessionPair> inProgress = outbox.inProgressRoomsWithSession();
     for (int from = 0; from < inProgress.size(); from += SESSION_BATCH) {
-      List<RoomRepository.RoomSessionPair> page =
+      List<RoomRecords.RoomSessionPair> page =
           inProgress.subList(from, Math.min(from + SESSION_BATCH, inProgress.size()));
       // room-lifecycle.md §5.2: "No Game Host probe. The session record is the source of truth."
       List<Boolean> present = sessionRecordsPresent(page);
@@ -288,21 +291,21 @@ class ReconciliationJob {
           candidates.add(page.get(i));
         }
       }
-      repository.clearRoomReconcileFlags(healthy);
+      outbox.clearRoomReconcileFlags(healthy);
     }
     metrics.setCandidates("c", candidates.size());
     metrics.setInProgressWithoutSession(candidates.size());
     if (suppressed) {
       return;
     }
-    for (RoomRepository.RoomSessionPair pair : candidates) {
-      if (repository.roomReconcileFlaggedAt(pair.roomId()).isEmpty()) {
-        repository.flagRoomForReconcileIfAbsent(pair.roomId());
+    for (RoomRecords.RoomSessionPair pair : candidates) {
+      if (outbox.roomReconcileFlaggedAt(pair.roomId()).isEmpty()) {
+        outbox.flagRoomForReconcileIfAbsent(pair.roomId());
         metrics.recordRepair("c", "detected");
         continue;
       }
       detacher.detach(pair.roomId(), pair.sessionId(), "SESSION_STATE_LOST", "LOBBY");
-      repository.clearRoomReconcileFlag(pair.roomId());
+      outbox.clearRoomReconcileFlag(pair.roomId());
       metrics.recordRepair("c", "repaired");
       if (!massLoss) {
         log.warn(
@@ -315,14 +318,14 @@ class ReconciliationJob {
 
   /** One pipelined {@code EXISTS} round trip for a page of {@code session:<id>} records. */
   @SuppressWarnings("NullAway") // executePipelined requires the callback to return null
-  private List<Boolean> sessionRecordsPresent(List<RoomRepository.RoomSessionPair> page) {
+  private List<Boolean> sessionRecordsPresent(List<RoomRecords.RoomSessionPair> page) {
     List<Object> replies =
         metrics.recordRedis(
             () ->
                 redis.executePipelined(
                     (RedisCallback<Object>)
                         connection -> {
-                          for (RoomRepository.RoomSessionPair pair : page) {
+                          for (RoomRecords.RoomSessionPair pair : page) {
                             connection
                                 .keyCommands()
                                 .exists(("session:" + pair.sessionId()).getBytes(UTF_8));
@@ -342,19 +345,19 @@ class ReconciliationJob {
   // ---------------------------------------------------------------------
 
   private void reconcileIdleLobby(boolean suppressed, boolean massLoss) {
-    List<UUID> candidates = repository.idleLobbyRoomIds(roomProperties.idleWindow());
+    List<UUID> candidates = outbox.idleLobbyRoomIds(roomProperties.idleWindow());
     metrics.setCandidates("d", candidates.size());
     if (suppressed) {
       return;
     }
     for (UUID roomId : candidates) {
-      if (repository.roomReconcileFlaggedAt(roomId).isEmpty()) {
-        repository.flagRoomForReconcileIfAbsent(roomId);
+      if (outbox.roomReconcileFlaggedAt(roomId).isEmpty()) {
+        outbox.flagRoomForReconcileIfAbsent(roomId);
         metrics.recordRepair("d", "detected");
         continue;
       }
-      detacher.detach(roomId, repository.activeSessionId(roomId), "IDLE_TIMEOUT", "CLOSED");
-      repository.clearRoomReconcileFlag(roomId);
+      detacher.detach(roomId, presence.activeSessionId(roomId), "IDLE_TIMEOUT", "CLOSED");
+      outbox.clearRoomReconcileFlag(roomId);
       metrics.recordRepair("d", "repaired");
       if (!massLoss) {
         log.warn("reconciliation duty (d): idle Lobby room {} closed (IDLE_TIMEOUT)", roomId);
@@ -369,12 +372,12 @@ class ReconciliationJob {
 
   private void adoptUnownedRooms() {
     List<String> deadOwners = new ArrayList<>();
-    for (String instanceId : repository.distinctLiveOwnerInstanceIds()) {
+    for (String instanceId : outbox.distinctLiveOwnerInstanceIds()) {
       if (!ownership.isInstanceAlive(instanceId)) {
         deadOwners.add(instanceId);
       }
     }
-    List<UUID> candidates = repository.unownedRoomIds(deadOwners);
+    List<UUID> candidates = outbox.unownedRoomIds(deadOwners);
     metrics.setCandidates("e", candidates.size());
     for (UUID roomId : candidates) {
       RoomOwnershipService.ClaimOutcome outcome = ownership.claim(roomId);
@@ -434,7 +437,7 @@ class ReconciliationJob {
     if (batch.isEmpty()) {
       return new long[] {0, 0};
     }
-    Set<UUID> open = repository.openRoomIds(batch.keySet());
+    Set<UUID> open = outbox.openRoomIds(batch.keySet());
     List<String> orphaned = new ArrayList<>();
     batch.forEach(
         (roomId, key) -> {

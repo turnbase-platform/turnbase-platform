@@ -25,13 +25,14 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
  */
 class RoomSubscriptionAuthorizerTest {
 
-  private final RoomRepository repository = mock(RoomRepository.class);
+  private final RoomRepository rooms = mock(RoomRepository.class);
+  private final RoomPresenceRepository presence = mock(RoomPresenceRepository.class);
   private final RoomOwnershipService ownership = mock(RoomOwnershipService.class);
   private final WebSocketConnectionRegistry connectionRegistry =
       mock(WebSocketConnectionRegistry.class);
   private final RoomService roomService = mock(RoomService.class);
   private final RoomSubscriptionAuthorizer authorizer =
-      new RoomSubscriptionAuthorizer(repository, ownership, connectionRegistry, roomService);
+      new RoomSubscriptionAuthorizer(presence, rooms, ownership, connectionRegistry, roomService);
 
   private final AuthenticatedUser user =
       new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID());
@@ -48,7 +49,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void aNonMemberIsSilentlyDropped() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(false);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(false);
 
     SubscriptionDecision decision =
         authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -59,7 +60,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void aMemberOnAPodThatOwnsTheRoomIsAllowed() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
 
@@ -72,7 +73,7 @@ class RoomSubscriptionAuthorizerTest {
   /** {@code IMP-M2-08}, {@code room-lifecycle.md} §3.2: first subscribe resolves any reconnect. */
   @Test
   void aMembersSubscribeResolvesTheReconnectExactlyOnce() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
 
@@ -87,8 +88,8 @@ class RoomSubscriptionAuthorizerTest {
   /** {@code IMP-GATE-51}, {@code reconnection-flow.md} FR-REJOIN-007. */
   @Test
   void aCallerWhoLostTheRaceToItsOwnGraceExpiryReceivesSlotReleased() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(false);
-    when(repository.lostRaceToOwnExpiry(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(false);
+    when(presence.lostRaceToOwnExpiry(roomId, user.userId())).thenReturn(true);
 
     SubscriptionDecision decision =
         authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -103,7 +104,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void aMemberOnAPodThatDoesNotOwnTheRoomIsToldToRetry() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.Redirect("some-other-pod"));
 
@@ -117,7 +118,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void roomOwnershipLostClosesExactlyTheSessionsTrackedForThatRoom() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -138,7 +139,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void aSessionDisconnectStopsTrackingThatSessionAgainstFutureOwnershipLoss() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -151,7 +152,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void aGenuineSessionDisconnectFeedsTheDisconnectHandler() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -163,7 +164,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void anInstanceInitiatedCloseNeverReachesTheDisconnectHandler() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -182,7 +183,7 @@ class RoomSubscriptionAuthorizerTest {
    */
   @Test
   void aDisconnectedSessionLeavesNoRoomBehind() {
-    when(repository.isCurrentParticipant(any(), any())).thenReturn(true);
+    when(rooms.isCurrentParticipant(any(), any())).thenReturn(true);
     when(ownership.claimWithRetry(any()))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     for (int i = 0; i < 50; i++) {
@@ -201,7 +202,7 @@ class RoomSubscriptionAuthorizerTest {
 
   @Test
   void aRoomKeepsItsOtherSessionsWhenOneDisconnects() {
-    when(repository.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
+    when(rooms.isCurrentParticipant(roomId, user.userId())).thenReturn(true);
     when(ownership.claimWithRetry(roomId))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");
@@ -220,7 +221,7 @@ class RoomSubscriptionAuthorizerTest {
   @Test
   void aSessionSubscribedToTwoRoomsIsForgottenInBoth() {
     UUID other = UUID.randomUUID();
-    when(repository.isCurrentParticipant(any(), any())).thenReturn(true);
+    when(rooms.isCurrentParticipant(any(), any())).thenReturn(true);
     when(ownership.claimWithRetry(any()))
         .thenReturn(new RoomOwnershipService.ClaimOutcome.AlreadyMine(1L));
     authorizer.authorize(user, "/topic/room." + roomId, "stomp-session-1");

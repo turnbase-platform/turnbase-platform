@@ -28,10 +28,12 @@ import tools.jackson.databind.json.JsonMapper;
 class GameSyncControllerTest {
 
   private final JsonMapper mapper = JsonMapper.builder().build();
-  private final RoomRepository repository = mock(RoomRepository.class);
+  private final RoomOutboxRepository outbox = mock(RoomOutboxRepository.class);
+  private final RoomGameStartRepository gameStart = mock(RoomGameStartRepository.class);
   private final GameSyncService sync = mock(GameSyncService.class);
   private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
-  private final GameSyncController controller = new GameSyncController(repository, sync, messaging);
+  private final GameSyncController controller =
+      new GameSyncController(gameStart, outbox, sync, messaging);
 
   private final UUID sessionId = UUID.randomUUID();
   private final UUID roomId = UUID.randomUUID();
@@ -55,10 +57,10 @@ class GameSyncControllerTest {
 
   private void member(String role, @Nullable UUID team) {
     when(principal.userId()).thenReturn(userId);
-    when(repository.actingParticipant(sessionId, userId))
-        .thenReturn(Optional.of(new RoomRepository.ActingParticipant(role, team, "bob")));
-    when(repository.inProgressRoomOf(sessionId)).thenReturn(Optional.of(roomId));
-    when(repository.sessionCommand(roomId, sessionId))
+    when(outbox.actingParticipant(sessionId, userId))
+        .thenReturn(Optional.of(new RoomRecords.ActingParticipant(role, team, "bob")));
+    when(outbox.inProgressRoomOf(sessionId)).thenReturn(Optional.of(roomId));
+    when(gameStart.sessionCommand(roomId, sessionId))
         .thenReturn(
             new GameSessionService.CreateSessionCommand(
                 sessionId,
@@ -118,7 +120,7 @@ class GameSyncControllerTest {
   @Test
   void nonMemberIsToldNotMemberAndNothingIsDispatched() {
     when(principal.userId()).thenReturn(userId);
-    when(repository.actingParticipant(sessionId, userId)).thenReturn(Optional.empty());
+    when(outbox.actingParticipant(sessionId, userId)).thenReturn(Optional.empty());
 
     controller.handle(sessionId, envelope, principal);
 

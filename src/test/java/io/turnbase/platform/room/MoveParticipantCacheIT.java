@@ -124,7 +124,7 @@ class MoveParticipantCacheIT extends PostgresIntegrationTest {
 
   private GameActionController controller() {
     return new GameActionController(
-        ctx().getBean(RoomRepository.class),
+        ctx().getBean(RoomOutboxRepository.class),
         ctx().getBean(ParticipantCache.class),
         inputs,
         messaging,

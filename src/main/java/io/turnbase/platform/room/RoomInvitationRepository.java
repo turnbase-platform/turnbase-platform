@@ -21,7 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
  * room_invitation}). Direct SQL against {@code app_user}, {@code friendship} and {@code
  * notification} — tables owned by {@code account}, {@code social} and {@code notification}
  * respectively — follows {@code social.SocialRepository}'s precedent, already established in this
- * exact package by {@code RoomRepository#isVisible}'s direct {@code friendship} read.
+ * exact package by {@code RoomReadRepository#isVisible}'s direct {@code friendship} read.
  */
 @Repository
 class RoomInvitationRepository {

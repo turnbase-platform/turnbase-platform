@@ -17,10 +17,10 @@ class SessionTerminatorImpl implements SessionTerminator {
 
   private static final Logger log = LoggerFactory.getLogger(SessionTerminatorImpl.class);
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final SessionTerminationClient client;
 
-  SessionTerminatorImpl(RoomRepository repository, SessionTerminationClient client) {
+  SessionTerminatorImpl(RoomOutboxRepository repository, SessionTerminationClient client) {
     this.repository = repository;
     this.client = client;
   }

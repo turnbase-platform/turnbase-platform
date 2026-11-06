@@ -93,7 +93,7 @@ class SweepSelectsOnlyRoomsItCanChangeIT extends PostgresIntegrationTest {
         .param("userId", waiting)
         .update();
     setElapsedMigrationWindow(roomId);
-    RoomRepository repository = ctx().getBean(RoomRepository.class);
+    RoomPresenceRepository repository = ctx().getBean(RoomPresenceRepository.class);
     String pod = ctx().getBean(PodIdentity.class).id();
     assertThat(repository.dueGraceReservations(pod)).hasSize(1);
     assertThat(repository.deferredTails(pod)).hasSize(1);

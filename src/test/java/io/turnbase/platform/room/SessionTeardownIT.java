@@ -230,7 +230,7 @@ class SessionTeardownIT extends PostgresIntegrationTest {
 
     System.out.println(
         "DBG "
-            + context.getBean(RoomRepository.class).roomOfActiveSession(sessionId)
+            + context.getBean(RoomOutboxRepository.class).roomOfActiveSession(sessionId)
             + " "
             + context.getBean(RoomOwnershipService.class).claim(roomId));
     // By type, not by interface: GameInputServiceIT's recording listener is @Primary and is

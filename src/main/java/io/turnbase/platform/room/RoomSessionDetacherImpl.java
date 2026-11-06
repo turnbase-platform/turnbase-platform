@@ -10,9 +10,9 @@ import org.springframework.stereotype.Component;
 /**
  * {@code room-lifecycle.md} §4's real {@code detachSession} — replaces {@code
  * PendingRoomSessionDetacher} ({@code IMP-GATE-49}). Step 0's claim runs here; steps 1-6 are {@link
- * RoomRepository#detachSession}, run inside {@link RoomEventExecutor}'s lock and transaction so the
- * fenced commit and publish reuse the same machinery every other room mutation already uses; steps
- * 7-8 (broadcast, best-effort teardown) follow after the commit returns.
+ * RoomPresenceRepository#detachSession}, run inside {@link RoomEventExecutor}'s lock and
+ * transaction so the fenced commit and publish reuse the same machinery every other room mutation
+ * already uses; steps 7-8 (broadcast, best-effort teardown) follow after the commit returns.
  */
 @Component
 class RoomSessionDetacherImpl implements RoomSessionDetacher {
@@ -21,13 +21,13 @@ class RoomSessionDetacherImpl implements RoomSessionDetacher {
 
   private final RoomOwnershipService ownership;
   private final RoomEventExecutor events;
-  private final RoomRepository repository;
+  private final RoomPresenceRepository repository;
   private final SessionTerminator terminator;
 
   RoomSessionDetacherImpl(
       RoomOwnershipService ownership,
       RoomEventExecutor events,
-      RoomRepository repository,
+      RoomPresenceRepository repository,
       SessionTerminator terminator) {
     this.ownership = ownership;
     this.events = events;
@@ -47,20 +47,20 @@ class RoomSessionDetacherImpl implements RoomSessionDetacher {
       // — the owning instance evaluates closure again on its own next tick.
       return;
     }
-    RoomRepository.DetachOutcome result;
+    RoomRecords.DetachOutcome result;
     try {
       result =
           events.execute(
               roomId,
               () -> {
-                RoomRepository.DetachOutcome outcome2 =
+                RoomRecords.DetachOutcome outcome2 =
                     repository.detachSession(roomId, sessionId, reason, nextState);
                 RoomEventExecutor.RoomEvent event = null;
                 if (outcome2.detached()) {
                   if ("CLOSED".equals(nextState)) {
                     event =
                         new RoomEventExecutor.RoomEvent(
-                            "ROOM_CLOSED", new RoomRepository.RoomClosedPayload(reason));
+                            "ROOM_CLOSED", new RoomRecords.RoomClosedPayload(reason));
                   } else if ("LOBBY".equals(nextState)) {
                     // FR-JOB-007c (IMP-GATE-55): the only caller today that fails back to Lobby
                     // rather than closing. room-lifecycle.md §5.2's "clean keys, reset readiness,
@@ -71,14 +71,14 @@ class RoomSessionDetacherImpl implements RoomSessionDetacher {
                       repository.resetReadiness(roomId);
                       event =
                           new RoomEventExecutor.RoomEvent(
-                              "GAME_ENDED", new RoomRepository.GameEndedPayload(roomId, true));
+                              "GAME_ENDED", new RoomRecords.GameEndedPayload(roomId, true));
                     } else {
                       // FR-XFER-002: nobody is left to play in the room the game returned to.
                       repository.detachSession(roomId, null, "NO_PLAYERS_REMAINING", "CLOSED");
                       event =
                           new RoomEventExecutor.RoomEvent(
                               "ROOM_CLOSED",
-                              new RoomRepository.RoomClosedPayload("NO_PLAYERS_REMAINING"));
+                              new RoomRecords.RoomClosedPayload("NO_PLAYERS_REMAINING"));
                     }
                   }
                 }

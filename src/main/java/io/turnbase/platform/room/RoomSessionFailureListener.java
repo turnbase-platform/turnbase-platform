@@ -17,12 +17,12 @@ import org.springframework.stereotype.Component;
 @Component
 class RoomSessionFailureListener implements SessionFailureListener {
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final RoomSessionDetacher detacher;
   private final SimpMessagingTemplate messagingTemplate;
 
   RoomSessionFailureListener(
-      RoomRepository repository,
+      RoomOutboxRepository repository,
       RoomSessionDetacher detacher,
       SimpMessagingTemplate messagingTemplate) {
     this.repository = repository;

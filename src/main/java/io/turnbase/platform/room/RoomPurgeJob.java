@@ -19,10 +19,10 @@ class RoomPurgeJob {
 
   private static final Logger log = LoggerFactory.getLogger(RoomPurgeJob.class);
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final RetentionProperties retentionProperties;
 
-  RoomPurgeJob(RoomRepository repository, RetentionProperties retentionProperties) {
+  RoomPurgeJob(RoomOutboxRepository repository, RetentionProperties retentionProperties) {
     this.repository = repository;
     this.retentionProperties = retentionProperties;
   }

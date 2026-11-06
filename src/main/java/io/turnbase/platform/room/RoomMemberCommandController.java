@@ -89,7 +89,7 @@ class RoomMemberCommandController {
 
   /** {@code room-websocket.md} § Snapshot Delivery — unicast, not broadcast. */
   private void sendRoomState(UUID roomId, Principal principal, UUID userId) {
-    RoomRepository.RoomStateSnapshotWithVersion snapshot = roomService.roomState(roomId, userId);
+    RoomRecords.RoomStateSnapshotWithVersion snapshot = roomService.roomState(roomId, userId);
     messagingTemplate.convertAndSendToUser(
         principal.getName(),
         "/queue/room-state",

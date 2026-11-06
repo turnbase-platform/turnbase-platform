@@ -12,10 +12,10 @@ import org.springframework.stereotype.Component;
 @Component
 class RoomGameEndListener implements GameEndListener {
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final RoomSessionDetacher detacher;
 
-  RoomGameEndListener(RoomRepository repository, RoomSessionDetacher detacher) {
+  RoomGameEndListener(RoomOutboxRepository repository, RoomSessionDetacher detacher) {
     this.repository = repository;
     this.detacher = detacher;
   }

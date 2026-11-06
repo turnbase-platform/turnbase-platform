@@ -17,15 +17,15 @@ record SessionRoomView(UUID roomId, UUID sessionId, String state, List<Member> m
 
   /**
    * The acting player of {@code SUBMIT_ACTION}: a current participant of a room that is {@code
-   * IN_PROGRESS}. The same answer {@code RoomRepository#actingParticipant} gives.
+   * IN_PROGRESS}. The same answer {@code RoomOutboxRepository#actingParticipant} gives.
    */
-  Optional<RoomRepository.ActingParticipant> actingParticipant(UUID userId) {
+  Optional<RoomRecords.ActingParticipant> actingParticipant(UUID userId) {
     if (!"IN_PROGRESS".equals(state)) {
       return Optional.empty();
     }
     return members.stream()
         .filter(m -> m.userId().equals(userId))
         .findFirst()
-        .map(m -> new RoomRepository.ActingParticipant(m.role(), m.teamId(), m.username()));
+        .map(m -> new RoomRecords.ActingParticipant(m.role(), m.teamId(), m.username()));
   }
 }

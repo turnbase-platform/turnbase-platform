@@ -237,7 +237,7 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
   void aRoomThatReachesClosedLeavesTheOwnedSetOnceItsTransactionCommits() {
     instanceA = boot();
     RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
-    RoomRepository repository = instanceA.getBean(RoomRepository.class);
+    RoomPresenceRepository repository = instanceA.getBean(RoomPresenceRepository.class);
     TransactionTemplate transaction =
         new TransactionTemplate(
             instanceA.getBean(org.springframework.transaction.PlatformTransactionManager.class));
@@ -272,7 +272,7 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
   void aClosedRoomsOwnershipKeysAreDeletedOnceItsTransactionCommits_IMP_M16_08() {
     instanceA = boot();
     RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
-    RoomRepository repository = instanceA.getBean(RoomRepository.class);
+    RoomPresenceRepository repository = instanceA.getBean(RoomPresenceRepository.class);
     StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
     TransactionTemplate transaction =
         new TransactionTemplate(
@@ -310,7 +310,7 @@ class RoomOwnershipServiceIT extends PostgresIntegrationTest {
   void closingARoomLeavesAClaimKeyThatNamesAnotherInstanceAlone_IMP_M16_08() {
     instanceA = boot();
     RoomOwnershipService ownershipA = instanceA.getBean(RoomOwnershipService.class);
-    RoomRepository repository = instanceA.getBean(RoomRepository.class);
+    RoomPresenceRepository repository = instanceA.getBean(RoomPresenceRepository.class);
     StringRedisTemplate redis = instanceA.getBean(StringRedisTemplate.class);
     UUID roomId = insertRoom(instanceA);
     ownershipA.claim(roomId);

@@ -14,10 +14,10 @@ import org.springframework.stereotype.Component;
 @Component
 class RoomSessionRosterSource implements SessionRosterSource {
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final ParticipantCache participants;
 
-  RoomSessionRosterSource(RoomRepository repository, ParticipantCache participants) {
+  RoomSessionRosterSource(RoomOutboxRepository repository, ParticipantCache participants) {
     this.repository = repository;
     this.participants = participants;
   }

@@ -24,19 +24,22 @@ class GraceDeadlineSweepJob {
   /** No document names a batch size for the drain; a reasoned default, not a measurement. */
   private static final int OUTBOX_DRAIN_BATCH = 100;
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository outboxRows;
+  private final RoomPresenceRepository presence;
   private final RoomEventExecutor events;
   private final PodIdentity pod;
   private final RoomSessionDetacher detacher;
   private final GameInputOutbox outbox;
 
   GraceDeadlineSweepJob(
-      RoomRepository repository,
+      RoomOutboxRepository outboxRows,
+      RoomPresenceRepository presence,
       RoomEventExecutor events,
       PodIdentity pod,
       RoomSessionDetacher detacher,
       GameInputOutbox outbox) {
-    this.repository = repository;
+    this.outboxRows = outboxRows;
+    this.presence = presence;
     this.events = events;
     this.pod = pod;
     this.detacher = detacher;
@@ -55,25 +58,25 @@ class GraceDeadlineSweepJob {
   // ---------------------------------------------------------------------
 
   private void dueExpiries() {
-    for (RoomRepository.DueReservation due : repository.dueGraceReservations(pod.id())) {
+    for (RoomRecords.DueReservation due : presence.dueGraceReservations(pod.id())) {
       resolveOne(due);
     }
   }
 
-  private void resolveOne(RoomRepository.DueReservation due) {
-    Optional<RoomRepository.PlayerLostPayload> lost;
+  private void resolveOne(RoomRecords.DueReservation due) {
+    Optional<RoomRecords.PlayerLostPayload> lost;
     try {
       lost =
           events.execute(
               due.roomId(),
               () -> {
-                Optional<RoomRepository.ResolvedReservation> resolved =
-                    repository.resolveExpiredReservation(due);
-                RoomRepository.PlayerLostPayload payload =
+                Optional<RoomRecords.ResolvedReservation> resolved =
+                    presence.resolveExpiredReservation(due);
+                RoomRecords.PlayerLostPayload payload =
                     resolved
                         .map(
                             r ->
-                                new RoomRepository.PlayerLostPayload(
+                                new RoomRecords.PlayerLostPayload(
                                     due.userId(), r.teamId(), "GRACE_PERIOD_EXPIRED"))
                         .orElse(null);
                 RoomEventExecutor.RoomEvent event =
@@ -100,10 +103,10 @@ class GraceDeadlineSweepJob {
   }
 
   private void evaluateClosureIfNoHumanRemains(UUID roomId, String closedReason) {
-    if (repository.anyHumanRemains(roomId)) {
+    if (presence.anyHumanRemains(roomId)) {
       return;
     }
-    UUID sessionId = repository.activeSessionId(roomId);
+    UUID sessionId = presence.activeSessionId(roomId);
     detacher.detach(roomId, sessionId, closedReason, "CLOSED");
   }
 
@@ -112,24 +115,24 @@ class GraceDeadlineSweepJob {
   // ---------------------------------------------------------------------
 
   private void deferredTails() {
-    for (RoomRepository.DeferredTail tail : repository.deferredTails(pod.id())) {
+    for (RoomRecords.DeferredTail tail : presence.deferredTails(pod.id())) {
       announceOne(tail);
     }
   }
 
-  private void announceOne(RoomRepository.DeferredTail tail) {
+  private void announceOne(RoomRecords.DeferredTail tail) {
     boolean announced;
     try {
       announced =
           events.execute(
               tail.roomId(),
               () -> {
-                boolean won = repository.announceDeferredTail(tail.roomId(), tail.userId());
+                boolean won = presence.announceDeferredTail(tail.roomId(), tail.userId());
                 RoomEventExecutor.RoomEvent event =
                     won
                         ? new RoomEventExecutor.RoomEvent(
                             "PLAYER_LOST",
-                            new RoomRepository.PlayerLostPayload(
+                            new RoomRecords.PlayerLostPayload(
                                 tail.userId(), tail.teamId(), "GRACE_PERIOD_EXPIRED"))
                         : null;
                 return new RoomEventExecutor.MutationOutcome<>(won, event);
@@ -154,11 +157,11 @@ class GraceDeadlineSweepJob {
    * carry, which this item leaves as a known simplification rather than inventing a wire event no
    * document specifies.
    */
-  private void applyHostDispositionIfNeeded(RoomRepository.DeferredTail tail) {
+  private void applyHostDispositionIfNeeded(RoomRecords.DeferredTail tail) {
     if (!tail.userId().equals(tail.hostUserId())) {
       return;
     }
-    Optional<UUID> nextHuman = repository.nextConnectedHumanExcluding(tail.roomId(), tail.userId());
+    Optional<UUID> nextHuman = presence.nextConnectedHumanExcluding(tail.roomId(), tail.userId());
     if (nextHuman.isEmpty()) {
       return;
     }
@@ -166,8 +169,8 @@ class GraceDeadlineSweepJob {
       events.execute(
           tail.roomId(),
           () -> {
-            RoomRepository.HostTransferredPayload payload =
-                repository.transferHostAutomatically(
+            RoomRecords.HostTransferredPayload payload =
+                presence.transferHostAutomatically(
                     tail.roomId(), nextHuman.get(), tail.userId(), "HOST_LEFT");
             return new RoomEventExecutor.MutationOutcome<>(
                 payload, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
@@ -182,28 +185,26 @@ class GraceDeadlineSweepJob {
   // ---------------------------------------------------------------------
 
   private void elapsedMigrationWindows() {
-    for (UUID roomId : repository.elapsedMigrationWindowRoomIds(pod.id())) {
+    for (UUID roomId : presence.elapsedMigrationWindowRoomIds(pod.id())) {
       closeMigrationWindow(roomId);
     }
   }
 
   private void closeMigrationWindow(UUID roomId) {
-    @Nullable UUID hostUserId = repository.hostUserIdOf(roomId);
-    boolean hostConnected = hostUserId != null && repository.isConnected(roomId, hostUserId);
+    @Nullable UUID hostUserId = presence.hostUserIdOf(roomId);
+    boolean hostConnected = hostUserId != null && presence.isConnected(roomId, hostUserId);
     Optional<UUID> nextHuman =
-        hostConnected
-            ? Optional.empty()
-            : repository.nextConnectedHumanExcluding(roomId, hostUserId);
+        hostConnected ? Optional.empty() : presence.nextConnectedHumanExcluding(roomId, hostUserId);
     try {
       events.execute(
           roomId,
           () -> {
-            repository.clearMigrationWindow(roomId);
+            presence.clearMigrationWindow(roomId);
             if (nextHuman.isEmpty()) {
               return new RoomEventExecutor.MutationOutcome<>(Boolean.FALSE, null);
             }
-            RoomRepository.HostTransferredPayload payload =
-                repository.transferHostAutomatically(
+            RoomRecords.HostTransferredPayload payload =
+                presence.transferHostAutomatically(
                     roomId, nextHuman.get(), hostUserId, "HOST_DISCONNECTED");
             return new RoomEventExecutor.MutationOutcome<>(
                 Boolean.TRUE, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
@@ -219,7 +220,7 @@ class GraceDeadlineSweepJob {
   // ---------------------------------------------------------------------
 
   private void drainOutbox() {
-    for (RoomRepository.OutboxRow row : repository.pendingOutboxRows(OUTBOX_DRAIN_BATCH)) {
+    for (RoomRecords.OutboxRow row : outboxRows.pendingOutboxRows(OUTBOX_DRAIN_BATCH)) {
       outbox.drainOne(row);
     }
   }

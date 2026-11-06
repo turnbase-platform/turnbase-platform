@@ -50,7 +50,8 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
   /** Matches {@code room-rest-api.md} §7's REST value — same protocol, same retry budget. */
   private static final long RETRY_AFTER_MS = 2000;
 
-  private final RoomRepository repository;
+  private final RoomPresenceRepository presence;
+  private final RoomRepository rooms;
   private final RoomOwnershipService ownership;
   private final WebSocketConnectionRegistry connectionRegistry;
   private final RoomService roomService;
@@ -65,11 +66,13 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
   private final Map<String, Set<UUID>> roomsBySession = new ConcurrentHashMap<>();
 
   RoomSubscriptionAuthorizer(
-      RoomRepository repository,
+      RoomPresenceRepository presence,
+      RoomRepository rooms,
       RoomOwnershipService ownership,
       WebSocketConnectionRegistry connectionRegistry,
       RoomService roomService) {
-    this.repository = repository;
+    this.presence = presence;
+    this.rooms = rooms;
     this.ownership = ownership;
     this.connectionRegistry = connectionRegistry;
     this.roomService = roomService;
@@ -95,11 +98,11 @@ class RoomSubscriptionAuthorizer implements SubscriptionAuthorizer {
     } catch (IllegalArgumentException e) {
       return new SubscriptionDecision.SilentlyDrop();
     }
-    if (!repository.isCurrentParticipant(roomId, user.userId())) {
+    if (!rooms.isCurrentParticipant(roomId, user.userId())) {
       // IMP-GATE-51: a caller who lost the race to their own grace expiry is told plainly
       // (FR-REJOIN-007) rather than left to read silence as "room not found." Every other
       // non-member — a stranger, or an intentional past departure — stays a silent drop.
-      if (repository.lostRaceToOwnExpiry(roomId, user.userId())) {
+      if (presence.lostRaceToOwnExpiry(roomId, user.userId())) {
         return new SubscriptionDecision.RejectWithError(
             "SLOT_RELEASED",
             "Your reservation expired before you reconnected. Rejoin as a new participant.",

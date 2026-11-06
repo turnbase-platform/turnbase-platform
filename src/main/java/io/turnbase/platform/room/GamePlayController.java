@@ -24,13 +24,13 @@ import org.springframework.web.util.HtmlUtils;
 @RestController
 class GamePlayController {
 
-  private final RoomRepository repository;
+  private final RoomGameStartRepository repository;
   private final GameOriginMatcher originMatcher;
   private final GameResponseHeaders gameResponseHeaders;
   private final PlatformOriginProperties platformOrigin;
 
   GamePlayController(
-      RoomRepository repository,
+      RoomGameStartRepository repository,
       GameOriginMatcher originMatcher,
       GameResponseHeaders gameResponseHeaders,
       PlatformOriginProperties platformOrigin) {
@@ -43,7 +43,7 @@ class GamePlayController {
   @GetMapping("/play/{sessionId}")
   ResponseEntity<byte[]> play(
       @PathVariable UUID sessionId, @RequestHeader(HttpHeaders.HOST) String host) {
-    RoomRepository.PlayTarget target =
+    RoomRecords.PlayTarget target =
         repository
             .playTarget(sessionId)
             .filter(t -> originMatcher.hostServesGame(host, t.gameId().toString()))

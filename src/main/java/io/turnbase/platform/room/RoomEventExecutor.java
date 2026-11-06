@@ -220,20 +220,20 @@ class RoomEventExecutor {
     String reason = null;
     Object sessionId = null;
     switch (event.payload()) {
-      case RoomRepository.PlayerJoinedPayload p -> userId = p.playerId();
-      case RoomRepository.PlayerLeftPayload p -> userId = p.playerId();
-      case RoomRepository.PlayerDisconnectedPayload p -> userId = p.playerId();
-      case RoomRepository.PlayerReconnectedPayload p -> userId = p.playerId();
-      case RoomRepository.PlayerKickedPayload p -> userId = p.playerId();
-      case RoomRepository.PlayerLostPayload p -> {
+      case RoomRecords.PlayerJoinedPayload p -> userId = p.playerId();
+      case RoomRecords.PlayerLeftPayload p -> userId = p.playerId();
+      case RoomRecords.PlayerDisconnectedPayload p -> userId = p.playerId();
+      case RoomRecords.PlayerReconnectedPayload p -> userId = p.playerId();
+      case RoomRecords.PlayerKickedPayload p -> userId = p.playerId();
+      case RoomRecords.PlayerLostPayload p -> {
         userId = p.playerId();
         reason = p.reason();
       }
-      case RoomRepository.HostTransferredPayload p -> {
+      case RoomRecords.HostTransferredPayload p -> {
         userId = p.newHostId();
         reason = p.reason();
       }
-      case RoomRepository.RoomClosedPayload p -> reason = p.reason();
+      case RoomRecords.RoomClosedPayload p -> reason = p.reason();
       case Map<?, ?> m -> sessionId = m.get("sessionId");
       default -> {}
     }

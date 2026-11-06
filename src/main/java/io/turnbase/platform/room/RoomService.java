@@ -36,7 +36,11 @@ class RoomService {
   /** {@code room-rest-api.md} §7's own worked example: {@code Retry-After: 2}, {@code 2000}ms. */
   private static final long RETRY_AFTER_MS = 2000;
 
-  private final RoomRepository repository;
+  private final RoomGameStartRepository gameStart;
+  private final RoomHostCommandRepository hostCommands;
+  private final RoomPresenceRepository presence;
+  private final RoomReadRepository reads;
+  private final RoomRepository rooms;
   private final RoomOwnershipService ownership;
   private final RoomEventExecutor events;
   private final PodIdentity pod;
@@ -63,7 +67,11 @@ class RoomService {
   }
 
   RoomService(
-      RoomRepository repository,
+      RoomGameStartRepository gameStart,
+      RoomHostCommandRepository hostCommands,
+      RoomPresenceRepository presence,
+      RoomReadRepository reads,
+      RoomRepository rooms,
       RoomOwnershipService ownership,
       RoomEventExecutor events,
       PodIdentity pod,
@@ -73,7 +81,11 @@ class RoomService {
       SessionTerminator terminator,
       AlertPublisher alertPublisher,
       RoomStartStatusPublisher startStatus) {
-    this.repository = repository;
+    this.gameStart = gameStart;
+    this.hostCommands = hostCommands;
+    this.presence = presence;
+    this.reads = reads;
+    this.rooms = rooms;
     this.ownership = ownership;
     this.events = events;
     this.pod = pod;
@@ -87,14 +99,14 @@ class RoomService {
 
   /** {@code room-rest-api.md} §2. */
   ClaimedResult<RoomResponse> create(UUID creatorId, CreateRoomRequest request) {
-    RoomRepository.CreatableGame game =
-        repository
+    RoomRecords.CreatableGame game =
+        rooms
             .findCreatableGame(request.gameId(), creatorId)
             .orElseThrow(() -> new NotFoundException("No such game."));
     if (request.spectatingRequested() && !game.supportsSpectators()) {
       throw new BusinessRuleException("This game does not support spectating.");
     }
-    RoomRepository.CreatedRoom created = repository.createRoom(creatorId, request, game);
+    RoomRecords.CreatedRoom created = rooms.createRoom(creatorId, request, game);
     UUID roomId = created.roomId();
     LifecycleLog.info(
         log, "Room created", "roomId", roomId, "userId", creatorId, "gameId", request.gameId());
@@ -112,15 +124,14 @@ class RoomService {
       UUID userId, UUID roomId, JoinRoomRequest request, @Nullable String inviteCode) {
     // IMP-M10-03: deny before the claim writes any Redis key; the locked re-check below stays
     // authoritative.
-    repository.precheckJoin(
-        userId, roomId, request.role(), inviteCode, properties.spectatorCapacity());
+    rooms.precheckJoin(userId, roomId, request.role(), inviteCode, properties.spectatorCapacity());
     String header = claimAndGetInstanceHeader(roomId);
-    RoomRepository.JoinOutcome outcome =
+    RoomRecords.JoinOutcome outcome =
         events.execute(
             roomId,
             () -> {
-              RoomRepository.JoinOutcome joinOutcome =
-                  repository.joinRoom(
+              RoomRecords.JoinOutcome joinOutcome =
+                  rooms.joinRoom(
                       userId, roomId, request.role(), inviteCode, properties.spectatorCapacity());
               RoomEventExecutor.RoomEvent event =
                   joinOutcome
@@ -162,13 +173,12 @@ class RoomService {
         outcome instanceof RoomOwnershipService.ClaimOutcome.AlreadyMine
             || outcome instanceof RoomOwnershipService.ClaimOutcome.Adopted;
     if (!owned) {
-      repository.leaveRoom(userId, roomId, false);
+      rooms.leaveRoom(userId, roomId, false);
       return;
     }
     Departure departure =
         events.execute(
-            roomId,
-            () -> settleDeparture(roomId, userId, repository.leaveRoom(userId, roomId, true)));
+            roomId, () -> settleDeparture(roomId, userId, rooms.leaveRoom(userId, roomId, true)));
     afterDeparture(roomId, userId, departure);
   }
 
@@ -184,22 +194,22 @@ class RoomService {
    * lock.
    */
   private RoomEventExecutor.MutationOutcome<Departure> settleDeparture(
-      UUID roomId, UUID userId, Optional<RoomRepository.PlayerLeftPayload> left) {
+      UUID roomId, UUID userId, Optional<RoomRecords.PlayerLeftPayload> left) {
     if (left.isEmpty()) {
       return new RoomEventExecutor.MutationOutcome<>(new Departure(null, false), null);
     }
-    boolean wasHost = userId.equals(repository.hostUserIdOf(roomId));
+    boolean wasHost = userId.equals(presence.hostUserIdOf(roomId));
     // The last human closes the room whoever they are: when leaves race, the host's departure
     // (which found players behind it) is committed before the others', so the last one out is no
     // longer the host.
     boolean wasPlayer = "PLAYER".equals(left.get().role());
-    if ((wasHost || wasPlayer) && !repository.anyHumanRemains(roomId)) {
-      UUID sessionId = repository.activeSessionId(roomId);
-      repository.detachSession(roomId, sessionId, "NO_PLAYERS_REMAINING", "CLOSED");
+    if ((wasHost || wasPlayer) && !presence.anyHumanRemains(roomId)) {
+      UUID sessionId = presence.activeSessionId(roomId);
+      presence.detachSession(roomId, sessionId, "NO_PLAYERS_REMAINING", "CLOSED");
       return new RoomEventExecutor.MutationOutcome<>(
           new Departure(sessionId, false),
           new RoomEventExecutor.RoomEvent(
-              "ROOM_CLOSED", new RoomRepository.RoomClosedPayload("NO_PLAYERS_REMAINING")));
+              "ROOM_CLOSED", new RoomRecords.RoomClosedPayload("NO_PLAYERS_REMAINING")));
     }
     return new RoomEventExecutor.MutationOutcome<>(
         new Departure(null, wasHost), new RoomEventExecutor.RoomEvent("PLAYER_LEFT", left.get()));
@@ -217,13 +227,12 @@ class RoomService {
       events.execute(
           roomId,
           () -> {
-            Optional<UUID> next = repository.nextHumanPlayer(roomId);
+            Optional<UUID> next = presence.nextHumanPlayer(roomId);
             if (next.isEmpty() || next.get().equals(departedUserId)) {
               return new RoomEventExecutor.MutationOutcome<>(Boolean.FALSE, null);
             }
-            RoomRepository.HostTransferredPayload payload =
-                repository.transferHostAutomatically(
-                    roomId, next.get(), departedUserId, "HOST_LEFT");
+            RoomRecords.HostTransferredPayload payload =
+                presence.transferHostAutomatically(roomId, next.get(), departedUserId, "HOST_LEFT");
             return new RoomEventExecutor.MutationOutcome<>(
                 Boolean.TRUE, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
           });
@@ -255,7 +264,7 @@ class RoomService {
               oldRoomId,
               () ->
                   settleDeparture(
-                      oldRoomId, userId, repository.announceReleasedDeparture(oldRoomId, userId)));
+                      oldRoomId, userId, presence.announceReleasedDeparture(oldRoomId, userId)));
       afterDeparture(oldRoomId, userId, departure);
     } catch (RoomUnavailableRetryException e) {
       // Ownership moved; the deferred-tail duty still owns the announcement.
@@ -275,28 +284,28 @@ class RoomService {
    * new owner's adoption (`IMP-GATE-48`) or its own sweep picks the participant up.
    */
   void onDisconnect(UUID roomId, UUID userId) {
-    RoomRepository.DisconnectOutcome outcome;
+    RoomRecords.DisconnectOutcome outcome;
     Departure departure = new Departure(null, false);
     try {
-      record Result(RoomRepository.DisconnectOutcome outcome, Departure departure) {}
+      record Result(RoomRecords.DisconnectOutcome outcome, Departure departure) {}
       Result result =
           events.execute(
               roomId,
               () -> {
-                RoomRepository.DisconnectOutcome o =
-                    repository.registerDisconnect(roomId, userId, properties.gracePeriod());
+                RoomRecords.DisconnectOutcome o =
+                    presence.registerDisconnect(roomId, userId, properties.gracePeriod());
                 return switch (o) {
-                  case RoomRepository.DisconnectOutcome.StillConnected ignored ->
+                  case RoomRecords.DisconnectOutcome.StillConnected ignored ->
                       new RoomEventExecutor.MutationOutcome<>(
                           new Result(o, new Departure(null, false)), null);
-                  case RoomRepository.DisconnectOutcome.LeftImmediately left -> {
+                  case RoomRecords.DisconnectOutcome.LeftImmediately left -> {
                     // FR-DC-002: a Lobby disconnect is an immediate leave, so FR-XFER-001/002
                     // apply exactly as they do to an explicit one.
                     var settled = settleDeparture(roomId, userId, Optional.of(left.payload()));
                     yield new RoomEventExecutor.MutationOutcome<>(
                         new Result(o, settled.value()), settled.event());
                   }
-                  case RoomRepository.DisconnectOutcome.GraceOpened opened ->
+                  case RoomRecords.DisconnectOutcome.GraceOpened opened ->
                       new RoomEventExecutor.MutationOutcome<>(
                           new Result(o, new Departure(null, false)),
                           new RoomEventExecutor.RoomEvent("PLAYER_DISCONNECTED", opened.payload()));
@@ -308,8 +317,7 @@ class RoomService {
       return;
     }
     afterDeparture(roomId, userId, departure);
-    if (outcome instanceof RoomRepository.DisconnectOutcome.GraceOpened opened
-        && opened.wasHost()) {
+    if (outcome instanceof RoomRecords.DisconnectOutcome.GraceOpened opened && opened.wasHost()) {
       transferHostOnDisconnect(roomId, userId);
     }
   }
@@ -321,10 +329,10 @@ class RoomService {
    * skipped with no other human connected (FR-HDISC-003 defers it to the grace period instead).
    */
   private void transferHostOnDisconnect(UUID roomId, UUID disconnectedHostId) {
-    if (repository.migrationWindowOpen(roomId)) {
+    if (presence.migrationWindowOpen(roomId)) {
       return;
     }
-    Optional<UUID> nextHuman = repository.nextConnectedHumanExcluding(roomId, disconnectedHostId);
+    Optional<UUID> nextHuman = presence.nextConnectedHumanExcluding(roomId, disconnectedHostId);
     if (nextHuman.isEmpty()) {
       return;
     }
@@ -332,8 +340,8 @@ class RoomService {
       events.execute(
           roomId,
           () -> {
-            RoomRepository.HostTransferredPayload payload =
-                repository.transferHostAutomatically(
+            RoomRecords.HostTransferredPayload payload =
+                presence.transferHostAutomatically(
                     roomId, nextHuman.get(), disconnectedHostId, "HOST_DISCONNECTED");
             return new RoomEventExecutor.MutationOutcome<>(
                 payload, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
@@ -360,12 +368,12 @@ class RoomService {
       events.execute(
           roomId,
           () -> {
-            RoomRepository.ReconnectOutcome outcome = repository.resolveConnect(roomId, userId);
+            RoomRecords.ReconnectOutcome outcome = presence.resolveConnect(roomId, userId);
             RoomEventExecutor.RoomEvent event =
                 switch (outcome) {
-                  case RoomRepository.ReconnectOutcome.Reconnected reconnected ->
+                  case RoomRecords.ReconnectOutcome.Reconnected reconnected ->
                       new RoomEventExecutor.RoomEvent("PLAYER_RECONNECTED", reconnected.payload());
-                  case RoomRepository.ReconnectOutcome.OrdinaryConnect ignored -> null;
+                  case RoomRecords.ReconnectOutcome.OrdinaryConnect ignored -> null;
                 };
             return new RoomEventExecutor.MutationOutcome<>(outcome, event);
           });
@@ -381,62 +389,60 @@ class RoomService {
   // ROOM_UNAVAILABLE_RETRY rather than a silent write.
   // ---------------------------------------------------------------------
 
-  RoomRepository.ReadinessChangedPayload toggleReady(UUID roomId, UUID userId, boolean ready) {
+  RoomRecords.ReadinessChangedPayload toggleReady(UUID roomId, UUID userId, boolean ready) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.ReadinessChangedPayload payload =
-              repository.toggleReady(roomId, userId, ready);
+          RoomRecords.ReadinessChangedPayload payload = rooms.toggleReady(roomId, userId, ready);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("READINESS_CHANGED", payload));
         });
   }
 
-  RoomRepository.PlayerRoleChangedPayload switchToSpectator(UUID roomId, UUID userId) {
+  RoomRecords.PlayerRoleChangedPayload switchToSpectator(UUID roomId, UUID userId) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.PlayerRoleChangedPayload payload =
-              repository.switchToSpectator(roomId, userId, properties.spectatorCapacity());
+          RoomRecords.PlayerRoleChangedPayload payload =
+              rooms.switchToSpectator(roomId, userId, properties.spectatorCapacity());
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("PLAYER_ROLE_CHANGED", payload));
         });
   }
 
-  RoomRepository.PlayerRoleChangedPayload switchToPlayer(UUID roomId, UUID userId) {
+  RoomRecords.PlayerRoleChangedPayload switchToPlayer(UUID roomId, UUID userId) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.PlayerRoleChangedPayload payload =
-              repository.switchToPlayer(roomId, userId);
+          RoomRecords.PlayerRoleChangedPayload payload = rooms.switchToPlayer(roomId, userId);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("PLAYER_ROLE_CHANGED", payload));
         });
   }
 
   private String gameFrontendUrl(UUID roomId, UUID sessionId) {
-    return frontend.originTemplate().replace("{gameId}", repository.gameIdOf(roomId).toString())
+    return frontend.originTemplate().replace("{gameId}", gameStart.gameIdOf(roomId).toString())
         + "/play/"
         + sessionId;
   }
 
   /** {@code REQUEST_ROOM_STATE} — a read, so its {@code MutationOutcome} carries no event. */
-  RoomRepository.RoomStateSnapshotWithVersion roomState(UUID roomId, UUID userId) {
+  RoomRecords.RoomStateSnapshotWithVersion roomState(UUID roomId, UUID userId) {
     return events.execute(
         roomId,
         () -> {
-          if (!repository.isCurrentParticipant(roomId, userId)) {
+          if (!rooms.isCurrentParticipant(roomId, userId)) {
             throw new RoomCommandException("NOT_MEMBER", "You are not a member of this room.");
           }
-          RoomRepository.RoomStateSnapshotWithVersion read =
-              repository.roomStateSnapshot(roomId, properties.spectatorCapacity());
+          RoomRecords.RoomStateSnapshotWithVersion read =
+              reads.roomStateSnapshot(roomId, properties.spectatorCapacity());
           // room-websocket.md § ROOM_STATE: `gameFrontendUrl` is non-null exactly when `sessionId`
           // is, so a reconnecting client can rebuild the iframe from the snapshot alone.
           UUID sessionId = read.snapshot().sessionId();
-          RoomRepository.RoomStateSnapshotWithVersion snapshot =
+          RoomRecords.RoomStateSnapshotWithVersion snapshot =
               sessionId == null
                   ? read
-                  : new RoomRepository.RoomStateSnapshotWithVersion(
+                  : new RoomRecords.RoomStateSnapshotWithVersion(
                       read.version(),
                       read.snapshot().withGameFrontendUrl(gameFrontendUrl(roomId, sessionId)));
           return new RoomEventExecutor.MutationOutcome<>(snapshot, null);
@@ -448,48 +454,48 @@ class RoomService {
   // ADD_AI_PLAYER), then IMP-M2-06's (KICK_PLAYER, CHANGE_PARAMETERS, START_GAME, TRANSFER_HOST).
   // ---------------------------------------------------------------------
 
-  RoomRepository.TeamAddedPayload addTeam(
+  RoomRecords.TeamAddedPayload addTeam(
       UUID roomId, UUID hostUserId, String templateName, int configuredSize) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.TeamAddedPayload payload =
-              repository.addTeam(roomId, hostUserId, templateName, configuredSize);
+          RoomRecords.TeamAddedPayload payload =
+              hostCommands.addTeam(roomId, hostUserId, templateName, configuredSize);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("TEAM_ADDED", payload));
         });
   }
 
-  RoomRepository.TeamRemovedPayload removeTeam(UUID roomId, UUID hostUserId, UUID teamId) {
+  RoomRecords.TeamRemovedPayload removeTeam(UUID roomId, UUID hostUserId, UUID teamId) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.TeamRemovedPayload payload =
-              repository.removeTeam(roomId, hostUserId, teamId);
+          RoomRecords.TeamRemovedPayload payload =
+              hostCommands.removeTeam(roomId, hostUserId, teamId);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("TEAM_REMOVED", payload));
         });
   }
 
-  RoomRepository.TeamResizedPayload resizeTeam(
+  RoomRecords.TeamResizedPayload resizeTeam(
       UUID roomId, UUID hostUserId, UUID teamId, int newSize) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.TeamResizedPayload payload =
-              repository.resizeTeam(roomId, hostUserId, teamId, newSize);
+          RoomRecords.TeamResizedPayload payload =
+              hostCommands.resizeTeam(roomId, hostUserId, teamId, newSize);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("TEAM_RESIZED", payload));
         });
   }
 
-  RoomRepository.PlayerReassignedPayload reassignPlayer(
+  RoomRecords.PlayerReassignedPayload reassignPlayer(
       UUID roomId, UUID hostUserId, UUID playerId, UUID toTeamId) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.PlayerReassignedPayload payload =
-              repository.reassignPlayer(roomId, hostUserId, playerId, toTeamId);
+          RoomRecords.PlayerReassignedPayload payload =
+              hostCommands.reassignPlayer(roomId, hostUserId, playerId, toTeamId);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("PLAYER_REASSIGNED", payload));
         });
@@ -500,28 +506,28 @@ class RoomService {
     events.execute(
         roomId,
         () -> {
-          throw repository.addAiPlayer(roomId, hostUserId);
+          throw hostCommands.addAiPlayer(roomId, hostUserId);
         });
   }
 
-  RoomRepository.PlayerKickedPayload kickPlayer(UUID roomId, UUID hostUserId, UUID targetPlayerId) {
+  RoomRecords.PlayerKickedPayload kickPlayer(UUID roomId, UUID hostUserId, UUID targetPlayerId) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.PlayerKickedPayload payload =
-              repository.kickPlayer(roomId, hostUserId, targetPlayerId);
+          RoomRecords.PlayerKickedPayload payload =
+              hostCommands.kickPlayer(roomId, hostUserId, targetPlayerId);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("PLAYER_KICKED", payload));
         });
   }
 
-  RoomRepository.ParametersChangedPayload changeParameters(
+  RoomRecords.ParametersChangedPayload changeParameters(
       UUID roomId, UUID hostUserId, Map<String, JsonNode> parameters) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.ParametersChangedPayload payload =
-              repository.changeParameters(roomId, hostUserId, parameters);
+          RoomRecords.ParametersChangedPayload payload =
+              hostCommands.changeParameters(roomId, hostUserId, parameters);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("PARAMETERS_CHANGED", payload));
         });
@@ -538,11 +544,11 @@ class RoomService {
     events.withLock(
         roomId,
         () -> {
-          repository.checkStartConditions(roomId, hostUserId);
+          hostCommands.checkStartConditions(roomId, hostUserId);
           startStatus.starting(roomId);
           try {
             gameSessions.create(
-                repository.sessionCommand(roomId, sessionId),
+                gameStart.sessionCommand(roomId, sessionId),
                 phase -> startStatus.phase(roomId, phase));
           } catch (GameSessionService.GameSessionCreationException e) {
             startStatus.failed(roomId, e.reason().name());
@@ -555,7 +561,7 @@ class RoomService {
           events.execute(
               roomId,
               () -> {
-                repository.markGameStarted(roomId, sessionId);
+                gameStart.markGameStarted(roomId, sessionId);
                 return new RoomEventExecutor.MutationOutcome<>(
                     Boolean.TRUE,
                     new RoomEventExecutor.RoomEvent(
@@ -566,12 +572,12 @@ class RoomService {
         });
   }
 
-  RoomRepository.HostTransferredPayload transferHost(UUID roomId, UUID hostUserId, UUID newHostId) {
+  RoomRecords.HostTransferredPayload transferHost(UUID roomId, UUID hostUserId, UUID newHostId) {
     return events.execute(
         roomId,
         () -> {
-          RoomRepository.HostTransferredPayload payload =
-              repository.transferHost(roomId, hostUserId, newHostId);
+          RoomRecords.HostTransferredPayload payload =
+              hostCommands.transferHost(roomId, hostUserId, newHostId);
           return new RoomEventExecutor.MutationOutcome<>(
               payload, new RoomEventExecutor.RoomEvent("HOST_TRANSFERRED", payload));
         });
@@ -579,8 +585,8 @@ class RoomService {
 
   /** {@code room-rest-api.md} §4. */
   ClaimedResult<RoomResponse> get(UUID roomId, UUID viewerId) {
-    RoomRepository.RoomResourceRow row =
-        repository
+    RoomRecords.RoomResourceRow row =
+        reads
             .findVisibleRoomResource(roomId, viewerId)
             .orElseThrow(() -> new NotFoundException("No such room."));
     String header = claimAndGetInstanceHeader(roomId);
@@ -593,7 +599,7 @@ class RoomService {
    * socket for.
    */
   InviteCodeResult resolveInviteCode(String inviteCode, UUID viewerId) {
-    var row = repository.resolveInviteCode(inviteCode);
+    var row = reads.resolveInviteCode(inviteCode);
     if (row.isEmpty()) {
       return new InviteCodeResult(
           new PageResponse<>(List.of(), new PaginationMetadata(1, 1, 0, 0)), null);
@@ -607,9 +613,8 @@ class RoomService {
   /** {@code room-rest-api.md} §3: the ordinary browsing listing — no affinity header, no claim. */
   RoomListResponse list(UUID viewerId, RoomListFilter filter, Pageable pageable) {
     int spectatorCapacity = properties.spectatorCapacity();
-    List<RoomRepository.RoomListRow> rows =
-        repository.listRooms(viewerId, filter, spectatorCapacity);
-    long total = repository.countRooms(viewerId, filter, spectatorCapacity);
+    List<RoomRecords.RoomListRow> rows = reads.listRooms(viewerId, filter, spectatorCapacity);
+    long total = reads.countRooms(viewerId, filter, spectatorCapacity);
     List<RoomListRowResponse> content = rows.stream().map(this::toListRowResponse).toList();
     return new RoomListResponse(
         content,
@@ -618,18 +623,18 @@ class RoomService {
             pageable.getPageSize(),
             total,
             (int) Math.ceil((double) total / pageable.getPageSize())),
-        repository.findReservedSlot(viewerId).orElse(null));
+        reads.findReservedSlot(viewerId).orElse(null));
   }
 
   private RoomResponse fetchResponse(UUID roomId, UUID viewerId) {
-    RoomRepository.RoomResourceRow row =
-        repository
+    RoomRecords.RoomResourceRow row =
+        reads
             .findRoomResource(roomId)
             .orElseThrow(() -> new IllegalStateException("Room vanished within its own request"));
     return toResponse(row, viewerId);
   }
 
-  private RoomResponse toResponse(RoomRepository.RoomResourceRow row, UUID viewerId) {
+  private RoomResponse toResponse(RoomRecords.RoomResourceRow row, UUID viewerId) {
     boolean isHost = viewerId.equals(row.hostUserId());
     boolean canJoin = canJoin(row);
     boolean canSpectate = canSpectate(row, properties.spectatorCapacity());
@@ -652,12 +657,12 @@ class RoomService {
         isHost ? row.inviteCode() : null,
         canJoin,
         canSpectate,
-        repository.findViewerRole(row.roomId(), viewerId).orElse(null),
+        rooms.findViewerRole(row.roomId(), viewerId).orElse(null),
         row.version(),
         row.createdAt());
   }
 
-  private RoomListRowResponse toListRowResponse(RoomRepository.RoomListRow row) {
+  private RoomListRowResponse toListRowResponse(RoomRecords.RoomListRow row) {
     boolean canJoin =
         row.playerCount() < row.playerCapacity()
             && ("LOBBY".equals(row.state()) || row.supportsMidGameJoin());
@@ -681,12 +686,12 @@ class RoomService {
         canSpectate);
   }
 
-  private boolean canJoin(RoomRepository.RoomResourceRow row) {
+  private boolean canJoin(RoomRecords.RoomResourceRow row) {
     return row.playerCount() < row.playerCapacity()
         && ("LOBBY".equals(row.state()) || row.supportsMidGameJoin());
   }
 
-  private boolean canSpectate(RoomRepository.RoomResourceRow row, int spectatorCapacity) {
+  private boolean canSpectate(RoomRecords.RoomResourceRow row, int spectatorCapacity) {
     return row.spectatingEnabled()
         && row.supportsSpectators()
         && row.spectatorCount() < spectatorCapacity;

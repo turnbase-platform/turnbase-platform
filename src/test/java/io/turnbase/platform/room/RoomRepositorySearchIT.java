@@ -22,7 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 class RoomRepositorySearchIT extends PostgresIntegrationTest {
 
   private static JdbcClient jdbcClient;
-  private static RoomRepository repository;
+  private static RoomReadRepository repository;
 
   @BeforeAll
   static void setUp() {
@@ -36,12 +36,7 @@ class RoomRepositorySearchIT extends PostgresIntegrationTest {
             new DriverManagerDataSource(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
     JsonMapper mapper = JsonMapper.builder().build();
-    repository =
-        new RoomRepository(
-            jdbcClient,
-            mapper,
-            new RoomInvitationRepository(jdbcClient, mapper, event -> {}),
-            event -> {});
+    repository = new RoomReadRepository(jdbcClient, mapper);
   }
 
   @BeforeEach
@@ -70,7 +65,7 @@ class RoomRepositorySearchIT extends PostgresIntegrationTest {
     RoomListFilter filter =
         new RoomListFilter(text, null, null, null, null, null, Sort.unsorted(), 25, 0);
     return repository.listRooms(UUID.randomUUID(), filter, 10).stream()
-        .map(RoomRepository.RoomListRow::gameName)
+        .map(RoomRecords.RoomListRow::gameName)
         .toList();
   }
 

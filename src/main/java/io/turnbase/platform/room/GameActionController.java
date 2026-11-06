@@ -40,14 +40,14 @@ class GameActionController {
 
   private static final Logger log = LoggerFactory.getLogger(GameActionController.class);
 
-  private final RoomRepository repository;
+  private final RoomOutboxRepository repository;
   private final ParticipantCache participants;
   private final GameInputService inputs;
   private final SimpMessagingTemplate messagingTemplate;
   private final JsonMapper objectMapper;
 
   GameActionController(
-      RoomRepository repository,
+      RoomOutboxRepository repository,
       ParticipantCache participants,
       GameInputService inputs,
       SimpMessagingTemplate messagingTemplate,
@@ -79,7 +79,7 @@ class GameActionController {
     }
     // One code for "no such active session" and "not in it": which sessions exist is not the
     // caller's to learn.
-    RoomRepository.ActingParticipant actor =
+    RoomRecords.ActingParticipant actor =
         participants
             .viewOf(sessionId, repository::sessionRoomView)
             .flatMap(view -> view.actingParticipant(user.userId()))

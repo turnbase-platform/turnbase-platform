@@ -81,7 +81,7 @@ class RoomEventExecutorIT extends PostgresIntegrationTest {
                   "x",
                   new RoomEventExecutor.RoomEvent(
                       "PLAYER_LOST",
-                      new RoomRepository.PlayerLostPayload(userId, null, "GRACE_PERIOD_EXPIRED"))));
+                      new RoomRecords.PlayerLostPayload(userId, null, "GRACE_PERIOD_EXPIRED"))));
     } finally {
       logger.detachAppender(appender);
     }
