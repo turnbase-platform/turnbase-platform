@@ -1,7 +1,9 @@
 # turnbase-platform
 
+> Part of [TurnBase](https://github.com/turnbase-platform/turnbase), a platform for turn-based multiplayer games — this is the Platform Monolith. Start at the [umbrella README](https://github.com/turnbase-platform/turnbase#readme).
+
 TurnBase Platform Monolith — Spring Boot 4.1+ on Java 21, packaged by feature
-([ADR-0014](../docs/decisions/0014-modular-monolith-spring-modulith.md)). Ships as the Docker image
+([ADR-0014](https://github.com/turnbase-platform/turnbase/blob/master/docs/decisions/0014-modular-monolith-spring-modulith.md)). Ships as the Docker image
 `turnbase/platform`.
 
 ## Build
@@ -59,3 +61,11 @@ What this repository distributes is audited for its dependencies' licences (allo
 ./mvnw org.codehaus.mojo:license-maven-plugin:2.8.0:add-third-party -Dlicense.excludedScopes=test,provided
 # -> target/generated-sources/license/THIRD-PARTY.txt
 ```
+
+## Layout
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Licence
+
+Apache-2.0, see [`LICENSE`](LICENSE).
