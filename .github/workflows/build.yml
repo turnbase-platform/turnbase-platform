@@ -47,10 +47,8 @@ jobs:
         # on Contents, scoped to turnbase-common only. Delete this step, not adapt it, the
         # same PR that bumps the version property to a real release once IMP-M0-11 publishes
         # one — from that point resolution is an authenticated GitHub Packages fetch instead.
-        env:
-          TURNBASE_COMMON_PAT: ${{ secrets.TURNBASE_COMMON_PAT }}
         run: |
-          git clone --depth 1 "https://x-access-token:${TURNBASE_COMMON_PAT}@github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
+          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
           cd /tmp/turnbase-common
           ./mvnw --batch-mode --no-transfer-progress install -DskipTests
 
@@ -60,10 +58,8 @@ jobs:
         # local repository. turnbase-sdk is private (ADR-0012): TURNBASE_SDK_PAT is a
         # fine-grained PAT, read-only on Contents, scoped to turnbase-sdk only. Delete this
         # step, not adapt it, the same change that bumps <turnbase-sdk.version> to a release.
-        env:
-          TURNBASE_SDK_PAT: ${{ secrets.TURNBASE_SDK_PAT }}
         run: |
-          git clone --depth 1 "https://x-access-token:${TURNBASE_SDK_PAT}@github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
+          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
           cd /tmp/turnbase-sdk
           ./mvnw --batch-mode --no-transfer-progress install -DskipTests
 
@@ -172,7 +168,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: turnbase-platform/turnbase-game-host
-          token: ${{ secrets.TURNBASE_GAME_HOST_PAT }}
           path: turnbase-game-host
 
       - name: Check out turnbase-frontend
@@ -183,7 +178,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: turnbase-platform/turnbase-frontend
-          token: ${{ secrets.TURNBASE_FRONTEND_PAT }}
           path: turnbase-frontend
 
       - name: Free disk space
@@ -211,10 +205,8 @@ jobs:
         # (jobs share nothing but secrets/outputs), so that earlier install isn't visible
         # here and this step repeats it. Same secret works: it belongs to turnbase-platform
         # itself, and both jobs run in that repo's workflow.
-        env:
-          TURNBASE_COMMON_PAT: ${{ secrets.TURNBASE_COMMON_PAT }}
         run: |
-          git clone --depth 1 "https://x-access-token:${TURNBASE_COMMON_PAT}@github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
+          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
           cd /tmp/turnbase-common
           ./mvnw --batch-mode --no-transfer-progress install -DskipTests
 
@@ -226,10 +218,8 @@ jobs:
         # read-only on Contents, scoped to turnbase-sdk only, stored on this repository as it
         # is on turnbase-game-host. Delete this step, not adapt it, the same change that bumps
         # turnbase-game-host's version properties to a real release.
-        env:
-          TURNBASE_SDK_PAT: ${{ secrets.TURNBASE_SDK_PAT }}
         run: |
-          git clone --depth 1 "https://x-access-token:${TURNBASE_SDK_PAT}@github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
+          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
           cd /tmp/turnbase-sdk
           ./mvnw --batch-mode --no-transfer-progress install -DskipTests
           cd -
