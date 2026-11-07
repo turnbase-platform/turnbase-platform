@@ -49,3 +49,13 @@ Modulith failure.
 
 `8080` serves HTTP/WebSocket/game assets; `8081` is the management port (health, readiness,
 liveness). Readiness does not depend on the Game Host — see `local-environment.md` §3.
+
+## Third-party licences
+
+What this repository distributes is audited for its dependencies' licences (allowed families:
+`docs/implementation/conventions.md` §6 *Third-party licences*). The report is generated, not committed:
+
+```bash
+./mvnw org.codehaus.mojo:license-maven-plugin:2.8.0:add-third-party -Dlicense.excludedScopes=test,provided
+# -> target/generated-sources/license/THIRD-PARTY.txt
+```
