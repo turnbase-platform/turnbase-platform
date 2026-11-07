@@ -18,6 +18,14 @@
   <description>TurnBase Platform Monolith — Spring Boot 4.1+, packaged by feature
     (ADR-0014).</description>
 
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
   <!--
     Unlike turnbase-common and turnbase-sdk, this artifact builds a Docker image and is never
     a Maven dependency of another repository, so its own version can stay a permanent
