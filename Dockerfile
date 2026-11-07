@@ -2,7 +2,7 @@
 #
 # Single-stage: the jar is built by `./mvnw verify`/`package` before `docker build` runs (CI
 # runs both in the same job), not inside the image. Building here too would mean resolving
-# io.turnbase:turnbase-grpc a second time in a network-isolated container, which during the
+# io.github.turnbase-platform:turnbase-grpc a second time in a network-isolated container, which during the
 # conventions.md §5 bootstrap window (IMP-GATE-07) has no registry to resolve it from at all.
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app

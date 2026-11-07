@@ -9,9 +9,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * IMP-M0-03's Done-when clause: the {@code io.turnbase:turnbase-grpc} client stubs resolve and
- * compile against this repository, not just against a throwaway consumer. Real wiring of the {@code
- * GameHostService} dispatch path is IMP-M3-05; this only proves the artifact links.
+ * IMP-M0-03's Done-when clause: the {@code io.github.turnbase-platform:turnbase-grpc} client stubs
+ * resolve and compile against this repository, not just against a throwaway consumer. Real wiring
+ * of the {@code GameHostService} dispatch path is IMP-M3-05; this only proves the artifact links.
  */
 class GameHostClientStubResolutionTest {
 

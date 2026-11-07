@@ -9,7 +9,7 @@
     <relativePath/>
   </parent>
 
-  <groupId>io.turnbase</groupId>
+  <groupId>io.github.turnbase-platform</groupId>
   <artifactId>turnbase-platform</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
@@ -313,7 +313,7 @@
 
     <!-- IMP-M3-13: bundle validation (bundle-format.md §3 Phases C-F), extracted to turnbase-sdk. -->
     <dependency>
-      <groupId>io.turnbase</groupId>
+      <groupId>io.github.turnbase-platform</groupId>
       <artifactId>turnbase-bundle-validator</artifactId>
       <version>${turnbase-sdk.version}</version>
     </dependency>
@@ -389,7 +389,7 @@
       is IMP-M3-04/M3-05; this item only proves the stubs resolve and compile.
     -->
     <dependency>
-      <groupId>io.turnbase</groupId>
+      <groupId>io.github.turnbase-platform</groupId>
       <artifactId>turnbase-grpc</artifactId>
       <version>${turnbase-common.version}</version>
     </dependency>
