@@ -61,14 +61,8 @@
     -->
     <logstash-logback-encoder.version>8.1</logstash-logback-encoder.version>
 
-    <!--
-      turnbase-common's published client stubs. No tagged release of turnbase-common exists
-      yet, so this pins its current development version and resolves it from the local
-      install, per conventions.md §5's bootstrap exception (IMP-GATE-07). Bump this to a real
-      release, dropping -SNAPSHOT, once IMP-M0-11 publishes one and this repo gets its
-      follow-up PR.
-    -->
-    <turnbase-common.version>0.1.0-SNAPSHOT</turnbase-common.version>
+    <!-- Released 0.1.0, resolved from the producer's Pages Maven repository (ADR-0022). -->
+    <turnbase-common.version>0.1.0</turnbase-common.version>
 
     <!-- IMP-M1-03: HS256 JWT issuance/verification (secrets-and-configuration.md §3). -->
     <!-- IMP-M11-02: jjwt-jackson stays on Jackson 2 deliberately (ADR-0016 §2); never sees a Spring mapper. -->
@@ -143,14 +137,8 @@
     -->
     <tomcat.version>11.0.25</tomcat.version>
 
-    <!--
-      IMP-M3-13: turnbase-bundle-validator (the upload pipeline's archive reader, manifest
-      validation and Phase F analysis, shared with the SDK test harness) is built by
-      turnbase-sdk. Same bootstrap exception as turnbase-common above: no tagged release exists,
-      so this pins the current development version and resolves it from the local install. It
-      brings json-schema-validator and ASM in transitively.
-    -->
-    <turnbase-sdk.version>0.1.0-SNAPSHOT</turnbase-sdk.version>
+    <!-- Released 0.1.0, resolved from the producer's Pages Maven repository (ADR-0022). -->
+    <turnbase-sdk.version>0.1.0</turnbase-sdk.version>
   </properties>
 
   <dependencyManagement>
@@ -459,6 +447,17 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <repositories>
+    <repository>
+      <id>turnbase-common</id>
+      <url>https://turnbase-platform.github.io/turnbase-common/maven/</url>
+    </repository>
+    <repository>
+      <id>turnbase-sdk</id>
+      <url>https://turnbase-platform.github.io/turnbase-sdk/maven/</url>
+    </repository>
+  </repositories>
 
   <build>
     <plugins>

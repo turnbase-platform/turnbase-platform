@@ -39,30 +39,6 @@ jobs:
           cache: maven
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install turnbase-common (bootstrap — conventions.md §5)
-        # turnbase-common has no tagged release yet, so <turnbase-common.version> pins its
-        # current development version and this runner needs it in the local repository.
-        # turnbase-common is private (ADR-0012), so this needs a credential beyond the
-        # workflow's own GITHUB_TOKEN — TURNBASE_COMMON_PAT is a fine-grained PAT, read-only
-        # on Contents, scoped to turnbase-common only. Delete this step, not adapt it, the
-        # same PR that bumps the version property to a real release once IMP-M0-11 publishes
-        # one — from that point resolution is an authenticated GitHub Packages fetch instead.
-        run: |
-          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
-          cd /tmp/turnbase-common
-          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
-
-      - name: Install turnbase-sdk (bootstrap — conventions.md §5, IMP-GATE-70)
-        # turnbase-platform depends on turnbase-bundle-validator (IMP-M3-13), built by
-        # turnbase-sdk and not yet published (no tagged release), so this runner needs it in the
-        # local repository. turnbase-sdk is private (ADR-0012): TURNBASE_SDK_PAT is a
-        # fine-grained PAT, read-only on Contents, scoped to turnbase-sdk only. Delete this
-        # step, not adapt it, the same change that bumps <turnbase-sdk.version> to a release.
-        run: |
-          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
-          cd /tmp/turnbase-sdk
-          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
-
       - name: Verify
         # Spotless runs at validate, Error Prone and NullAway during compile, the Modulith
         # verification test and JaCoCo's merged check at verify — this one command is the
@@ -105,8 +81,7 @@ jobs:
 
       - name: Build container image
         # The jar was already built by `./mvnw verify` above; the Dockerfile packages it
-        # rather than rebuilding, so the image build never needs its own network access to
-        # turnbase-common (conventions.md §5 bootstrap window, IMP-GATE-07).
+        # rather than rebuilding, so the image build needs no network access to Maven.
         run: docker build -t turnbase/platform:ci .
 
       - name: Trivy scan — image
@@ -162,9 +137,7 @@ jobs:
       - name: Check out turnbase-game-host
         # gamehost has no `build:` block in docker-compose.yml (this repo stays
         # independently usable without the root, ADR-0012), so its image is built from a
-        # sibling checkout here — the same bootstrap-PAT pattern conventions.md §5 already
-        # uses for turnbase-common: a fine-grained PAT, read-only on Contents, scoped to
-        # turnbase-game-host only.
+        # sibling checkout here; the repository is public, so no token.
         uses: actions/checkout@v7
         with:
           repository: turnbase-platform/turnbase-game-host
@@ -173,15 +146,14 @@ jobs:
       - name: Check out turnbase-frontend
         # Same reasoning and pattern as turnbase-game-host above (IMP-GATE-74: the Frontend
         # container is the platform origin's listener, and its image is built from a sibling
-        # checkout). Needs its own fine-grained PAT, read-only on Contents, scoped to
-        # turnbase-frontend only — TURNBASE_FRONTEND_PAT must exist as a repository secret.
+        # checkout); public, so no token.
         uses: actions/checkout@v7
         with:
           repository: turnbase-platform/turnbase-frontend
           path: turnbase-frontend
 
       - name: Free disk space
-        # Two bootstrap installs, three Maven builds and three images (platform, game-host,
+        # Three Maven builds and three images (platform, game-host,
         # frontend) plus the compose stack on top of a runner that ships several multi-GB
         # toolchains this job never uses. Same step turnbase-game-host's own build.yml carries
         # for the same reason. `|| true`: not every path exists on every runner image.
@@ -199,32 +171,6 @@ jobs:
           cache: maven
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install turnbase-common (bootstrap — conventions.md §5)
-        # turnbase-game-host pins the same <turnbase-common.version> as the `build` job's
-        # own bootstrap step above — but `e2e` is a separate job on its own fresh runner
-        # (jobs share nothing but secrets/outputs), so that earlier install isn't visible
-        # here and this step repeats it. Same secret works: it belongs to turnbase-platform
-        # itself, and both jobs run in that repo's workflow.
-        run: |
-          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-common.git" /tmp/turnbase-common
-          cd /tmp/turnbase-common
-          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
-
-      - name: Install turnbase-sdk (bootstrap — conventions.md §5, IMP-GATE-70)
-        # turnbase-game-host depends on turnbase-sdk and turnbase-serialization, both built by
-        # turnbase-sdk and neither published (no tagged release), so the build below needs
-        # them in this runner's local repository. One install at turnbase-sdk's root produces
-        # both. turnbase-sdk is private (ADR-0012): TURNBASE_SDK_PAT is a fine-grained PAT,
-        # read-only on Contents, scoped to turnbase-sdk only, stored on this repository as it
-        # is on turnbase-game-host. Delete this step, not adapt it, the same change that bumps
-        # turnbase-game-host's version properties to a real release.
-        run: |
-          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/turnbase-sdk.git" /tmp/turnbase-sdk
-          cd /tmp/turnbase-sdk
-          ./mvnw --batch-mode --no-transfer-progress install -DskipTests
-          cd -
-          rm -rf /tmp/turnbase-sdk
-
       - name: Build turnbase-game-host
         # -DskipTests: turnbase-game-host's own CI (its own repo) already runs its full
         # verify; this job only needs the jar Dockerfile:25's COPY expects.
@@ -232,7 +178,7 @@ jobs:
         run: ./mvnw --batch-mode --no-transfer-progress package -DskipTests
 
       - name: Build turnbase-platform
-        # Same "jobs share nothing" reasoning as the turnbase-common install step above:
+        # Same "jobs share nothing" reasoning as the `build` job:
         # `needs: build` only orders this job after `build`, it does not carry that job's
         # target/ over — this is a separate, fresh runner. Without this step,
         # e2e-smoke.sh's `docker compose up --build` fails at this Dockerfile's own
